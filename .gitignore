@@ -7,3 +7,10 @@ logs/
 *.log
 .DS_Store
 Thumbs.db
+
+# skills installés localement (outillage, pas du code produit)
+.agents/skills/*
+!.agents/skills/crypto-microstructure/
+!.agents/skills/quant-analyst/
+!.agents/skills/quant-walk-forward/
+skills-lock.json
