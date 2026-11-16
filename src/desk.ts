@@ -2,6 +2,10 @@ import { evaluateCandidateForGrpo, filterBarsByDateRange, optimizeParametersOnHi
 import { MAX_DAY_LOSS, MAX_EXPOSURE, MAX_RISK, type Config } from "./config.ts";
 import { LiquidityHunterAgent } from "./agents/liquidityHunter.ts";
 import { SentinelAgent } from "./agents/sentinel.ts";
+import { DeskLeadAgent, PacingCalculator } from "./agents/deskLead.ts";
+import { RiskManagerAgent, type HftSizingResult } from "./agents/riskManager.ts";
+import { ExecutionTraderAgent } from "./agents/executionTrader.ts";
+import { StrategistAgent } from "./agents/strategist.ts";
 import { Mt5CloudBridge, type LocalMt5Position, type LocalMt5State } from "./mt5.ts";
 import { GrpoEngine, type GrpoCandidateOutcome, type MarketRegime } from "./rl/grpo.ts";
 import {
@@ -346,6 +350,9 @@ export interface LeveragedSizingOptions {
   expectedSlippage?: number;
   autoReduceLeverage?: boolean;
   riskPctOverride?: number;
+  playbook?: PlayKind;
+  targetFiatProfit?: number;
+  atr1m?: number;
 }
 
 export interface LeveragedSizingResult {
@@ -421,6 +428,36 @@ export function computeLeveragedSizing(
     .filter((t) => t.status === "open")
     .reduce((sum, t) => sum + t.notional / Math.max(1, t.leverage ?? 1), 0);
   const availableMargin = Math.max(0, eq - marginUsed);
+
+  // REVERSE-ENGINEERED SIZING FOR HFT FIAT-TARGET (KAMIKAZE) STRATEGY
+  const isKamikazeRegime = options.playbook === "HFT_Kamikaze_FiatTarget" || state.settings?.regime === "hft_kamikaze";
+  if (isKamikazeRegime) {
+    const targetFiat = options.targetFiatProfit ?? 75;
+    const atr1m = options.atr1m ?? (priceStopDistance * entryPrice);
+    const hftSizing = RiskManagerAgent.reverseEngineerHftSizing(
+      entryPrice,
+      atr1m,
+      targetFiat,
+      side,
+      500,
+      availableMargin,
+    );
+    if (hftSizing.ok && hftSizing.requiredNotional > 0) {
+      return {
+        ok: true,
+        notional: hftSizing.requiredNotional,
+        qty: hftSizing.lotSize,
+        riskUsd: hftSizing.targetFiatProfit,
+        riskCapital: hftSizing.requiredMargin,
+        riskPct: hftSizing.requiredMargin / Math.max(eq, 1),
+        exposurePct: hftSizing.requiredNotional / Math.max(eq, 1),
+        binding: "risk",
+        stopPct: hftSizing.expectedPriceMovePct,
+        leverage: hftSizing.leverage,
+        liqPrice: hftSizing.liquidationPrice,
+      };
+    }
+  }
 
   const autoReduce = options.autoReduceLeverage ?? true;
   const effectiveMmr = (lev: number): number => Math.min(maintenanceMarginRate, (1 / lev) * 0.35);
@@ -619,8 +656,62 @@ export class TradingFloorDesk {
     this.state = this.store.loadOrCreate(cfg.paperEquity, cfg.timeZone, cfg.symbols, cfg.scanIntervalMin);
     this.state.sentinel = this.sentinel.getTelemetry();
     this.state.liquidityHunter = this.hunter.getTelemetry();
+    if (!this.state.sessionGoal) {
+      this.state.sessionGoal = DeskLeadAgent.createSessionGoal(
+        cfg.paperEquity,
+        this.state.settings.sessionTargetFiat ?? 2000,
+        this.state.settings.sessionDurationHours ?? 4,
+      );
+    }
     this.syncMobileSettingsToState();
     this.syncRlSummaryToState();
+  }
+
+  private async updateSessionGoal(now = Date.now()): Promise<void> {
+    const eq = currentEquity(this.state);
+    if (!this.state.sessionGoal) {
+      this.state.sessionGoal = DeskLeadAgent.createSessionGoal(
+        eq,
+        this.state.settings.sessionTargetFiat ?? 2000,
+        this.state.settings.sessionDurationHours ?? 4,
+        now,
+      );
+    }
+
+    const prevAgg = this.state.sessionGoal.aggressiveness;
+    const { updatedGoal, event } = DeskLeadAgent.evaluateTick(
+      this.state.sessionGoal,
+      eq,
+      this.state.realizedPnl,
+      now,
+    );
+    this.state.sessionGoal = updatedGoal;
+
+    if (event === "INCREASE_AGGRESSIVENESS" && prevAgg !== "lagging_aggressive") {
+      emitPulse(this.state, "lead", "strategist", "wake", "INCREASE_AGGRESSIVENESS: Cible PnL en retard", undefined, now);
+      await this.say(
+        "lead",
+        `[PACING ALERT] Retard sur l'objectif de session ($${updatedGoal.targetProfitFiat} d'ici ${new Date(updatedGoal.deadlineTimestamp).toLocaleTimeString()}). Vitesse requise: $${updatedGoal.requiredVelocityPerHour}/h. Activation du mode HAUTE AGRESSIVITÉ pour rattraper la cadence !`,
+        "wake",
+      );
+      this.broadcast();
+    } else if (event === "SECURE_PROFITS" && prevAgg !== "target_reached") {
+      emitPulse(this.state, "lead", "risk", "flag", "SECURE_PROFITS: Objectif financier atteint", undefined, now);
+      await this.say(
+        "lead",
+        `🎯 [OBJECTIF ATTEINT] Cible de profit de +$${updatedGoal.targetProfitFiat} accomplie (PnL session: +$${updatedGoal.currentProfitFiat}). Verrouillage et sécurisation des bénéfices !`,
+        "fill",
+      );
+      this.broadcast();
+    } else if (event === "REDUCE_RISK" && prevAgg !== "secured" && prevAgg !== "normal") {
+      emitPulse(this.state, "lead", "risk", "flag", "REDUCE_RISK: Sécurisation du capital", undefined, now);
+      await this.say(
+        "lead",
+        `[GESTION DU RYTHME] Cadence en avance ou fenêtre terminée. Réduction automatique du risque et préservation des gains.`,
+        "plain",
+      );
+      this.broadcast();
+    }
   }
 
   private syncMobileSettingsToState(): void {
@@ -1824,6 +1915,46 @@ export class TradingFloorDesk {
       };
     };
 
+    // 0. Priorité absolue : Mode HFT FIAT-TARGET (KAMIKAZE) & Haute Agressivité
+    const activeRegime = this.state.settings?.regime ?? "standard";
+    const currentAgg = this.state.sessionGoal?.aggressiveness ?? "normal";
+    if (activeRegime === "hft_kamikaze" || currentAgg === "lagging_aggressive") {
+      const bestBid = p.bestBid ?? px * 0.9998;
+      const bestAsk = p.bestAsk ?? px * 1.0002;
+      const imbalance = p.book ?? (this.state.liquidityHunter?.imbalance ?? 0);
+      const ofiZ = p.ofi ?? 0;
+      const atr1m = snap.atr ? snap.atr * 0.1 : px * 0.001;
+
+      const hftTrigger = StrategistAgent.evaluateHftBarrageEntry(
+        snap.symbol,
+        bestBid,
+        bestAsk,
+        imbalance,
+        ofiZ,
+        atr1m,
+        currentAgg,
+        activeRegime,
+      );
+
+      if (hftTrigger) {
+        const microDist = hftTrigger.expectedMicroMove;
+        const entryPx = hftTrigger.price;
+        const stopPx = hftTrigger.side === "long" ? entryPx - microDist * 1.5 : entryPx + microDist * 1.5;
+        const targetPx = hftTrigger.side === "long" ? entryPx + microDist * 2.0 : entryPx - microDist * 2.0;
+
+        return withConfluence({
+          dir: hftTrigger.side,
+          playbook: "HFT_Kamikaze_FiatTarget",
+          thesis: hftTrigger.thesis,
+          customEntry: entryPx,
+          customStop: stopPx,
+          customTarget: targetPx,
+          timeStopMs: 180_000,
+          trailingAtr1m: atr1m,
+        });
+      }
+    }
+
     // 1. Transformation du conflit analytique en opportunité (Liquidation_Cascade_Watch)
     if (snap.cascadeWatch?.active) {
       if (snap.fvgZone && snap.cascadeWatch.oiPurging) {
@@ -2039,14 +2170,38 @@ export class TradingFloorDesk {
         Boolean(this.state.settings.autoPaperScalp) ||
         this.state.settings.executionMode === "auto" ||
         this.state.settings.tradingStyle === "scalping";
-      if (isScalp && openCount >= 5) {
-        await this.say("lead", "5 positions PAPER déjà ouvertes simultanément. Surveillance des stops et cibles en cours.");
+
+      // Dynamic Concurrency Calculator (Risk Manager Agent)
+      const eq = currentEquity(this.state);
+      const marginUsed = this.state.tickets
+        .filter((t) => t.status === "open")
+        .reduce((sum, t) => sum + t.notional / Math.max(1, t.leverage ?? 1), 0);
+      const availableMargin = Math.max(0, eq - marginUsed);
+      const activeRegime = this.state.settings?.regime ?? "standard";
+      const currentAgg = this.state.sessionGoal?.aggressiveness ?? "normal";
+
+      const maxConcurrent = RiskManagerAgent.calculateDynamicConcurrency(
+        availableMargin,
+        eq,
+        0.02,
+        currentAgg,
+        activeRegime,
+      );
+
+      if (openCount >= maxConcurrent) {
+        await this.say(
+          "lead",
+          `${openCount} positions PAPER ouvertes (plafond dynamique de ${maxConcurrent} atteint). Surveillance des stops et cibles en cours.`,
+        );
         return;
       }
 
-      const freeSnaps = snaps.filter(
-        (s) => !this.state.tickets.some((t) => t.asset === s.symbol && (t.status === "open" || t.status === "pending")),
-      );
+      const allowMultiPositions = activeRegime === "hft_kamikaze" || currentAgg === "lagging_aggressive";
+      const freeSnaps = allowMultiPositions
+        ? snaps
+        : snaps.filter(
+            (s) => !this.state.tickets.some((t) => t.asset === s.symbol && (t.status === "open" || t.status === "pending")),
+          );
       const pool = freeSnaps.length ? freeSnaps : snaps;
       if (!pool.length) {
         await this.say("analyst", "Aucun actif disponible à scanner.");
@@ -2291,13 +2446,19 @@ export class TradingFloorDesk {
         asset: chosen.symbol,
       });
 
+      const isKamikazeTrade = activePlaybook === "HFT_Kamikaze_FiatTarget" || this.state.settings?.regime === "hft_kamikaze";
+      const targetLev = isKamikazeTrade ? 500 : (this.state.settings.defaultLeverage ?? 5);
+
       const sized = computeLeveragedSizing(this.state, entry, invalidation, bt, {
         side: activeDir,
-        leverageFactor: this.state.settings.defaultLeverage ?? 5,
+        leverageFactor: targetLev,
         maintenanceMarginRate: this.state.settings.maintenanceMarginRate ?? 0.005,
         takerFee: 0.0004,
         expectedSlippage: 0.0002,
         autoReduceLeverage: true,
+        playbook: activePlaybook,
+        targetFiatProfit: 75,
+        atr1m: selectedIdea?.trailingAtr1m,
       });
       if (!sized.ok || !sized.notional || !sized.qty || !sized.riskUsd || sized.riskPct === undefined || sized.exposurePct === undefined || !sized.binding) {
         setAgentActivity(this.state, "risk", "veto", `Veto sur ${chosen.symbol}`, now, { asset: chosen.symbol });
@@ -2759,6 +2920,9 @@ export class TradingFloorDesk {
       );
     }
 
+    // Tick-by-tick Session Goal & Pacing Evaluation (Desk Lead Agent)
+    await this.updateSessionGoal(now);
+
     for (const ticket of this.state.tickets.filter((t) => t.status === "open")) {
       const mark = ticket.mt5CurrentPrice ?? markPriceOf(this.state, ticket.asset, ticket.fillPrice ?? ticket.entry);
       const isLong = ticket.direction === "long";
@@ -2768,6 +2932,25 @@ export class TradingFloorDesk {
         const maeR = Math.abs(curUnrealized) / ticket.riskUsd;
         if (maeR > (ticket.maxAdverseExcursion ?? 0)) {
           ticket.maxAdverseExcursion = Number(maeR.toFixed(4));
+        }
+      }
+
+      // MODULE 2 : THE FIAT-TARGET TAKE PROFIT LOGIC (Execution Trader Agent)
+      // Clôture instantanée au marché dès que le PnL non-réalisé atteint entre 50$ et 100$
+      const isKamikazeActive = this.state.settings?.regime === "hft_kamikaze" || engine === "HFT_Kamikaze_FiatTarget";
+      if (isKamikazeActive) {
+        const minTarget = this.state.settings?.hftTargetPnlMin ?? 50;
+        const maxTarget = this.state.settings?.hftTargetPnlMax ?? 100;
+        const fiatEval = ExecutionTraderAgent.evaluateFiatTargetTakeProfit(ticket, mark, minTarget, maxTarget);
+        if (fiatEval.shouldClose) {
+          await this.closeOpenTicket(ticket, mark, "target", now);
+          await this.say(
+            "execution",
+            `⚡ ${fiatEval.reason} Clôture immédiate au marché pour ${ticket.id} (${ticket.asset}).`,
+            "fill",
+            ticket.id,
+          );
+          continue;
         }
       }
 
@@ -3135,6 +3318,7 @@ export class TradingFloorDesk {
       this.state.settings.llmApiKeyHint = "Clé API configurée depuis le Board (active en mémoire)";
     }
     if (payload.settings) {
+      const prevRegime = this.state.settings.regime ?? "standard";
       const nextLev =
         payload.settings.defaultLeverage !== undefined
           ? Math.max(1, Math.min(500, Math.round(Number(payload.settings.defaultLeverage) || 1)))
@@ -3144,6 +3328,27 @@ export class TradingFloorDesk {
         ...payload.settings,
         defaultLeverage: nextLev,
       };
+
+      if (payload.settings.regime && payload.settings.regime !== prevRegime) {
+        emitPulse(this.state, "lead", "strategist", "flag", `REGIME_CHANGED: ${payload.settings.regime.toUpperCase()}`, undefined, Date.now());
+        await this.say(
+          "lead",
+          `[REGIME_CHANGED] Basculement immédiat du régime actif vers : ${payload.settings.regime.toUpperCase()}${
+            payload.settings.regime === "hft_kamikaze"
+              ? " ⚡ [KAMIKAZE MODE ENGAGÉ] Levier max 500x, tir de barrage L2/OFI et Take-Profit instantané $50-$100 !"
+              : ""
+          }`,
+          payload.settings.regime === "hft_kamikaze" ? "wake" : "plain",
+        );
+      }
+
+      if (payload.settings.sessionTargetFiat && payload.settings.sessionTargetFiat !== this.state.sessionGoal?.targetProfitFiat) {
+        this.state.sessionGoal = DeskLeadAgent.createSessionGoal(
+          currentEquity(this.state),
+          payload.settings.sessionTargetFiat,
+          payload.settings.sessionDurationHours ?? 4,
+        );
+      }
     }
     if (payload.agentPrompts) {
       for (const [id, patch] of Object.entries(payload.agentPrompts) as Array<[AgentId, Partial<AgentPromptConfig>]>) {

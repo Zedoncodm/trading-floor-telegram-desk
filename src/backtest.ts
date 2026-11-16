@@ -18,6 +18,8 @@ const RULES: Record<PlayKind, string> = {
     "Moteur B DayTrade : Balayage Initial Balance + ±2.0 SD VWAP Ancré + RSI extrême, TP 50% ±1.0 SD + 50% VWAP, Time-Stop 8h",
   Macro_FVG_Mitigation:
     "Moteur C Swing Macro : BOS 20 barres + FVG >= 0.5x ATR(14), LIMIT 50% FVG (Maker), R:R >= 2.5R, Time-Stop 72h",
+  HFT_Kamikaze_FiatTarget:
+    "Moteur HFT Kamikaze : Tir de barrage L2 / OFI, levier jusqu'à 500x, Cible Fiat 50$ - 100$, Time-Stop 180s",
 };
 
 export type BacktestThresholds = {

@@ -48,7 +48,8 @@ export type PlayKind =
   | "fade"
   | "HFT_OrderFlow_Imbalance"
   | "Session_VWAP_Reversion"
-  | "Macro_FVG_Mitigation";
+  | "Macro_FVG_Mitigation"
+  | "HFT_Kamikaze_FiatTarget";
 export type TicketStatus = "pending" | "open" | "closed" | "rejected" | "expired" | "vetoed";
 export type CloseReason =
   | "target"
@@ -159,6 +160,26 @@ export type DeskRuntimeSettings = {
   mt5TokenHint?: string;
   tgChatId?: string;
   tgBotsConfigured?: number;
+  regime?: TradingRegime;
+  sessionTargetFiat?: number;
+  sessionDurationHours?: number;
+  hftTargetPnlMin?: number;
+  hftTargetPnlMax?: number;
+};
+
+export type TradingRegime = "standard" | "macro_fvg" | "hft_kamikaze";
+export type AggressivenessState = "normal" | "lagging_aggressive" | "target_reached" | "secured";
+
+export type SessionGoal = {
+  targetProfitFiat: number;
+  deadlineTimestamp: number;
+  startEquity: number;
+  startedAt: number;
+  requiredVelocityPerHour: number;
+  currentVelocityPerHour: number;
+  currentProfitFiat: number;
+  aggressiveness: AggressivenessState;
+  statusLabel: string;
 };
 
 export type MacroWebhookPayload = {
@@ -499,6 +520,7 @@ export type DeskState = {
   };
   sentinel?: SentinelTelemetry;
   liquidityHunter?: LiquidityHunterTelemetry;
+  sessionGoal?: SessionGoal;
   mt5Live?: {
     connected: boolean;
     updatedAt: number;

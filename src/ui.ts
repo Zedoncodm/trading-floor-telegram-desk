@@ -212,12 +212,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #deskStatusStrip,
     body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #deskFloatingBadge,
+    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #goalTrackerWidget,
     body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #panicDock {
       opacity: 0;
       transform: translateY(14px);
       pointer-events: none;
     }
-    #deskStatusStrip, #deskFloatingBadge, #panicDock {
+    #deskStatusStrip, #deskFloatingBadge, #goalTrackerWidget, #panicDock {
       transition: opacity 0.32s var(--spring-fluid), transform 0.34s var(--spring-fluid);
     }
     body.nav-pinned #topNav,
@@ -512,6 +513,127 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: rgba(244, 63, 94, 0.20);
       border-color: var(--down-ring);
       color: #fda4af;
+    }
+
+    /* ================= LIVE GOAL TRACKER WIDGET ================= */
+    #goalTrackerWidget {
+      position: fixed;
+      top: 76px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 36;
+      width: 90%;
+      max-width: 580px;
+      background: var(--bg-panel);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--ring-1);
+      border-radius: var(--radius-lg);
+      padding: 10px 14px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.55);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    #goalTrackerWidget.lagging {
+      border-color: rgba(239, 68, 68, 0.7);
+      box-shadow: 0 0 24px rgba(239, 68, 68, 0.35);
+      animation: pulseLagging 1.8s infinite;
+    }
+    #goalTrackerWidget.reached {
+      border-color: rgba(16, 185, 129, 0.7);
+      box-shadow: 0 0 24px rgba(16, 185, 129, 0.35);
+    }
+    @keyframes pulseLagging {
+      0%, 100% { border-color: rgba(239, 68, 68, 0.6); box-shadow: 0 0 16px rgba(239, 68, 68, 0.25); }
+      50% { border-color: rgba(249, 115, 22, 0.9); box-shadow: 0 0 30px rgba(239, 68, 68, 0.55); }
+    }
+    .goal-tracker-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .goal-tracker-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    #goalTrackerWidget.lagging .goal-tracker-dot {
+      background: #ef4444;
+      box-shadow: 0 0 8px #ef4444;
+      animation: blinkRed 1s infinite;
+    }
+    #goalTrackerWidget.reached .goal-tracker-dot {
+      background: #10b981;
+      box-shadow: 0 0 8px #10b981;
+    }
+    @keyframes blinkRed {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+    .goal-status-badge {
+      font-size: 10px;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: var(--bg-hover);
+      border: 1px solid var(--ring-1);
+      color: var(--text-muted);
+    }
+    #goalTrackerWidget.lagging .goal-status-badge {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    #goalTrackerWidget.reached .goal-status-badge {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: #6ee7b7;
+    }
+    .goal-metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .goal-metric-cell {
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: var(--radius-sm);
+      padding: 4px 6px;
+      text-align: center;
+    }
+    .goal-metric-lbl {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+    .goal-metric-val {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+    .goal-progress-wrap {
+      width: 100%;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+    .goal-progress-bar {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      transition: width 0.4s ease;
+    }
+    #goalTrackerWidget.lagging .goal-progress-bar {
+      background: linear-gradient(90deg, #f97316, #ef4444);
+    }
+    #goalTrackerWidget.reached .goal-progress-bar {
+      background: linear-gradient(90deg, #10b981, #14b8a6);
     }
 
     /* ================= GLASS CARD ================= */
@@ -1191,6 +1313,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </nav>
 
     <div class="nav-actions">
+      <!-- FAST STRATEGY SWITCHER (HUD) -->
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="topActiveRegimeSelect" style="font-size:10px;font-family:var(--font-mono);font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">RÉGIME :</label>
+        <select id="topActiveRegimeSelect" class="pill-btn mono" style="background:var(--bg-panel);border:1px solid var(--ring-1);font-size:11px;font-weight:700;padding:4px 8px;cursor:pointer;outline:none" onchange="quickSwitchRegime(this.value)" title="Changer le régime de trading en direct">
+          <option value="standard">Standard (WFO/GRPO)</option>
+          <option value="macro_fvg">Macro FVG</option>
+          <option value="hft_kamikaze">HFT FIAT-TARGET (KAMIKAZE)</option>
+        </select>
+      </div>
+
       <div style="position:relative;display:inline-block">
         <button class="pill-btn mono" id="navLevBadge" onclick="toggleNavLevDropdown(event)" title="Levier actif (cliquer pour modifier en 1 clic)">x5</button>
         <div id="navLevDropdown" style="display:none;position:absolute;top:calc(100% + 8px);left:0;background:var(--bg-panel);border:1px solid var(--ring-2);box-shadow:0 16px 36px rgba(0,0,0,0.65);border-radius:12px;padding:14px;z-index:99999;width:290px">
@@ -1262,6 +1394,38 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ==================== TAB 1: DESK 3D ==================== -->
   <section id="view-desk" class="view-panel active">
     <div id="canvas3dWrap"></div>
+
+    <!-- LIVE GOAL TRACKER WIDGET FLOATING OVER 3D CANVAS -->
+    <div id="goalTrackerWidget">
+      <div class="goal-tracker-header">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="goal-tracker-dot" id="goalTrackerDot"></span>
+          <span style="font-size:11px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-main)">OBJECTIF FINANCIER DE SESSION</span>
+        </div>
+        <div id="goalTrackerStatusBadge" class="goal-status-badge">EN COURS</div>
+      </div>
+      <div class="goal-metrics-grid">
+        <div class="goal-metric-cell">
+          <div class="goal-metric-lbl">CIBLE</div>
+          <div class="goal-metric-val mono" id="goalTargetVal">$2,000</div>
+        </div>
+        <div class="goal-metric-cell">
+          <div class="goal-metric-lbl">PNL SESSION</div>
+          <div class="goal-metric-val mono up" id="goalCurrentVal">+$0.00</div>
+        </div>
+        <div class="goal-metric-cell">
+          <div class="goal-metric-lbl">ÉCHÉANCE</div>
+          <div class="goal-metric-val mono" id="goalDeadlineVal">--:--</div>
+        </div>
+        <div class="goal-metric-cell">
+          <div class="goal-metric-lbl">CADENCE REQ.</div>
+          <div class="goal-metric-val mono" id="goalVelocityVal">$500/h</div>
+        </div>
+      </div>
+      <div class="goal-progress-wrap">
+        <div id="goalProgressBar" class="goal-progress-bar" style="width:0%"></div>
+      </div>
+    </div>
 
     <div id="deskStatusStrip">
       <div class="badge-chip mono" id="deskMt5LiveChip" style="display:none">🟢 MT5 LIVE</div>
@@ -4050,6 +4214,38 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
     }
 
+    function quickSwitchRegime(val) {
+      var regime = val || 'standard';
+      var sel = document.getElementById('topActiveRegimeSelect');
+      if (sel) sel.value = regime;
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: { regime: regime } }),
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        if (deskState && deskState.settings) deskState.settings.regime = regime;
+        var rChip = document.getElementById('deskRegimeChip');
+        if (rChip) {
+          if (regime === 'hft_kamikaze') {
+            rChip.textContent = '⚡ RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
+            rChip.style.background = 'rgba(239, 68, 68, 0.25)';
+            rChip.style.color = '#fca5a5';
+            rChip.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+          } else if (regime === 'macro_fvg') {
+            rChip.textContent = 'RÉGIME : MACRO FVG';
+            rChip.style.background = '';
+            rChip.style.color = '';
+            rChip.style.borderColor = '';
+          } else {
+            rChip.textContent = 'RÉGIME : STANDARD (WFO/GRPO)';
+            rChip.style.background = '';
+            rChip.style.color = '';
+            rChip.style.borderColor = '';
+          }
+        }
+      }).catch(function(e) { console.error('Error switching regime:', e); });
+    }
+
     function quickApplyLeverage(val) {
       applyLeverageDirectly(val);
     }
@@ -5049,10 +5245,73 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       document.getElementById('heroPendingCount').textContent = String(pending.length);
 
       var rlSum = deskState.rlSummary || {};
-      document.getElementById('deskRegimeChip').textContent = 'RÉGIME : ' + (rlSum.regime || 'MEAN_REVERTING');
+      var activeRegime = (deskState.settings && deskState.settings.regime) || 'standard';
+      var regSel = document.getElementById('topActiveRegimeSelect');
+      if (regSel && regSel.value !== activeRegime) {
+        regSel.value = activeRegime;
+      }
+      var rChip = document.getElementById('deskRegimeChip');
+      if (rChip) {
+        if (activeRegime === 'hft_kamikaze') {
+          rChip.textContent = '⚡ RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
+          rChip.style.background = 'rgba(239, 68, 68, 0.25)';
+          rChip.style.color = '#fca5a5';
+          rChip.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+        } else if (activeRegime === 'macro_fvg') {
+          rChip.textContent = 'RÉGIME : MACRO FVG';
+          rChip.style.background = '';
+          rChip.style.color = '';
+          rChip.style.borderColor = '';
+        } else {
+          rChip.textContent = 'RÉGIME : ' + (rlSum.regime || 'STANDARD (WFO/GRPO)');
+          rChip.style.background = '';
+          rChip.style.color = '';
+          rChip.style.borderColor = '';
+        }
+      }
       document.getElementById('deskRlChip').textContent = 'IA ÉPISODE #' + (rlSum.totalEpisodes || 0);
       var shieldOn = (deskState.volatilityShieldUntil || 0) > Date.now();
       document.getElementById('deskShieldChip').style.display = shieldOn ? 'inline-flex' : 'none';
+
+      // Live Goal Tracker Widget Update
+      var goal = deskState.sessionGoal;
+      var goalWidget = document.getElementById('goalTrackerWidget');
+      if (goal && goalWidget) {
+        var gTarget = goal.targetProfitFiat || 2000;
+        var gCurrent = goal.currentProfitFiat || 0;
+        var gReqVel = goal.requiredVelocityPerHour || 0;
+        var gAgg = goal.aggressiveness || 'normal';
+        var gStatus = goal.statusLabel || 'SUR LA TRAJECTOIRE';
+
+        var dDate = new Date(goal.deadlineTimestamp || (Date.now() + 4 * 3600 * 1000));
+        var dStr = String(dDate.getHours()).padStart(2, '0') + ':' + String(dDate.getMinutes()).padStart(2, '0');
+
+        var tgtEl = document.getElementById('goalTargetVal');
+        if (tgtEl) tgtEl.textContent = '$' + Number(gTarget).toLocaleString();
+        var gCurEl = document.getElementById('goalCurrentVal');
+        if (gCurEl) {
+          gCurEl.textContent = (gCurrent >= 0 ? '+$' : '-$') + Math.abs(gCurrent).toFixed(2);
+          gCurEl.className = 'goal-metric-val mono ' + (gCurrent >= 0 ? 'up' : 'down');
+        }
+        var deadEl = document.getElementById('goalDeadlineVal');
+        if (deadEl) deadEl.textContent = dStr;
+        var velEl = document.getElementById('goalVelocityVal');
+        if (velEl) velEl.textContent = '$' + Math.round(gReqVel) + '/h';
+
+        var statBadge = document.getElementById('goalTrackerStatusBadge');
+        if (statBadge) statBadge.textContent = gStatus;
+
+        var pct = Math.min(100, Math.max(0, (gCurrent / gTarget) * 100));
+        var progBar = document.getElementById('goalProgressBar');
+        if (progBar) progBar.style.width = pct.toFixed(1) + '%';
+
+        goalWidget.classList.remove('lagging', 'reached');
+        if (gAgg === 'lagging_aggressive') {
+          goalWidget.classList.add('lagging');
+        } else if (gAgg === 'target_reached') {
+          goalWidget.classList.add('reached');
+        }
+      }
 
       var activeSyms = s.symbols || ['BTCUSDT', 'ETHUSDT'];
       var chkHost = document.getElementById('assetChecklistHost');

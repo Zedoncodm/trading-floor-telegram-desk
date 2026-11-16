@@ -96,17 +96,19 @@ const STRATEGIES: PlayKind[] = [
   "HFT_OrderFlow_Imbalance",
   "Session_VWAP_Reversion",
   "Macro_FVG_Mitigation",
+  "HFT_Kamikaze_FiatTarget",
   "breakout",
   "fade",
 ];
 
 function defaultStrategyWeights(): StrategyWeights {
   return {
-    HFT_OrderFlow_Imbalance: 0.25,
-    Session_VWAP_Reversion: 0.25,
-    Macro_FVG_Mitigation: 0.20,
-    breakout: 0.15,
-    fade: 0.15,
+    HFT_OrderFlow_Imbalance: 0.2,
+    Session_VWAP_Reversion: 0.2,
+    Macro_FVG_Mitigation: 0.2,
+    HFT_Kamikaze_FiatTarget: 0.2,
+    breakout: 0.1,
+    fade: 0.1,
   };
 }
 
