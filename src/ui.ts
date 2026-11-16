@@ -1509,52 +1509,96 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- 2. RISQUE PAR TRADE (3 MODES) -->
+        <!-- 2. RISQUE PAR TRADE (3 MODES — DÉBLOQUÉ EN EURO) -->
         <div class="risk-field-card">
           <div class="risk-field-head">
             <div class="risk-field-title">
-              2. Risque par trade
-              <span class="info-tip" data-tip="Somme maximale que vous acceptez de perdre si un trade touche son stop-loss. Ex. : 1 % sur un compte de 10 000 € = 100 € perdus maximum si le trade échoue. Valeur recommandée : 1 % à 2 %.">?</span>
+              2. Risque par trade (Débloqué en € / $)
+              <span class="info-tip" data-tip="Somme maximale que vous acceptez de perdre sur une position si le stop est touché. Débloqué : aucun bridage arbitraire, vous pouvez définir exactement 25 €, 50 €, 100 €, 250 €, 500 € ou plus selon votre stratégie.">?</span>
             </div>
             <span id="badgeRiskLevel" class="level-badge balanced">🔵 Équilibré</span>
           </div>
-          <div class="risk-field-desc">Montant maximal mis en jeu sur une seule position en cas d'échec.</div>
+          <div class="risk-field-desc">Montant maximal mis en jeu sur une seule position en cas d'échec (sans plafond arbitraire).</div>
           <div class="mode-switch-row" id="riskModeSwitch">
-            <button class="mode-switch-btn active" data-mode="pct" onclick="setRiskMode('pct')">% Capital</button>
-            <button class="mode-switch-btn" data-mode="pips" onclick="setRiskMode('pips')">Pips</button>
-            <button class="mode-switch-btn" data-mode="amount" onclick="setRiskMode('amount')">Montant (€/$)</button>
+            <button type="button" class="mode-switch-btn active" data-mode="pct" onclick="setRiskMode('pct')">% Capital</button>
+            <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setRiskMode('amount')">Montant (€ / $)</button>
+            <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setRiskMode('pips')">Pips</button>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <input id="cfgRiskPct" type="number" step="0.1" min="0.1" max="20" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
-            <input id="cfgRiskPips" type="number" step="1" min="1" max="500" value="25" class="input-dark mono" style="flex:1;display:none" oninput="updateLiveRiskCalculator()" />
-            <input id="cfgRiskAmount" type="number" step="10" min="5" max="100000" value="100" class="input-dark mono" style="flex:1;display:none" oninput="updateLiveRiskCalculator()" />
+            <input id="cfgRiskPct" type="number" step="0.1" min="0.1" max="100" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+            <input id="cfgRiskAmount" type="number" step="5" min="1" max="1000000" value="100" class="input-dark mono" style="flex:1;display:none" oninput="syncRiskAmountToSl(this.value); updateLiveRiskCalculator()" />
+            <input id="cfgRiskPips" type="number" step="1" min="1" max="5000" value="25" class="input-dark mono" style="flex:1;display:none" oninput="updateLiveRiskCalculator()" />
             <span id="cfgRiskUnitLbl" class="mono" style="font-weight:700;min-width:44px">%</span>
           </div>
-          <div class="reco-hint">Recommandé : 1 % à 2 % du capital par position.</div>
+          <div id="riskAmountPresets" style="display:none;gap:6px;flex-wrap:wrap;margin-top:7px">
+            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(25)">25 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(50)">50 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(100)">100 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(250)">250 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(500)">500 €</button>
+          </div>
+          <div class="reco-hint">En mode Montant (€/$), le sizing est calibré pour ne risquer que cette somme exacte.</div>
         </div>
 
-        <!-- 3. MULTIPLICATEUR STOP ATR + APERÇU VISUEL -->
+        <!-- 3. STOP-LOSS & ATR (DÉBLOQUÉ EN EURO) -->
         <div class="risk-field-card">
           <div class="risk-field-head">
             <div class="risk-field-title">
-              3. Multiplicateur Stop ATR
-              <span class="info-tip" data-tip="L'ATR mesure de combien de points le marché bouge en moyenne sur une bougie. Ex. : si l'ATR vaut 50 pips et le multiplicateur est 1.5x, le stop-loss est placé à 75 pips de l'entrée. Plus le chiffre est grand, plus le stop est loin (moins de sorties prématurées). Recommandé : 1.35x.">?</span>
+              3. Stop-Loss : Montant (€ / $) ou ATR
+              <span class="info-tip" data-tip="En mode Montant (€ / $), le desk coupe automatiquement le trade dès que la perte atteint ce montant (ex. : -50 € ou -100 €) et calcule le prix exact d'invalidation sur MT5. En mode ATR, le stop est placé à X fois l'amplitude moyenne.">?</span>
             </div>
             <span id="badgeAtrLevel" class="level-badge balanced">🔵 Équilibré</span>
           </div>
-          <div class="risk-field-desc">L'ATR mesure l'amplitude moyenne des mouvements du marché. Le stop-loss est placé à X fois cette amplitude : plus le multiplicateur est grand, plus le stop est loin.</div>
-          <div style="display:flex;align-items:center;gap:10px">
-            <input id="cfgAtrSlider" type="range" min="0.3" max="5.0" step="0.05" value="1.35" style="flex:1" oninput="syncAtrInputs(this.value)" />
-            <input id="cfgAtrMult" type="number" step="0.05" min="0.3" max="5" class="input-dark mono" style="width:78px;text-align:center" oninput="syncAtrInputs(this.value)" />
+          <div class="risk-field-desc">Sélectionnez comment placer et déclencher le Stop-Loss : par montant fixe en €/$ ou par volatilité ATR.</div>
+          <div class="mode-switch-row" id="slModeSwitch">
+            <button type="button" class="mode-switch-btn active" data-mode="atr" onclick="setSlMode('atr')">ATR (Volatilité)</button>
+            <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setSlMode('amount')">Montant Fixe (€ / $)</button>
+            <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setSlMode('pips')">Pips</button>
+            <button type="button" class="mode-switch-btn" data-mode="pct" onclick="setSlMode('pct')">% Capital</button>
           </div>
-          <div class="atr-preview-box">
-            <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--fg-2);margin-bottom:4px">
-              <span>Aperçu visuel du Stop-Loss selon l'ATR</span>
-              <span class="mono accent" id="atrPreviewLabel">1.35× ATR</span>
+
+          <div id="slAmountWrap" style="display:none;margin-bottom:8px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="cfgSlAmount" type="number" step="5" min="1" max="1000000" value="100" class="input-dark mono" style="flex:1" oninput="syncSlAmountToRisk(this.value); updateLiveRiskCalculator()" />
+              <span class="mono" style="font-weight:700;min-width:44px">€ / $</span>
             </div>
-            <svg id="atrMiniChartSvg" viewBox="0 0 360 92" style="width:100%;height:92px;display:block"></svg>
+            <div id="slAmountPresets" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
+              <button type="button" class="pill-btn" onclick="setQuickSlAmount(25)">-25 €</button>
+              <button type="button" class="pill-btn" onclick="setQuickSlAmount(50)">-50 €</button>
+              <button type="button" class="pill-btn" onclick="setQuickSlAmount(100)">-100 €</button>
+              <button type="button" class="pill-btn" onclick="setQuickSlAmount(250)">-250 €</button>
+              <button type="button" class="pill-btn" onclick="setQuickSlAmount(500)">-500 €</button>
+            </div>
+            <div class="reco-hint">Coupure automatique garantie dès que la perte latente atteint ce montant.</div>
           </div>
-          <div class="reco-hint">Recommandé : 1.2× à 1.8× ATR pour laisser respirer le trade sans risquer trop loin.</div>
+
+          <div id="slAtrWrap">
+            <div style="display:flex;align-items:center;gap:10px">
+              <input id="cfgAtrSlider" type="range" min="0.3" max="5.0" step="0.05" value="1.35" style="flex:1" oninput="syncAtrInputs(this.value)" />
+              <input id="cfgAtrMult" type="number" step="0.05" min="0.3" max="5" class="input-dark mono" style="width:78px;text-align:center" oninput="syncAtrInputs(this.value)" />
+            </div>
+            <div class="atr-preview-box">
+              <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--fg-2);margin-bottom:4px">
+                <span>Aperçu visuel du Stop-Loss selon l'ATR</span>
+                <span class="mono accent" id="atrPreviewLabel">1.35× ATR</span>
+              </div>
+              <svg id="atrMiniChartSvg" viewBox="0 0 360 92" style="width:100%;height:92px;display:block"></svg>
+            </div>
+          </div>
+
+          <div id="slPipsWrap" style="display:none;margin-bottom:8px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="cfgSlPips" type="number" step="1" min="1" max="5000" value="25" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+              <span class="mono" style="font-weight:700;min-width:44px">Pips</span>
+            </div>
+          </div>
+
+          <div id="slPctWrap" style="display:none;margin-bottom:8px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="cfgSlPct" type="number" step="0.1" min="0.1" max="50" value="2.0" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+              <span class="mono" style="font-weight:700;min-width:44px">%</span>
+            </div>
+          </div>
         </div>
 
         <!-- 4. LIMITES DE PERTE MAXIMALE + ARRÊT AUTO -->
@@ -1581,14 +1625,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               </div>
             </div>
             <div>
-              <label class="field-lbl">Perte max / trade (plafond)</label>
+              <label class="field-lbl">Plafond perte / trade (0 = off)</label>
               <div style="display:flex;gap:4px">
                 <select id="cfgMaxTradeLossMode" class="input-dark" style="padding:6px 8px" onchange="updateLiveRiskCalculator()">
-                  <option value="pct">%</option>
                   <option value="amount">€ / $</option>
+                  <option value="pct">%</option>
                   <option value="pips">Pips</option>
                 </select>
-                <input id="cfgMaxTradeLossVal" type="number" step="0.5" min="0.2" max="500000" value="3" class="input-dark mono" style="width:100%" oninput="updateLiveRiskCalculator()" />
+                <input id="cfgMaxTradeLossVal" type="number" step="10" min="0" max="500000" value="0" class="input-dark mono" style="width:100%" oninput="updateLiveRiskCalculator()" />
               </div>
             </div>
           </div>
@@ -1610,25 +1654,32 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- 5. TAKE PROFIT & OBJECTIF DE PROFIT DU JOUR -->
+        <!-- 5. TAKE PROFIT (DÉBLOQUÉ EN EURO) & OBJECTIF DU JOUR -->
         <div class="risk-field-card">
           <div class="risk-field-head">
             <div class="risk-field-title">
-              5. Take Profit &amp; Objectif du jour
-              <span class="info-tip" data-tip="Choisissez comment encaisser automatiquement vos gains. Ex. en mode Montant : « fermer la position dès que je suis à +100 € ». Conseillé : Ratio 2.0R (viser 2 fois ce qu'on risque).">?</span>
+              5. Take Profit (Débloqué en € / $) &amp; Objectif du jour
+              <span class="info-tip" data-tip="En mode Montant (€ / $), le trade se ferme automatiquement dès que le gain atteint ce montant (ex. : +100 € ou +200 €). Débloqué : aucun bridage de gain.">?</span>
             </div>
             <span class="level-badge balanced">Objectif</span>
           </div>
-          <div class="risk-field-desc">Règle de prise de profit automatique par position, plus un seuil optionnel pour encaisser tous les trades de la journée.</div>
+          <div class="risk-field-desc">Règle de prise de profit automatique par position en € / $, ratio R ou pips, plus objectif journalier optionnel.</div>
           <div class="mode-switch-row" id="tpModeSwitch">
-            <button class="mode-switch-btn active" data-mode="rr" onclick="setTpMode('rr')">Ratio (R)</button>
-            <button class="mode-switch-btn" data-mode="pips" onclick="setTpMode('pips')">Pips</button>
-            <button class="mode-switch-btn" data-mode="pct" onclick="setTpMode('pct')">%</button>
-            <button class="mode-switch-btn" data-mode="amount" onclick="setTpMode('amount')">Montant (€/$)</button>
+            <button type="button" class="mode-switch-btn active" data-mode="rr" onclick="setTpMode('rr')">Ratio (R)</button>
+            <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setTpMode('amount')">Montant (€ / $)</button>
+            <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setTpMode('pips')">Pips</button>
+            <button type="button" class="mode-switch-btn" data-mode="pct" onclick="setTpMode('pct')">% Capital</button>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-            <input id="cfgTpVal" type="number" step="0.1" min="0.2" max="500000" value="2.0" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+            <input id="cfgTpVal" type="number" step="0.1" min="0.2" max="1000000" value="2.0" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
             <span id="cfgTpExampleLbl" style="font-size:11px;color:var(--fg-2)">Ex. : viser 2× le risque</span>
+          </div>
+          <div id="tpAmountPresets" style="display:none;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(50)">+50 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(100)">+100 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(200)">+200 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(500)">+500 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(1000)">+1 000 €</button>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--ring-1)">
             <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer">
@@ -1638,6 +1689,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <input id="cfgDailyTpVal" type="number" step="25" min="10" max="500000" value="500" class="input-dark mono" style="width:92px" oninput="updateLiveRiskCalculator()" />
             <select id="cfgDailyTpMode" class="input-dark" style="padding:6px 8px" onchange="updateLiveRiskCalculator()">
               <option value="amount">€ / $</option>
+              <option value="pct">%</option>
+            </select>
+          </div>
+        </div>
               <option value="pct">%</option>
             </select>
           </div>
@@ -3784,8 +3839,46 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     // ==================== STRATÉGIE & GESTION DU RISQUE DÉBUTANT / PRO ====================
     var currentRiskMode = 'pct';
+    var currentSlMode = 'atr';
     var currentTpMode = 'rr';
     var pendingDangerousSettings = null;
+
+    function setQuickRiskAmount(amt) {
+      setRiskMode('amount');
+      var el = document.getElementById('cfgRiskAmount');
+      if (el) el.value = String(amt);
+      var slEl = document.getElementById('cfgSlAmount');
+      if (slEl) slEl.value = String(amt);
+      updateRiskLevelBadges();
+      updateLiveRiskCalculator();
+    }
+
+    function setQuickSlAmount(amt) {
+      setSlMode('amount');
+      var el = document.getElementById('cfgSlAmount');
+      if (el) el.value = String(amt);
+      var rEl = document.getElementById('cfgRiskAmount');
+      if (rEl) rEl.value = String(amt);
+      updateRiskLevelBadges();
+      updateLiveRiskCalculator();
+    }
+
+    function setQuickTpAmount(amt) {
+      setTpMode('amount');
+      var el = document.getElementById('cfgTpVal');
+      if (el) el.value = String(amt);
+      updateLiveRiskCalculator();
+    }
+
+    function syncRiskAmountToSl(val) {
+      var slEl = document.getElementById('cfgSlAmount');
+      if (slEl && currentSlMode === 'amount') slEl.value = val;
+    }
+
+    function syncSlAmountToRisk(val) {
+      var rEl = document.getElementById('cfgRiskAmount');
+      if (rEl && currentRiskMode === 'amount') rEl.value = val;
+    }
 
     function syncLevFromSlider(val) {
       var n = Math.max(1, Math.min(500, Math.round(Number(val) || 1)));
@@ -3860,10 +3953,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var pipsEl = document.getElementById('cfgRiskPips');
       var amtEl = document.getElementById('cfgRiskAmount');
       var unitLbl = document.getElementById('cfgRiskUnitLbl');
+      var presets = document.getElementById('riskAmountPresets');
       if (pctEl) pctEl.style.display = currentRiskMode === 'pct' ? 'block' : 'none';
       if (pipsEl) pipsEl.style.display = currentRiskMode === 'pips' ? 'block' : 'none';
       if (amtEl) amtEl.style.display = currentRiskMode === 'amount' ? 'block' : 'none';
+      if (presets) presets.style.display = currentRiskMode === 'amount' ? 'flex' : 'none';
       if (unitLbl) unitLbl.textContent = currentRiskMode === 'pct' ? '%' : currentRiskMode === 'pips' ? 'Pips' : '€ / $';
+      updateRiskLevelBadges();
+      updateLiveRiskCalculator();
+    }
+
+    function setSlMode(m) {
+      currentSlMode = m || 'atr';
+      document.querySelectorAll('#slModeSwitch .mode-switch-btn').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-mode') === currentSlMode);
+      });
+      var amtWrap = document.getElementById('slAmountWrap');
+      var atrWrap = document.getElementById('slAtrWrap');
+      var pipsWrap = document.getElementById('slPipsWrap');
+      var pctWrap = document.getElementById('slPctWrap');
+      if (amtWrap) amtWrap.style.display = currentSlMode === 'amount' ? 'block' : 'none';
+      if (atrWrap) atrWrap.style.display = currentSlMode === 'atr' ? 'block' : 'none';
+      if (pipsWrap) pipsWrap.style.display = currentSlMode === 'pips' ? 'block' : 'none';
+      if (pctWrap) pctWrap.style.display = currentSlMode === 'pct' ? 'block' : 'none';
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
@@ -3874,11 +3986,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         btn.classList.toggle('active', btn.getAttribute('data-mode') === currentTpMode);
       });
       var exLbl = document.getElementById('cfgTpExampleLbl');
+      var presets = document.getElementById('tpAmountPresets');
+      if (presets) presets.style.display = currentTpMode === 'amount' ? 'flex' : 'none';
       if (exLbl) {
         if (currentTpMode === 'rr') exLbl.textContent = 'Ex. : 2.0 = viser 2× le risque';
+        else if (currentTpMode === 'amount') exLbl.textContent = 'Ex. : 100 = encaisser dès +100 € de profit';
         else if (currentTpMode === 'pips') exLbl.textContent = 'Ex. : 50 = fermer à +50 pips';
         else if (currentTpMode === 'pct') exLbl.textContent = 'Ex. : 3.0 = gain de 3 % du compte';
-        else exLbl.textContent = 'Ex. : 100 = fermer dès +100 € de profit';
       }
       updateLiveRiskCalculator();
     }
@@ -4007,18 +4121,30 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var rPips = Number(document.getElementById('cfgRiskPips')?.value || 25);
       var rAmt = Number(document.getElementById('cfgRiskAmount')?.value || 100);
 
+      var slMode = currentSlMode;
+      var slAmt = Number(document.getElementById('cfgSlAmount')?.value || rAmt);
+
       var riskAmountUsd = 0;
-      if (rMode === 'pct') riskAmountUsd = (eq * rPct) / 100;
-      else if (rMode === 'amount') riskAmountUsd = rAmt;
-      else riskAmountUsd = Math.max(10, rPips * 4.0);
+      if (slMode === 'amount' || rMode === 'amount') {
+        riskAmountUsd = slMode === 'amount' ? slAmt : rAmt;
+      } else if (rMode === 'pct') {
+        riskAmountUsd = (eq * rPct) / 100;
+      } else {
+        riskAmountUsd = Math.max(10, rPips * 4.0);
+      }
 
       var tpMode = currentTpMode;
       var tpVal = Number(document.getElementById('cfgTpVal')?.value || 2.0);
       var targetProfitUsd = 0;
-      if (tpMode === 'rr') targetProfitUsd = riskAmountUsd * tpVal;
-      else if (tpMode === 'amount') targetProfitUsd = tpVal;
-      else if (tpMode === 'pct') targetProfitUsd = (eq * tpVal) / 100;
-      else targetProfitUsd = Math.max(10, tpVal * 4.0);
+      if (tpMode === 'amount') {
+        targetProfitUsd = tpVal;
+      } else if (tpMode === 'rr') {
+        targetProfitUsd = riskAmountUsd * tpVal;
+      } else if (tpMode === 'pct') {
+        targetProfitUsd = (eq * tpVal) / 100;
+      } else {
+        targetProfitUsd = Math.max(10, tpVal * 4.0);
+      }
 
       var ratio = riskAmountUsd > 0 ? (targetProfitUsd / riskAmountUsd).toFixed(2) : '1.00';
 
@@ -4034,11 +4160,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       box.innerHTML =
         '<div style="font-size:12.5px;font-weight:700;color:var(--fg-0);margin-bottom:4px">' +
-          '📊 Simulation en direct (sur capital de ' + Number(eq).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + cur + ') :' +
+          '📊 Simulation en direct (sur capital de ' + Number(eq).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + cur + ' · Débloqué en Euro) :' +
         '</div>' +
         '<div style="font-size:12px;line-height:1.55;color:var(--fg-1)">' +
-          'Avec ces réglages, tu risques <strong class="down">' + Number(riskAmountUsd).toFixed(2) + ' ' + cur + '</strong> par trade pour viser un gain de <strong class="up">' + Number(targetProfitUsd).toFixed(2) + ' ' + cur + '</strong> (Ratio 1 : ' + ratio + ' · Levier ' + lev + 'x).<br>' +
-          'Coupe-circuit perte max / jour : <strong class="down">' + Number(dayLossVal).toFixed(2) + ' ' + cur + '</strong>' +
+          '• <strong>Stop-Loss (Perte max / trade) :</strong> <strong class="down">-' + Number(riskAmountUsd).toFixed(2) + ' ' + cur + '</strong> (coupure automatique garantie si touché)<br>' +
+          '• <strong>Take-Profit (Cible de gain) :</strong> <strong class="up">+' + Number(targetProfitUsd).toFixed(2) + ' ' + cur + '</strong> (clôture automatique dès le montant atteint)<br>' +
+          '• <strong>Ratio R/R :</strong> 1 : ' + ratio + ' (Levier ' + lev + 'x · Débloqué sans bridage arbitraire)<br>' +
+          '• <strong>Coupe-circuit perte max / jour :</strong> <strong class="down">' + Number(dayLossVal).toFixed(2) + ' ' + cur + '</strong>' +
           (dailyTpOn ? ' · Prise de profit journalière : <strong class="up">+' + Number(dailyTpTarget).toFixed(2) + ' ' + cur + '</strong>' : '') +
         '</div>';
     }
@@ -4054,12 +4182,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var rAmt = Number(document.getElementById('cfgRiskAmount')?.value || 100);
       var atr = Number(document.getElementById('cfgAtrMult')?.value || 1.35);
 
+      var slMode = currentSlMode;
+      var slVal = slMode === 'amount' ? Number(document.getElementById('cfgSlAmount')?.value || rAmt) : atr;
+
       var dayLossMode = document.getElementById('cfgDayLossMode')?.value || 'pct';
       var dayLossPct = Number(document.getElementById('cfgDayLossPct')?.value || 5) / 100;
       var dayLossVal = Number(document.getElementById('cfgDayLossVal')?.value || 500);
 
-      var tradeLossMode = document.getElementById('cfgMaxTradeLossMode')?.value || 'pct';
-      var tradeLossVal = Number(document.getElementById('cfgMaxTradeLossVal')?.value || 3);
+      var tradeLossMode = document.getElementById('cfgMaxTradeLossMode')?.value || 'amount';
+      var tradeLossVal = Number(document.getElementById('cfgMaxTradeLossVal')?.value || 0);
 
       var totalLossMode = document.getElementById('cfgTotalLossMode')?.value || 'pct';
       var totalLossVal = Number(document.getElementById('cfgTotalLossVal')?.value || 0);
@@ -4074,10 +4205,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var errors = [];
       if (lev < 1 || lev > 500) errors.push('Le levier doit être compris entre 1 et 500.');
-      if (rMode === 'pct' && (rPct <= 0 || rPct > 0.20)) errors.push('Le risque par trade doit être compris entre 0.1 % et 20 %.');
+      if (rMode === 'pct' && (rPct <= 0 || rPct > 1.0)) errors.push('Le risque par trade doit être supérieur à 0.');
       if (rMode === 'amount' && rAmt <= 0) errors.push('Le montant risqué doit être supérieur à 0.');
+      if (slMode === 'amount' && slVal <= 0) errors.push('Le Stop-Loss en euro doit être supérieur à 0.');
       if (atr < 0.3 || atr > 5.0) errors.push('Le multiplicateur ATR doit être compris entre 0.3 et 5.0.');
-      if (dayLossMode === 'pct' && (dayLossPct < 0.005 || dayLossPct > 0.50)) errors.push('La perte max par jour doit être comprise entre 0.5 % et 50 %.');
       if (tpVal <= 0) errors.push('La cible Take Profit doit être supérieure à 0.');
 
       if (errors.length) {
@@ -4094,6 +4225,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         maxRiskPct: rPct,
         riskPips: rPips,
         riskAmount: rAmt,
+        slMode: slMode,
+        slVal: slVal,
         fixedStopAtr: atr,
         maxDayLossMode: dayLossMode,
         maxDayLossPct: dayLossPct,
@@ -4110,7 +4243,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         dailyProfitTargetVal: dailyTpVal
       };
 
-      var isDangerous = lev > 20 || (rMode === 'pct' && rPct > 0.04) || (dayLossMode === 'pct' && dayLossPct > 0.10);
+      var isDangerous = lev > 20 || (rMode === 'pct' && rPct > 0.10) || (dayLossMode === 'pct' && dayLossPct > 0.20);
       if (isDangerous && !skipDangerModal) {
         pendingDangerousSettings = payload;
         var desc = document.getElementById('dangerRiskModalDesc');
@@ -4627,7 +4760,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
 
       var activeId = document.activeElement ? document.activeElement.id : '';
-      var riskInputs = ['cfgLev', 'cfgLevSlider', 'cfgRiskPct', 'cfgRiskPips', 'cfgRiskAmount', 'cfgAtrMult', 'cfgAtrSlider', 'cfgDayLossPct', 'cfgDayLossVal', 'cfgMaxTradeLossVal', 'cfgTotalLossVal', 'cfgTpVal', 'cfgDailyTpVal'];
+      var riskInputs = ['cfgLev', 'cfgLevSlider', 'cfgRiskPct', 'cfgRiskPips', 'cfgRiskAmount', 'cfgSlAmount', 'cfgSlPips', 'cfgSlPct', 'cfgAtrMult', 'cfgAtrSlider', 'cfgDayLossPct', 'cfgDayLossVal', 'cfgMaxTradeLossVal', 'cfgTotalLossVal', 'cfgTpVal', 'cfgDailyTpVal'];
       if (riskInputs.indexOf(activeId) < 0) {
         var levEl = document.getElementById('cfgLev');
         var levSl = document.getElementById('cfgLevSlider');
@@ -4648,6 +4781,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (rAmtEl) { rAmtEl.value = String(s.riskAmount || 100); rAmtEl.style.display = rMode === 'amount' ? 'block' : 'none'; }
         if (rUnit) rUnit.textContent = rMode === 'pct' ? '%' : rMode === 'pips' ? 'Pips' : '€ / $';
 
+        var rPresets = document.getElementById('riskAmountPresets');
+        if (rPresets) rPresets.style.display = rMode === 'amount' ? 'flex' : 'none';
+
+        var slM = s.slMode || 'atr';
+        currentSlMode = slM;
+        document.querySelectorAll('#slModeSwitch .mode-switch-btn').forEach(function (b) {
+          b.classList.toggle('active', b.getAttribute('data-mode') === slM);
+        });
+        var slAmtWrap = document.getElementById('slAmountWrap');
+        var slAtrWrap = document.getElementById('slAtrWrap');
+        var slPipsWrap = document.getElementById('slPipsWrap');
+        var slPctWrap = document.getElementById('slPctWrap');
+        if (slAmtWrap) slAmtWrap.style.display = slM === 'amount' ? 'block' : 'none';
+        if (slAtrWrap) slAtrWrap.style.display = slM === 'atr' ? 'block' : 'none';
+        if (slPipsWrap) slPipsWrap.style.display = slM === 'pips' ? 'block' : 'none';
+        if (slPctWrap) slPctWrap.style.display = slM === 'pct' ? 'block' : 'none';
+        var slAmtEl = document.getElementById('cfgSlAmount');
+        if (slAmtEl) slAmtEl.value = String(slM === 'amount' ? (s.slVal || s.riskAmount || 100) : (s.riskAmount || 100));
+
         var atrVal = Number(s.fixedStopAtr || 1.35);
         var atrSl = document.getElementById('cfgAtrSlider');
         var atrNum = document.getElementById('cfgAtrMult');
@@ -4666,9 +4818,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (dayValEl) { dayValEl.style.display = String(s.maxDayLossVal || 500); dayValEl.style.display = dayMode === 'pct' ? 'none' : 'block'; }
 
         var trModeSel = document.getElementById('cfgMaxTradeLossMode');
-        if (trModeSel) trModeSel.value = s.maxLossPerTradeMode || 'pct';
+        if (trModeSel) trModeSel.value = s.maxLossPerTradeMode || 'amount';
         var trValEl = document.getElementById('cfgMaxTradeLossVal');
-        if (trValEl) trValEl.value = String(s.maxLossPerTradeVal || 3);
+        if (trValEl) trValEl.value = String(s.maxLossPerTradeVal || 0);
 
         var totModeSel = document.getElementById('cfgTotalLossMode');
         if (totModeSel) totModeSel.value = s.maxTotalLossMode || 'pct';
@@ -4685,6 +4837,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         });
         var tpValEl = document.getElementById('cfgTpVal');
         if (tpValEl) tpValEl.value = String(s.tpVal || 2.0);
+
+        var tpPresets = document.getElementById('tpAmountPresets');
+        if (tpPresets) tpPresets.style.display = tpM === 'amount' ? 'flex' : 'none';
 
         var dailyTpChk = document.getElementById('cfgDailyTpEnabled');
         if (dailyTpChk) dailyTpChk.checked = Boolean(s.dailyProfitTargetEnabled);

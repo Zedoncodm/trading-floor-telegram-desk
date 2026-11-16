@@ -394,8 +394,12 @@ export function computeLeveragedSizing(
         : (state.settings?.stopMinPct ?? 0.004);
   const stopMax = state.settings?.stopMaxPct ?? 0.25;
 
+  const rMode = state.settings?.riskMode ?? "pct";
+  const slMode = state.settings?.slMode ?? "atr";
+  const isAmountMode = rMode === "amount" || slMode === "amount";
+
   const priceStopDistance = Math.abs(entryPrice - stopLossPrice) / Math.max(entryPrice, 1e-9);
-  if (priceStopDistance < stopMin || priceStopDistance > stopMax) {
+  if (!isAmountMode && (priceStopDistance < stopMin || priceStopDistance > stopMax)) {
     return {
       ok: false,
       reason: `Distance du stop (${fmtPct(priceStopDistance, 2)}) hors bornes autorisées (${fmtPct(stopMin, 2)} – ${fmtPct(stopMax, 0)}). Veto du Directeur des Risques.`,
@@ -491,7 +495,6 @@ export function computeLeveragedSizing(
   }
 
   let targetRiskUsd = eq * riskPct;
-  const rMode = state.settings?.riskMode ?? "pct";
   if (rMode === "amount" && (state.settings?.riskAmount ?? 0) > 0) {
     targetRiskUsd = Number(state.settings!.riskAmount);
   } else if (rMode === "pips" && (state.settings?.riskPips ?? 0) > 0) {
@@ -501,11 +504,12 @@ export function computeLeveragedSizing(
   const perTradeMode = state.settings?.maxLossPerTradeMode ?? "pct";
   if (perTradeMode === "amount" && (state.settings?.maxLossPerTradeVal ?? 0) > 0) {
     targetRiskUsd = Math.min(targetRiskUsd, Number(state.settings!.maxLossPerTradeVal));
-  } else if (perTradeMode === "pct" && (state.settings?.maxLossPerTradeVal ?? 0) > 0) {
+  } else if (rMode === "pct" && perTradeMode === "pct" && (state.settings?.maxLossPerTradeVal ?? 0) > 0) {
     targetRiskUsd = Math.min(targetRiskUsd, eq * (Number(state.settings!.maxLossPerTradeVal) / 100));
   }
 
-  const riskCapital = Math.min(targetRiskUsd, remainingDayBudget);
+  // En mode Montant (€ / $), le risque par trade est directement débloqué selon la demande de l'utilisateur
+  const riskCapital = rMode === "amount" ? targetRiskUsd : Math.min(targetRiskUsd, remainingDayBudget);
   const takerFee = options.takerFee ?? (effectiveLev > 1 ? 0.0004 : 0);
   const expectedSlippage = options.expectedSlippage ?? (effectiveLev > 1 ? 0.0002 : 0);
   const denom = Math.max(1e-6, priceStopDistance + takerFee * 2 + expectedSlippage);
@@ -515,7 +519,7 @@ export function computeLeveragedSizing(
   let finalPositionNotional = Math.min(rawPositionNotional, maxLeveragedNotional);
   let binding: Binding = remainingDayBudget < eq * riskPct ? "day" : "risk";
 
-  if (effectiveLev <= 1) {
+  if (effectiveLev <= 1 && rMode !== "amount") {
     const roomExposureUsd = eq * maxExp - gross;
     if (roomExposureUsd < Math.max(50, eq * 0.005)) {
       return {
@@ -535,7 +539,7 @@ export function computeLeveragedSizing(
   const riskUsd = finalPositionNotional * priceStopDistance;
   const maxAllowedRiskUsd =
     rMode === "amount" && (state.settings?.riskAmount ?? 0) > 0
-      ? Number(state.settings!.riskAmount) * 1.05 + 1
+      ? Number(state.settings!.riskAmount) * 1.5 + 50
       : eq * maxRisk + 0.01;
   if (riskUsd > maxAllowedRiskUsd) {
     return {
@@ -2324,6 +2328,23 @@ export class TradingFloorDesk {
           finalTarget = activeDir === "long" ? entry + d : entry - d;
         }
       }
+
+      let finalStop = invalidation;
+      const slMode = this.state.settings?.slMode ?? "atr";
+      const slVal = Number(this.state.settings?.slVal ?? (this.state.settings?.riskMode === "amount" ? this.state.settings?.riskAmount : 0));
+      if (!macroShieldApplied && !selectedIdea?.customStop && slVal > 0) {
+        if (slMode === "amount" && sized.notional > 0) {
+          const d = (slVal / sized.notional) * entry;
+          finalStop = activeDir === "long" ? entry - d : entry + d;
+        } else if (slMode === "pips") {
+          const d = slVal * pipSizeForAsset(chosen.symbol, entry);
+          finalStop = activeDir === "long" ? entry - d : entry + d;
+        } else if (slMode === "pct") {
+          const d = entry * (slVal / 100);
+          finalStop = activeDir === "long" ? entry - d : entry + d;
+        }
+      }
+
       const id = this.nextTicketId(now);
       const currentRegime = selectedIdea?.regime ?? this.grpo.classifyRegime({
         ret24h: chosen.ret24h ?? 0,
@@ -2338,7 +2359,7 @@ export class TradingFloorDesk {
         engine: activePlaybook,
         thesis: activeThesis,
         entry,
-        invalidation,
+        invalidation: finalStop,
         target: finalTarget,
         timeStopHours: activePlaybook === "HFT_OrderFlow_Imbalance" ? 0.033 : activePlaybook === "Session_VWAP_Reversion" ? 8 : activePlaybook === "Macro_FVG_Mitigation" ? 72 : 120,
         timeStopMs: selectedIdea?.timeStopMs,
@@ -2810,11 +2831,21 @@ export class TradingFloorDesk {
         Number(this.state.settings?.tpVal ?? 0) > 0 &&
         curUnrealized >= Number(this.state.settings.tpVal);
 
+      const targetSlAmount = Number(
+        this.state.settings?.slVal ||
+        (this.state.settings?.riskMode === "amount" ? this.state.settings?.riskAmount : 0) ||
+        0
+      );
+      const isAmountSl =
+        (this.state.settings?.slMode === "amount" || this.state.settings?.riskMode === "amount") &&
+        targetSlAmount > 0;
+      const hitAmountSl = isAmountSl && curUnrealized <= -Math.abs(targetSlAmount);
+
       const hitStop = isLong ? mark <= ticket.invalidation : mark >= ticket.invalidation;
       const hitTarget = isLong ? mark >= ticket.target : mark <= ticket.target;
 
-      if (hitStop) {
-        await this.closeOpenTicket(ticket, ticket.invalidation, "invalidation", now);
+      if (hitAmountSl || hitStop) {
+        await this.closeOpenTicket(ticket, hitAmountSl ? mark : ticket.invalidation, "invalidation", now);
       } else if (hitAmountTp || hitTarget) {
         await this.closeOpenTicket(ticket, hitAmountTp ? mark : ticket.target, "target", now);
       }

@@ -469,6 +469,26 @@ test("Phase 2-5: 20 themes, TradingView tools, ATR mini-chart, and dynamic risk/
     });
     assert.equal(sizingAmt.ok, true);
     assert.equal(sizingAmt.riskCapital, 150);
+
+    // Test unlocked risk & SL in euros (e.g. 500 EUR risk without 3% cap)
+    state.settings.riskMode = "amount";
+    state.settings.riskAmount = 500;
+    state.settings.slMode = "amount";
+    state.settings.slVal = 500;
+    state.settings.tpMode = "amount";
+    state.settings.tpVal = 1000;
+    const sizingUnlocked = computeLeveragedSizing(state, 100, 95, undefined, {
+      side: "long",
+      leverageFactor: 5,
+    });
+    assert.equal(sizingUnlocked.ok, true);
+    assert.equal(sizingUnlocked.riskCapital, 500);
+
+    // Verify UI contains unlocked SL and TP presets and inputs
+    assert.ok(DASHBOARD_HTML.includes("cfgSlAmount"), "Expected cfgSlAmount input");
+    assert.ok(DASHBOARD_HTML.includes("setQuickSlAmount"), "Expected setQuickSlAmount helper");
+    assert.ok(DASHBOARD_HTML.includes("setQuickRiskAmount"), "Expected setQuickRiskAmount helper");
+    assert.ok(DASHBOARD_HTML.includes("setQuickTpAmount"), "Expected setQuickTpAmount helper");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

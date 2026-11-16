@@ -135,6 +135,8 @@ export type DeskRuntimeSettings = {
   riskMode?: "pct" | "pips" | "amount";
   riskPips?: number;
   riskAmount?: number;
+  slMode?: "amount" | "atr" | "pips" | "pct";
+  slVal?: number;
   maxLossPerTradeMode?: "pct" | "pips" | "amount";
   maxLossPerTradeVal?: number;
   maxDayLossMode?: "pct" | "pips" | "amount";

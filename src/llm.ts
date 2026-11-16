@@ -149,6 +149,8 @@ export function createDefaultSettings(symbols: string[], scanIntervalMin: number
     riskMode: "pct",
     riskPips: 25,
     riskAmount: 100,
+    slMode: "atr",
+    slVal: 100,
     maxLossPerTradeMode: "pct",
     maxLossPerTradeVal: 3,
     maxDayLossMode: "pct",
