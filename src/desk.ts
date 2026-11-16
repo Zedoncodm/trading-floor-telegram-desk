@@ -2947,12 +2947,46 @@ export class TradingFloorDesk {
         }
       }
 
+      // PRIORITÉ ABSOLUE : Règles utilisateur en montant fixe (€ / $) pour Take-Profit et Stop-Loss
+      const userTpAmount =
+        this.state.settings?.tpMode === "amount" && Number(this.state.settings?.tpVal ?? 0) > 0
+          ? Number(this.state.settings.tpVal)
+          : 0;
+      const rawSlAmt = Number(
+        (this.state.settings?.slMode === "amount" ? this.state.settings?.slVal : 0) ||
+        (this.state.settings?.maxLossPerTradeMode === "amount" ? this.state.settings?.maxLossPerTradeVal : 0) ||
+        (this.state.settings?.riskMode === "amount" ? this.state.settings?.riskAmount : 0) ||
+        0,
+      );
+      const userSlAmount = rawSlAmt > 0 ? rawSlAmt : 0;
+
+      if (userSlAmount > 0 && curUnrealized <= -Math.abs(userSlAmount)) {
+        await this.closeOpenTicket(ticket, mark, "invalidation", now);
+        await this.say(
+          "execution",
+          `🛑 [STOP-LOSS MONTANT] Clôture immédiate de ${ticket.id} (${ticket.asset}) : perte ${fmtSignedUsd(curUnrealized, 2)} <= -${fmtUsd(userSlAmount, 2)}.`,
+          "fill",
+          ticket.id,
+        );
+        continue;
+      }
+      if (userTpAmount > 0 && curUnrealized >= userTpAmount) {
+        await this.closeOpenTicket(ticket, mark, "target", now);
+        await this.say(
+          "execution",
+          `🎯 [TAKE-PROFIT MONTANT] Clôture immédiate de ${ticket.id} (${ticket.asset}) : gain ${fmtSignedUsd(curUnrealized, 2)} >= +${fmtUsd(userTpAmount, 2)}.`,
+          "fill",
+          ticket.id,
+        );
+        continue;
+      }
+
       // MODULE 2 : THE FIAT-TARGET TAKE PROFIT & AUTONOMOUS THF MANAGEMENT (Execution Trader Agent)
-      // Clôture instantanée au marché dès que le PnL non-réalisé atteint la cible fiat (50$-100$),
+      // Clôture instantanée au marché dès que le PnL non-réalisé atteint la cible fiat (50$-100$ ou cible utilisateur),
       // et protection dynamique autonome (Break-Even / Trailing) si le trade part en gain.
       const isKamikazeActive = this.state.settings?.regime === "hft_kamikaze" || engine === "HFT_Kamikaze_FiatTarget";
       if (isKamikazeActive) {
-        const minTarget = this.state.settings?.hftTargetPnlMin ?? 50;
+        const minTarget = userTpAmount > 0 ? Math.min(userTpAmount, this.state.settings?.hftTargetPnlMin ?? 50) : (this.state.settings?.hftTargetPnlMin ?? 50);
         const maxTarget = this.state.settings?.hftTargetPnlMax ?? 100;
         const fiatEval = ExecutionTraderAgent.evaluateFiatTargetTakeProfit(ticket, mark, minTarget, maxTarget);
         if (fiatEval.shouldClose) {

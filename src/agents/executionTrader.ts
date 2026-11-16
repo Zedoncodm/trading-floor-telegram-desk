@@ -18,15 +18,20 @@ export class ExecutionTraderAgent {
     unrealizedPnl: number;
     reason?: string;
   } {
-    const fillPx = ticket.fillPrice ?? ticket.entry;
-    if (!fillPx || fillPx <= 0) {
-      return { shouldClose: false, unrealizedPnl: 0 };
-    }
+    let unrealizedPnl = 0;
+    if (ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)) {
+      unrealizedPnl = ticket.mt5Profit;
+    } else {
+      const fillPx = ticket.fillPrice ?? ticket.entry;
+      if (!fillPx || fillPx <= 0) {
+        return { shouldClose: false, unrealizedPnl: 0 };
+      }
 
-    const isLong = ticket.direction === "long";
-    const priceDiff = isLong ? currentPrice - fillPx : fillPx - currentPrice;
-    const priceMoveRatio = priceDiff / fillPx;
-    const unrealizedPnl = ticket.notional * priceMoveRatio - (ticket.fees || 0);
+      const isLong = ticket.direction === "long";
+      const priceDiff = isLong ? currentPrice - fillPx : fillPx - currentPrice;
+      const priceMoveRatio = priceDiff / fillPx;
+      unrealizedPnl = ticket.notional * priceMoveRatio - (ticket.fees || 0);
+    }
 
     // TRIGGER: If unrealizedPnL is in the $50-$100 target band (or above $50)
     if (unrealizedPnl >= minTargetFiat) {

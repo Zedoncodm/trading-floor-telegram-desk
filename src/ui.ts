@@ -1889,6 +1889,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <span id="cfgTpExampleLbl" style="font-size:11px;color:var(--fg-2)">Ex. : viser 2× le risque</span>
           </div>
           <div id="tpAmountPresets" style="display:none;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(25)">+25 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(50)">+50 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(100)">+100 €</button>
             <button type="button" class="pill-btn" onclick="setQuickTpAmount(200)">+200 €</button>
             <button type="button" class="pill-btn" onclick="setQuickTpAmount(500)">+500 €</button>
             <button type="button" class="pill-btn" onclick="setQuickTpAmount(1000)">+1 000 €</button>
@@ -4746,7 +4749,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         dailyProfitTargetVal: dailyTpVal
       };
 
-      var isDangerous = lev > 50 || (rMode === 'pct' && rPct > 0.10) || (dayLossMode === 'pct' && dayLossPct > 0.20);
+      var prevLev = Number(deskState?.settings?.defaultLeverage || 5);
+      var isDangerous = (lev > 50 && lev !== prevLev) || (rMode === 'pct' && rPct > 0.10) || (dayLossMode === 'pct' && dayLossPct > 0.20);
       if (isDangerous && !skipDangerModal) {
         pendingDangerousSettings = payload;
         var desc = document.getElementById('dangerRiskModalDesc');
