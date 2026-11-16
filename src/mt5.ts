@@ -423,6 +423,57 @@ export class Mt5CloudBridge {
     }
   }
 
+  static computeAssetLots(asset: string, notional: number, entryPrice: number, qty?: number): number {
+    if (!notional || notional <= 0 || !entryPrice || entryPrice <= 0) return 0.01;
+    const sym = (asset || "").trim().toUpperCase();
+    const effectiveQty = qty && qty > 0 ? qty : notional / entryPrice;
+
+    // 1. Paires Forex (EURUSD, GBPUSD, USDJPY, AUDUSD, NZDUSD, USDCAD, USDCHF, EURGBP, etc.)
+    // Taille standard MT5 = 100 000 unités de la devise de base.
+    if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}/.test(sym)) {
+      const baseUnits = sym.startsWith("USD") ? notional : notional / entryPrice;
+      const lots = baseUnits / 100_000;
+      return Number(Math.max(0.01, Math.min(100, Math.round(lots * 100) / 100)).toFixed(2));
+    }
+
+    // 2. Or (XAUUSD, GOLD) -> 1 lot standard = 100 onces troy
+    if (sym === "XAUUSD" || sym === "GOLD") {
+      const ounces = effectiveQty;
+      const lots = ounces / 100;
+      return Number(Math.max(0.01, Math.min(100, Math.round(lots * 100) / 100)).toFixed(2));
+    }
+
+    // 3. Argent (XAGUSD, SILVER) -> 1 lot standard = 5 000 onces troy
+    if (sym === "XAGUSD" || sym === "SILVER") {
+      const ounces = effectiveQty;
+      const lots = ounces / 5000;
+      return Number(Math.max(0.01, Math.min(100, Math.round(lots * 100) / 100)).toFixed(2));
+    }
+
+    // 4. Pétrole brut (USOIL, WTI) -> 1 lot CFD = 100 barils
+    if (sym === "USOIL" || sym === "WTI") {
+      const barrels = effectiveQty;
+      const lots = barrels / 100;
+      return Number(Math.max(0.01, Math.min(100, Math.round(lots * 100) / 100)).toFixed(2));
+    }
+
+    // 5. Crypto (BTCUSDT, ETHUSDT, SOLUSDT, etc.) -> 1 lot = 1 coin / contrat
+    if (/USDT$|USD$/.test(sym) && (sym.startsWith("BTC") || sym.startsWith("ETH") || sym.startsWith("SOL") || sym.startsWith("BNB") || sym.startsWith("XRP") || sym.startsWith("DOGE") || sym.startsWith("AVAX") || sym.startsWith("LINK"))) {
+      const coins = effectiveQty;
+      return Number(Math.max(0.01, Math.min(100, Math.round(coins * 100) / 100)).toFixed(2));
+    }
+
+    // 6. Indices (NQ1!, ES1!, YM1!, FDAX1!, NAS100, US30, US500, GER40)
+    if (/NQ|ES|YM|FDAX|NAS|SPX|US30|US500|GER40|DE40/i.test(sym)) {
+      const contracts = effectiveQty;
+      return Number(Math.max(0.01, Math.min(100, Math.round(contracts * 100) / 100)).toFixed(2));
+    }
+
+    // 7. Actions US (TSLA, MSFT, AAPL, NVDA, AMZN) -> 1 lot = 1 action
+    const shares = effectiveQty;
+    return Number(Math.max(0.01, Math.min(500, Math.round(shares * 100) / 100)).toFixed(2));
+  }
+
   static buildLocalBridgePayload(
     tickets: Array<{
       id: string;
@@ -434,6 +485,9 @@ export class Mt5CloudBridge {
       invalidation: number;
       target: number;
       mt5Lots?: number;
+      notional?: number;
+      qty?: number;
+      leverage?: number;
     }>,
     defaultLots = 0.01,
     now = Date.now(),
@@ -459,8 +513,12 @@ export class Mt5CloudBridge {
         return true;
       })
       .map((t) => {
-        const rawLots = t.mt5Lots ?? defaultLots ?? 0.01;
-        const lots = Number(Math.max(0.01, Math.min(50, rawLots)).toFixed(2));
+        const rawLots = (t.mt5Lots && t.mt5Lots > 0)
+          ? t.mt5Lots
+          : (t.notional && t.notional > 0)
+            ? Mt5CloudBridge.computeAssetLots(t.asset, t.notional, (t.fillPrice ?? t.entry) || 1, t.qty)
+            : defaultLots ?? 0.01;
+        const lots = Number(Math.max(0.01, Math.min(100, rawLots)).toFixed(2));
         return {
           id: t.id,
           symbol: Mt5CloudBridge.mapSymbolToMt5(t.asset),

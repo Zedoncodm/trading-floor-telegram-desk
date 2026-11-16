@@ -491,7 +491,7 @@ export function computeLeveragedSizing(
     const payoffRatio = Math.max(1.1, oos.profitFactor > 0 ? oos.profitFactor : 1.5);
     const fullKelly = Math.max(0.01, (p * payoffRatio - (1 - p)) / payoffRatio);
     const quarterKelly = fullKelly * 0.25 * (0.5 + dsr * 0.8);
-    riskPct = Math.min(maxRisk, Math.max(0.005, quarterKelly));
+    riskPct = Math.min(maxRisk, Math.max(maxRisk * 0.5, quarterKelly * 1.5));
   }
 
   let targetRiskUsd = eq * riskPct;
@@ -2375,6 +2375,7 @@ export class TradingFloorDesk {
         kellyRiskPct: sized.riskPct,
         notional: sized.notional,
         qty: sized.qty,
+        mt5Lots: Mt5CloudBridge.computeAssetLots(chosen.symbol, sized.notional, entry, sized.qty),
         riskUsd: sized.riskUsd,
         riskPct: sized.riskPct,
         exposurePct: sized.exposurePct,
@@ -2506,10 +2507,13 @@ export class TradingFloorDesk {
 
     let mt5Note = "";
     if (this.state.settings.mt5Enabled && this.mt5.isConfigured()) {
+      const lotsToSend = ticket.mt5Lots && ticket.mt5Lots > 0
+        ? ticket.mt5Lots
+        : Mt5CloudBridge.computeAssetLots(ticket.asset, ticket.notional, ticket.fillPrice || ticket.entry, ticket.qty);
       const mt5Res = await this.mt5.openMarketOrder({
         symbol: ticket.asset,
         direction: ticket.direction,
-        lots: this.state.settings.mt5DefaultLots ?? 0.01,
+        lots: lotsToSend,
         stopLoss: ticket.invalidation,
         takeProfit: ticket.target,
         comment: ticket.id,

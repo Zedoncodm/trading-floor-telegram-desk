@@ -489,6 +489,32 @@ test("Phase 2-5: 20 themes, TradingView tools, ATR mini-chart, and dynamic risk/
     assert.ok(DASHBOARD_HTML.includes("setQuickSlAmount"), "Expected setQuickSlAmount helper");
     assert.ok(DASHBOARD_HTML.includes("setQuickRiskAmount"), "Expected setQuickRiskAmount helper");
     assert.ok(DASHBOARD_HTML.includes("setQuickTpAmount"), "Expected setQuickTpAmount helper");
+
+    // Verify Mt5CloudBridge dynamic lot sizing for 100K accounts and leveraged notionals
+    const gbpLots = Mt5CloudBridge.computeAssetLots("GBPUSD", 400_000, 1.32);
+    assert.ok(gbpLots >= 3.0 && gbpLots <= 4.0, `Expected ~3.03 lots for 400k GBPUSD, got ${gbpLots}`);
+
+    const goldLots = Mt5CloudBridge.computeAssetLots("XAUUSD", 200_000, 3864);
+    assert.ok(goldLots >= 0.5 && goldLots <= 0.6, `Expected ~0.52 lot for 200k Gold, got ${goldLots}`);
+
+    const tslaLots = Mt5CloudBridge.computeAssetLots("TSLA", 18_000, 377);
+    assert.ok(tslaLots >= 45 && tslaLots <= 50, `Expected ~47.7 lots for 18k TSLA shares, got ${tslaLots}`);
+
+    // Verify buildLocalBridgePayload does not collapse to 0.01 lot when notional is present
+    const bridgePayload = Mt5CloudBridge.buildLocalBridgePayload([
+      {
+        id: "T-1",
+        asset: "GBPUSD",
+        direction: "long",
+        status: "open",
+        entry: 1.32,
+        invalidation: 1.31,
+        target: 1.34,
+        notional: 400_000,
+      }
+    ]);
+    assert.equal(bridgePayload.ok, true);
+    assert.ok(bridgePayload.openOrders[0].lots >= 3.0, `Expected order lots >= 3.0, got ${bridgePayload.openOrders[0].lots}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

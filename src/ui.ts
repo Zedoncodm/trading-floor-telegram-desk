@@ -1581,11 +1581,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <span id="cfgRiskUnitLbl" class="mono" style="font-weight:700;min-width:44px">%</span>
           </div>
           <div id="riskAmountPresets" style="display:none;gap:6px;flex-wrap:wrap;margin-top:7px">
-            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(25)">25 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(50)">50 €</button>
             <button type="button" class="pill-btn" onclick="setQuickRiskAmount(100)">100 €</button>
             <button type="button" class="pill-btn" onclick="setQuickRiskAmount(250)">250 €</button>
             <button type="button" class="pill-btn" onclick="setQuickRiskAmount(500)">500 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(1000)">1 000 € (1%)</button>
+            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(2000)">2 000 € (2%)</button>
           </div>
           <div class="reco-hint">En mode Montant (€/$), le sizing est calibré pour ne risquer que cette somme exacte.</div>
         </div>
@@ -1725,11 +1725,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <span id="cfgTpExampleLbl" style="font-size:11px;color:var(--fg-2)">Ex. : viser 2× le risque</span>
           </div>
           <div id="tpAmountPresets" style="display:none;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(50)">+50 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(100)">+100 €</button>
             <button type="button" class="pill-btn" onclick="setQuickTpAmount(200)">+200 €</button>
             <button type="button" class="pill-btn" onclick="setQuickTpAmount(500)">+500 €</button>
             <button type="button" class="pill-btn" onclick="setQuickTpAmount(1000)">+1 000 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(2000)">+2 000 €</button>
+            <button type="button" class="pill-btn" onclick="setQuickTpAmount(5000)">+5 000 €</button>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--ring-1)">
             <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer">
