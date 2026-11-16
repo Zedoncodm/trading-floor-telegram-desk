@@ -1693,10 +1693,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             </select>
           </div>
         </div>
-              <option value="pct">%</option>
-            </select>
-          </div>
-        </div>
 
         <!-- 6. CALCULATEUR EN DIRECT & VALIDATION -->
         <div id="liveRiskSummaryBox" class="live-calc-box">
@@ -2377,6 +2373,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
       if (tab === 'strategy') {
         fetchRlMemory();
+        if (!strategyFormInitialized && deskState && deskState.settings) {
+          populateStrategyForm(deskState.settings, false);
+        }
         setTimeout(function () { updateLiveRiskCalculator(); }, 40);
       }
     }
@@ -3841,7 +3840,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     var currentRiskMode = 'pct';
     var currentSlMode = 'atr';
     var currentTpMode = 'rr';
+    var strategyFormInitialized = false;
+    var isStrategyFormDirty = false;
     var pendingDangerousSettings = null;
+
+    function markStrategyFormDirty() {
+      isStrategyFormDirty = true;
+    }
 
     function setQuickRiskAmount(amt) {
       setRiskMode('amount');
@@ -3849,6 +3854,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (el) el.value = String(amt);
       var slEl = document.getElementById('cfgSlAmount');
       if (slEl) slEl.value = String(amt);
+      markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
@@ -3859,6 +3865,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (el) el.value = String(amt);
       var rEl = document.getElementById('cfgRiskAmount');
       if (rEl) rEl.value = String(amt);
+      markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
@@ -3867,6 +3874,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       setTpMode('amount');
       var el = document.getElementById('cfgTpVal');
       if (el) el.value = String(amt);
+      markStrategyFormDirty();
       updateLiveRiskCalculator();
     }
 
@@ -3886,6 +3894,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (el) el.value = String(n);
       var bd = document.getElementById('navLevBadge');
       if (bd) bd.textContent = 'x' + n;
+      markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
@@ -3896,13 +3905,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (el) el.value = String(n);
       var bd = document.getElementById('navLevBadge');
       if (bd) bd.textContent = 'x' + n;
+      markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
 
     function setLevPreset(val) {
       syncLevFromSlider(val);
-      validateAndSaveRiskSettings(true);
+      markStrategyFormDirty();
     }
 
     function syncAtrInputs(val) {
@@ -3914,6 +3924,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var lbl = document.getElementById('atrPreviewLabel');
       if (lbl) lbl.textContent = n.toFixed(2) + '× ATR';
       renderAtrMiniChart(n);
+      markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
@@ -3946,6 +3957,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function setRiskMode(m) {
       currentRiskMode = m || 'pct';
+      markStrategyFormDirty();
       document.querySelectorAll('#riskModeSwitch .mode-switch-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.getAttribute('data-mode') === currentRiskMode);
       });
@@ -3965,6 +3977,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function setSlMode(m) {
       currentSlMode = m || 'atr';
+      markStrategyFormDirty();
       document.querySelectorAll('#slModeSwitch .mode-switch-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.getAttribute('data-mode') === currentSlMode);
       });
@@ -3982,6 +3995,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function setTpMode(m) {
       currentTpMode = m || 'rr';
+      markStrategyFormDirty();
       document.querySelectorAll('#tpModeSwitch .mode-switch-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.getAttribute('data-mode') === currentTpMode);
       });
@@ -4004,16 +4018,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var valEl = document.getElementById('cfgDayLossVal');
       if (pctEl) pctEl.style.display = m === 'pct' ? 'block' : 'none';
       if (valEl) valEl.style.display = m === 'pct' ? 'none' : 'block';
+      markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
 
     function applyRiskProfile(p) {
-      if (p === 'conservative') {
+      markStrategyFormDirty();
+      if (p === 'conservative' || p === 'prudent') {
         syncLevFromSlider(2);
         setRiskMode('pct');
         var rEl = document.getElementById('cfgRiskPct');
         if (rEl) rEl.value = '1.0';
+        setSlMode('atr');
         syncAtrInputs(1.80);
         var dEl = document.getElementById('cfgDayLossMode');
         if (dEl) dEl.value = 'pct';
@@ -4029,11 +4046,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (tpEl) tpEl.value = '2.5';
         var scEl = document.getElementById('cfgAutoStopLossChk');
         if (scEl) scEl.checked = true;
-      } else if (p === 'aggressive') {
+      } else if (p === 'aggressive' || p === 'agressif') {
         syncLevFromSlider(20);
         setRiskMode('pct');
         var rEl = document.getElementById('cfgRiskPct');
         if (rEl) rEl.value = '3.5';
+        setSlMode('atr');
         syncAtrInputs(1.00);
         var dEl = document.getElementById('cfgDayLossMode');
         if (dEl) dEl.value = 'pct';
@@ -4054,6 +4072,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         setRiskMode('pct');
         var rEl = document.getElementById('cfgRiskPct');
         if (rEl) rEl.value = '2.0';
+        setSlMode('atr');
         syncAtrInputs(1.35);
         var dEl = document.getElementById('cfgDayLossMode');
         if (dEl) dEl.value = 'pct';
@@ -4125,12 +4144,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var slAmt = Number(document.getElementById('cfgSlAmount')?.value || rAmt);
 
       var riskAmountUsd = 0;
-      if (slMode === 'amount' || rMode === 'amount') {
-        riskAmountUsd = slMode === 'amount' ? slAmt : rAmt;
+      if (rMode === 'amount') {
+        riskAmountUsd = rAmt;
       } else if (rMode === 'pct') {
         riskAmountUsd = (eq * rPct) / 100;
-      } else {
+      } else if (rMode === 'pips') {
         riskAmountUsd = Math.max(10, rPips * 4.0);
+      } else {
+        riskAmountUsd = slMode === 'amount' ? slAmt : (eq * 0.02);
       }
 
       var tpMode = currentTpMode;
@@ -4169,6 +4190,118 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           '• <strong>Coupe-circuit perte max / jour :</strong> <strong class="down">' + Number(dayLossVal).toFixed(2) + ' ' + cur + '</strong>' +
           (dailyTpOn ? ' · Prise de profit journalière : <strong class="up">+' + Number(dailyTpTarget).toFixed(2) + ' ' + cur + '</strong>' : '') +
         '</div>';
+    }
+
+    function populateStrategyForm(settings, force) {
+      if (!settings) return;
+      if (isStrategyFormDirty && !force) return;
+
+      var lev = settings.defaultLeverage || 5;
+      var levEl = document.getElementById('cfgLev');
+      var levSl = document.getElementById('cfgLevSlider');
+      if (levEl) levEl.value = String(lev);
+      if (levSl) levSl.value = String(lev);
+      var navLev = document.getElementById('navLevBadge');
+      if (navLev) navLev.textContent = 'x' + lev;
+
+      var rMode = settings.riskMode || 'pct';
+      currentRiskMode = rMode;
+      document.querySelectorAll('#riskModeSwitch .mode-switch-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-mode') === rMode);
+      });
+      var rPctEl = document.getElementById('cfgRiskPct');
+      var rPipsEl = document.getElementById('cfgRiskPips');
+      var rAmtEl = document.getElementById('cfgRiskAmount');
+      var rUnit = document.getElementById('cfgRiskUnitLbl');
+      if (rPctEl) {
+        rPctEl.value = String(Number((settings.maxRiskPct !== undefined ? settings.maxRiskPct : 0.02) * 100).toFixed(1));
+        rPctEl.style.display = rMode === 'pct' ? 'block' : 'none';
+      }
+      if (rPipsEl) {
+        rPipsEl.value = String(settings.riskPips || 25);
+        rPipsEl.style.display = rMode === 'pips' ? 'block' : 'none';
+      }
+      if (rAmtEl) {
+        rAmtEl.value = String(settings.riskAmount || 100);
+        rAmtEl.style.display = rMode === 'amount' ? 'block' : 'none';
+      }
+      if (rUnit) rUnit.textContent = rMode === 'pct' ? '%' : rMode === 'pips' ? 'Pips' : '€ / $';
+      var rPresets = document.getElementById('riskAmountPresets');
+      if (rPresets) rPresets.style.display = rMode === 'amount' ? 'flex' : 'none';
+
+      var slM = settings.slMode || 'atr';
+      currentSlMode = slM;
+      document.querySelectorAll('#slModeSwitch .mode-switch-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-mode') === slM);
+      });
+      var slAmtWrap = document.getElementById('slAmountWrap');
+      var slAtrWrap = document.getElementById('slAtrWrap');
+      var slPipsWrap = document.getElementById('slPipsWrap');
+      var slPctWrap = document.getElementById('slPctWrap');
+      if (slAmtWrap) slAmtWrap.style.display = slM === 'amount' ? 'block' : 'none';
+      if (slAtrWrap) slAtrWrap.style.display = slM === 'atr' ? 'block' : 'none';
+      if (slPipsWrap) slPipsWrap.style.display = slM === 'pips' ? 'block' : 'none';
+      if (slPctWrap) slPctWrap.style.display = slM === 'pct' ? 'block' : 'none';
+      var slAmtEl = document.getElementById('cfgSlAmount');
+      if (slAmtEl) slAmtEl.value = String(slM === 'amount' ? (settings.slVal || settings.riskAmount || 100) : (settings.riskAmount || 100));
+
+      var atrVal = Number(settings.fixedStopAtr || 1.35);
+      var atrSl = document.getElementById('cfgAtrSlider');
+      var atrNum = document.getElementById('cfgAtrMult');
+      if (atrSl) atrSl.value = atrVal.toFixed(2);
+      if (atrNum) atrNum.value = atrVal.toFixed(2);
+      var atrLbl = document.getElementById('atrPreviewLabel');
+      if (atrLbl) atrLbl.textContent = atrVal.toFixed(2) + '× ATR';
+      renderAtrMiniChart(atrVal);
+
+      var dayMode = settings.maxDayLossMode || 'pct';
+      var dayModeSel = document.getElementById('cfgDayLossMode');
+      if (dayModeSel) dayModeSel.value = dayMode;
+      var dayPctEl = document.getElementById('cfgDayLossPct');
+      var dayValEl = document.getElementById('cfgDayLossVal');
+      if (dayPctEl) {
+        dayPctEl.value = String(Number((settings.maxDayLossPct || 0.05) * 100).toFixed(1));
+        dayPctEl.style.display = dayMode === 'pct' ? 'block' : 'none';
+      }
+      if (dayValEl) {
+        dayValEl.value = String(settings.maxDayLossVal || 500);
+        dayValEl.style.display = dayMode === 'pct' ? 'none' : 'block';
+      }
+
+      var trModeSel = document.getElementById('cfgMaxTradeLossMode');
+      if (trModeSel) trModeSel.value = settings.maxLossPerTradeMode || 'amount';
+      var trValEl = document.getElementById('cfgMaxTradeLossVal');
+      if (trValEl) trValEl.value = String(settings.maxLossPerTradeVal || 0);
+
+      var totModeSel = document.getElementById('cfgTotalLossMode');
+      if (totModeSel) totModeSel.value = settings.maxTotalLossMode || 'pct';
+      var totValEl = document.getElementById('cfgTotalLossVal');
+      if (totValEl) totValEl.value = String(settings.maxTotalLossVal || 0);
+
+      var autoStopChk = document.getElementById('cfgAutoStopLossChk');
+      if (autoStopChk) autoStopChk.checked = settings.autoStopOnMaxLoss !== false;
+
+      var tpM = settings.tpMode || 'rr';
+      currentTpMode = tpM;
+      document.querySelectorAll('#tpModeSwitch .mode-switch-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-mode') === tpM);
+      });
+      var tpValEl = document.getElementById('cfgTpVal');
+      if (tpValEl) tpValEl.value = String(settings.tpVal || 2.0);
+
+      var tpPresets = document.getElementById('tpAmountPresets');
+      if (tpPresets) tpPresets.style.display = tpM === 'amount' ? 'flex' : 'none';
+
+      var dailyTpChk = document.getElementById('cfgDailyTpEnabled');
+      if (dailyTpChk) dailyTpChk.checked = Boolean(settings.dailyProfitTargetEnabled);
+      var dailyTpValEl = document.getElementById('cfgDailyTpVal');
+      if (dailyTpValEl) dailyTpValEl.value = String(settings.dailyProfitTargetVal || 500);
+      var dailyTpModeSel = document.getElementById('cfgDailyTpMode');
+      if (dailyTpModeSel) dailyTpModeSel.value = settings.dailyProfitTargetMode || 'amount';
+
+      updateRiskLevelBadges();
+      updateLiveRiskCalculator();
+      strategyFormInitialized = true;
     }
 
     function validateAndSaveRiskSettings(skipDangerModal) {
@@ -4274,6 +4407,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         });
         var out = await res.json();
         if (out.ok) {
+          if (deskState) {
+            deskState.settings = Object.assign({}, deskState.settings || {}, settings);
+          }
+          isStrategyFormDirty = false;
           if (btn) {
             btn.textContent = '✅ Réglages enregistrés !';
             setTimeout(function () { if (btn) { btn.textContent = 'Sauvegarder les réglages'; btn.disabled = false; } }, 1800);
@@ -4306,8 +4443,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     function resetRiskToRecommended() {
-      applyRiskProfile('balanced');
-      validateAndSaveRiskSettings(true);
+      applyRiskProfile('equilibre');
+      var alertBox = document.getElementById('riskValidationAlert');
+      if (alertBox) {
+        alertBox.style.color = '#38bdf8';
+        alertBox.style.display = 'block';
+        alertBox.textContent = 'ℹ️ Réglages réinitialisés aux valeurs recommandées (Levier 5x, Risque 2%, Stop ATR 1.35x). Cliquez sur "Sauvegarder les réglages" pour les appliquer.';
+      }
     }
 
     function formatDateDDMMYYYY(d) {
@@ -4759,99 +4901,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (prev && activeSyms.indexOf(prev) >= 0) el.value = prev;
       });
 
-      var activeId = document.activeElement ? document.activeElement.id : '';
-      var riskInputs = ['cfgLev', 'cfgLevSlider', 'cfgRiskPct', 'cfgRiskPips', 'cfgRiskAmount', 'cfgSlAmount', 'cfgSlPips', 'cfgSlPct', 'cfgAtrMult', 'cfgAtrSlider', 'cfgDayLossPct', 'cfgDayLossVal', 'cfgMaxTradeLossVal', 'cfgTotalLossVal', 'cfgTpVal', 'cfgDailyTpVal'];
-      if (riskInputs.indexOf(activeId) < 0) {
-        var levEl = document.getElementById('cfgLev');
-        var levSl = document.getElementById('cfgLevSlider');
-        if (levEl) levEl.value = String(lev);
-        if (levSl) levSl.value = String(lev);
-
-        var rMode = s.riskMode || 'pct';
-        currentRiskMode = rMode;
-        document.querySelectorAll('#riskModeSwitch .mode-switch-btn').forEach(function (b) {
-          b.classList.toggle('active', b.getAttribute('data-mode') === rMode);
-        });
-        var rPctEl = document.getElementById('cfgRiskPct');
-        var rPipsEl = document.getElementById('cfgRiskPips');
-        var rAmtEl = document.getElementById('cfgRiskAmount');
-        var rUnit = document.getElementById('cfgRiskUnitLbl');
-        if (rPctEl) { rPctEl.value = String(Number((s.maxRiskPct || 0.02) * 100).toFixed(1)); rPctEl.style.display = rMode === 'pct' ? 'block' : 'none'; }
-        if (rPipsEl) { rPipsEl.value = String(s.riskPips || 25); rPipsEl.style.display = rMode === 'pips' ? 'block' : 'none'; }
-        if (rAmtEl) { rAmtEl.value = String(s.riskAmount || 100); rAmtEl.style.display = rMode === 'amount' ? 'block' : 'none'; }
-        if (rUnit) rUnit.textContent = rMode === 'pct' ? '%' : rMode === 'pips' ? 'Pips' : '€ / $';
-
-        var rPresets = document.getElementById('riskAmountPresets');
-        if (rPresets) rPresets.style.display = rMode === 'amount' ? 'flex' : 'none';
-
-        var slM = s.slMode || 'atr';
-        currentSlMode = slM;
-        document.querySelectorAll('#slModeSwitch .mode-switch-btn').forEach(function (b) {
-          b.classList.toggle('active', b.getAttribute('data-mode') === slM);
-        });
-        var slAmtWrap = document.getElementById('slAmountWrap');
-        var slAtrWrap = document.getElementById('slAtrWrap');
-        var slPipsWrap = document.getElementById('slPipsWrap');
-        var slPctWrap = document.getElementById('slPctWrap');
-        if (slAmtWrap) slAmtWrap.style.display = slM === 'amount' ? 'block' : 'none';
-        if (slAtrWrap) slAtrWrap.style.display = slM === 'atr' ? 'block' : 'none';
-        if (slPipsWrap) slPipsWrap.style.display = slM === 'pips' ? 'block' : 'none';
-        if (slPctWrap) slPctWrap.style.display = slM === 'pct' ? 'block' : 'none';
-        var slAmtEl = document.getElementById('cfgSlAmount');
-        if (slAmtEl) slAmtEl.value = String(slM === 'amount' ? (s.slVal || s.riskAmount || 100) : (s.riskAmount || 100));
-
-        var atrVal = Number(s.fixedStopAtr || 1.35);
-        var atrSl = document.getElementById('cfgAtrSlider');
-        var atrNum = document.getElementById('cfgAtrMult');
-        if (atrSl) atrSl.value = atrVal.toFixed(2);
-        if (atrNum) atrNum.value = atrVal.toFixed(2);
-        var atrLbl = document.getElementById('atrPreviewLabel');
-        if (atrLbl) atrLbl.textContent = atrVal.toFixed(2) + '× ATR';
-        renderAtrMiniChart(atrVal);
-
-        var dayMode = s.maxDayLossMode || 'pct';
-        var dayModeSel = document.getElementById('cfgDayLossMode');
-        if (dayModeSel) dayModeSel.value = dayMode;
-        var dayPctEl = document.getElementById('cfgDayLossPct');
-        var dayValEl = document.getElementById('cfgDayLossVal');
-        if (dayPctEl) { dayPctEl.value = String(Number((s.maxDayLossPct || 0.05) * 100).toFixed(1)); dayPctEl.style.display = dayMode === 'pct' ? 'block' : 'none'; }
-        if (dayValEl) { dayValEl.style.display = String(s.maxDayLossVal || 500); dayValEl.style.display = dayMode === 'pct' ? 'none' : 'block'; }
-
-        var trModeSel = document.getElementById('cfgMaxTradeLossMode');
-        if (trModeSel) trModeSel.value = s.maxLossPerTradeMode || 'amount';
-        var trValEl = document.getElementById('cfgMaxTradeLossVal');
-        if (trValEl) trValEl.value = String(s.maxLossPerTradeVal || 0);
-
-        var totModeSel = document.getElementById('cfgTotalLossMode');
-        if (totModeSel) totModeSel.value = s.maxTotalLossMode || 'pct';
-        var totValEl = document.getElementById('cfgTotalLossVal');
-        if (totValEl) totValEl.value = String(s.maxTotalLossVal || 0);
-
-        var autoStopChk = document.getElementById('cfgAutoStopLossChk');
-        if (autoStopChk) autoStopChk.checked = s.autoStopOnMaxLoss !== false;
-
-        var tpM = s.tpMode || 'rr';
-        currentTpMode = tpM;
-        document.querySelectorAll('#tpModeSwitch .mode-switch-btn').forEach(function (b) {
-          b.classList.toggle('active', b.getAttribute('data-mode') === tpM);
-        });
-        var tpValEl = document.getElementById('cfgTpVal');
-        if (tpValEl) tpValEl.value = String(s.tpVal || 2.0);
-
-        var tpPresets = document.getElementById('tpAmountPresets');
-        if (tpPresets) tpPresets.style.display = tpM === 'amount' ? 'flex' : 'none';
-
-        var dailyTpChk = document.getElementById('cfgDailyTpEnabled');
-        if (dailyTpChk) dailyTpChk.checked = Boolean(s.dailyProfitTargetEnabled);
-        var dailyTpValEl = document.getElementById('cfgDailyTpVal');
-        if (dailyTpValEl) dailyTpValEl.value = String(s.dailyProfitTargetVal || 500);
-        var dailyTpModeSel = document.getElementById('cfgDailyTpMode');
-        if (dailyTpModeSel) dailyTpModeSel.value = s.dailyProfitTargetMode || 'amount';
-
-        updateRiskLevelBadges();
-        updateLiveRiskCalculator();
+      if (!strategyFormInitialized && s && Object.keys(s).length > 0) {
+        populateStrategyForm(s, false);
       }
+      updateRiskLevelBadges();
+      updateLiveRiskCalculator();
 
+      var activeId = document.activeElement ? document.activeElement.id : '';
       if (['mt5AccountIdInput', 'mt5LoginInput', 'mt5ServerInput', 'mt5LotsInput', 'tgChatIdInput'].indexOf(activeId) < 0) {
         document.getElementById('mt5EnabledChk').checked = Boolean(s.mt5Enabled);
         if (s.metaApiAccountId && !document.getElementById('mt5AccountIdInput').value) document.getElementById('mt5AccountIdInput').value = s.metaApiAccountId;
