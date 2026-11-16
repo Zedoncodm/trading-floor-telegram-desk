@@ -26,6 +26,15 @@ function Test-DeskReady {
   }
 }
 
+# Verification du service FreeLLM Desktop
+$freeLlmExe = "$env:LOCALAPPDATA\Programs\freellmapi-desktop\FreeLLMAPI.exe"
+if (Test-Path $freeLlmExe) {
+  $proc = Get-Process -Name "FreeLLMAPI" -ErrorAction SilentlyContinue
+  if (-not $proc) {
+    Start-Process -FilePath $freeLlmExe -WindowStyle Minimized
+  }
+}
+
 if (-not (Test-DeskReady)) {
   $nodeArgs = "--env-file-if-exists=.env src/main.ts --console"
   Start-Process -FilePath "node" -ArgumentList $nodeArgs -WorkingDirectory $RepoRoot -WindowStyle Hidden
