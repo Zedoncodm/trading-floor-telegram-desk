@@ -1330,7 +1330,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="pill-btn mono" id="navLevBadge" onclick="toggleNavLevDropdown(event)" title="Levier actif (cliquer pour modifier en 1 clic)">x5</button>
         <div id="navLevDropdown" style="display:none;position:absolute;top:calc(100% + 8px);left:0;background:var(--bg-panel);border:1px solid var(--ring-2);box-shadow:0 16px 36px rgba(0,0,0,0.65);border-radius:12px;padding:14px;z-index:99999;width:290px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-weight:700;font-size:12px;letter-spacing:0.02em;color:var(--text-main)">⚡ LEVIER DE TRADING</div>
+            <div style="font-weight:700;font-size:12px;letter-spacing:0.02em;color:var(--text-main)">LEVIER DE TRADING</div>
             <span id="navLevCurrentBadge" class="level-badge prudent" style="font-size:11px">Prudent</span>
           </div>
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;line-height:1.4">
@@ -1348,21 +1348,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
           <div style="display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--ring-1)">
             <input id="navLevQuickInput" type="number" min="1" max="500" value="5" class="input-dark mono" style="width:68px;text-align:center;font-weight:700" onkeydown="if(event.key==='Enter'){quickApplyLeverage(this.value);closeNavLevDropdown();}" />
-            <button type="button" class="pill-btn primary" style="flex:1;font-size:11px;font-weight:700" onclick="quickApplyLeverage(document.getElementById('navLevQuickInput').value); closeNavLevDropdown()">⚡ Appliquer</button>
+            <button type="button" class="pill-btn primary" style="flex:1;font-size:11px;font-weight:700" onclick="quickApplyLeverage(document.getElementById('navLevQuickInput').value); closeNavLevDropdown()">Appliquer</button>
           </div>
           <div style="margin-top:8px;text-align:right">
-            <a href="javascript:void(0)" onclick="closeNavLevDropdown(); switchTab('strategy')" style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:600">⚙️ Tous les réglages de risque →</a>
+            <a href="javascript:void(0)" onclick="closeNavLevDropdown(); switchTab('strategy')" style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:600">Tous les réglages de risque →</a>
           </div>
         </div>
       </div>
       <button id="btnExecMode" class="pill-btn auto-off" onclick="toggleExecutionMode()">Confirmation Humaine</button>
-      <button class="pill-btn primary" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Connecter MT5 Téléphone &amp; Telegram">📱 <span class="btn-text-hide-sm">MT5 &amp; Telegram</span></button>
+      <button class="pill-btn primary" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Connecter MT5 Téléphone &amp; Telegram"><span class="btn-text-hide-sm">MT5 &amp; Telegram</span></button>
       <button id="btnAssetsToggle" class="pill-btn" onclick="toggleAssetDropdown()">Actifs ▾</button>
       <button id="btnPinNav" class="pill-btn" onclick="togglePinNav()" aria-pressed="false" data-tip="Garde la barre toujours visible sur le Desk 3D, ou la masque automatiquement en mode fond d'écran (Raccourci : P)" title="Garde la barre toujours visible / la masque automatiquement (Raccourci : P)">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
         <span id="pinNavLabel" class="btn-text-hide-sm">Barre Auto</span>
       </button>
-      <button class="pill-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" title="Thèmes &amp; Préférences (Raccourci : T)">🎨 <span class="btn-text-hide-sm">Thèmes</span></button>
+      <button class="pill-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" title="Thèmes &amp; Préférences (Raccourci : T)"><span class="btn-text-hide-sm">Thèmes</span></button>
       <!-- PANIC CONTROLS RELOCATED TO HEADER TOP-RIGHT -->
       <button class="pill-btn" style="background:rgba(239,68,68,0.92);color:#fff;border-color:#f87171;font-weight:800;font-size:10.5px;padding:5px 10px" onclick="openPanicModal()" title="Liquider toutes les positions immédiatement">CLOSE ALL</button>
       <button id="btnPanicHalt" class="pill-btn" style="background:#facc15;color:#09090b;border-color:#eab308;font-weight:800;font-size:10.5px;padding:5px 10px" onclick="toggleManualHalt()" title="Mettre le desk en pause immédiate">HALT</button>
@@ -1490,13 +1490,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <button class="seg-btn" data-engine="desk" onclick="setChartEngine(&quot;desk&quot;)">Graphique Desk</button>
           </div>
           <select id="chartSymbolSelect" class="input-dark mono" onchange="onChartSymbolChange()"></select>
-          <button id="btnFavTfStar" class="pill-btn" onclick="toggleCurrentTfFavorite()" title="Ajouter ou retirer cette unité de temps des favoris">☆</button>
-          <button id="btnToggleDrawLayer" class="pill-btn" onclick="toggleDrawLayer()" title="Activer la barre de dessin interactive sur le graphique">✏️ Dessin</button>
+          <button id="btnFavTfStar" class="pill-btn" onclick="toggleCurrentTfFavorite()" title="Ajouter ou retirer cette unité de temps des favoris">FAV</button>
+          <button id="btnToggleDrawLayer" class="pill-btn" onclick="toggleDrawLayer()" title="Activer la barre de dessin interactive sur le graphique">Dessin</button>
           <button class="pill-btn" onclick="refreshChartData()">↻</button>
         </div>
 
         <div class="chart-tf-strip" id="chartTfStrip">
-          <!-- Peuplé dynamiquement : ★ Favoris + 1s, 1m, 2m, 3m, 5m, 10m, 15m, 30m, 1h, 2h, 4h, 1j, 1sem, 1mois -->
+          <!-- Peuplé dynamiquement : Favoris + 1s, 1m, 2m, 3m, 5m, 10m, 15m, 30m, 1h, 2h, 4h, 1j, 1sem, 1mois -->
         </div>
 
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -1528,14 +1528,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <button class="draw-tool-btn" data-tool="fib" onclick="setDrawTool(&quot;fib&quot;)" title="Retracement de Fibonacci">𝍌</button>
           <button class="draw-tool-btn" data-tool="arrow" onclick="setDrawTool(&quot;arrow&quot;)" title="Flèche">↗</button>
           <button class="draw-tool-btn" data-tool="text" onclick="setDrawTool(&quot;text&quot;)" title="Annotation texte">T</button>
-          <button class="draw-tool-btn" data-tool="measure" onclick="setDrawTool(&quot;measure&quot;)" title="Mesure (%)">📏</button>
+          <button class="draw-tool-btn" data-tool="measure" onclick="setDrawTool(&quot;measure&quot;)" title="Mesure (%)">MES</button>
           <hr style="width:26px;border:none;border-top:1px solid var(--ring-1);margin:2px 0" />
           <input id="drawColorPicker" type="color" value="#38bdf8" title="Couleur du tracé actif ou suivant" onchange="updateDrawColor(this.value)" style="width:30px;height:28px;border:none;background:transparent;cursor:pointer" />
-          <button id="btnLockDrawing" class="draw-tool-btn" onclick="toggleSelectedDrawLock()" title="Verrouiller / Déverrouiller la sélection">🔓</button>
+          <button id="btnLockDrawing" class="draw-tool-btn" onclick="toggleSelectedDrawLock()" title="Verrouiller / Déverrouiller la sélection">LIBRE</button>
           <button class="draw-tool-btn" onclick="undoDrawing()" title="Annuler (Ctrl+Z)">↶</button>
           <button class="draw-tool-btn" onclick="redoDrawing()" title="Rétablir">↷</button>
-          <button class="draw-tool-btn" onclick="deleteSelectedDrawing()" title="Supprimer la sélection">🗑</button>
-          <button class="draw-tool-btn" onclick="clearSymbolDrawings()" title="Effacer tous les tracés de ce symbole" style="color:var(--down)">✕</button>
+          <button class="draw-tool-btn" onclick="deleteSelectedDrawing()" title="Supprimer la sélection">SUPPR</button>
+          <button class="draw-tool-btn" onclick="clearSymbolDrawings()" title="Effacer tous les tracés de ce symbole" style="color:var(--down)">X</button>
         </aside>
 
         <div class="chart-stage" id="chartStage">
@@ -1626,10 +1626,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span class="card-title" style="font-size:15px">Entraînement de l'IA (Machine Learning) &amp; Gestion du Risque</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <button class="pill-btn" onclick="applyRiskProfile('prudent')" title="Levier 2x · Risque 1 % · Perte jour max 3 %">🟢 Prudent</button>
-        <button class="pill-btn" onclick="applyRiskProfile('equilibre')" title="Levier 5x · Risque 2 % · Perte jour max 5 %">🔵 Équilibré</button>
-        <button class="pill-btn" onclick="applyRiskProfile('agressif')" title="Levier 25x · Risque 3.5 % · Perte jour max 10 %">🟠 Agressif</button>
-        <button id="btnLockGrid" class="pill-btn" onclick="toggleGridLock()">🔒 Grille Verrouillée</button>
+        <button class="pill-btn" onclick="applyRiskProfile('prudent')" title="Levier 2x · Risque 1 % · Perte jour max 3 %">Prudent</button>
+        <button class="pill-btn" onclick="applyRiskProfile('equilibre')" title="Levier 5x · Risque 2 % · Perte jour max 5 %">Équilibré</button>
+        <button class="pill-btn" onclick="applyRiskProfile('agressif')" title="Levier 25x · Risque 3.5 % · Perte jour max 10 %">Agressif</button>
+        <button id="btnLockGrid" class="pill-btn" onclick="toggleGridLock()">VERR Grille Verrouillée</button>
       </div>
     </div>
 
@@ -1638,7 +1638,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         Réglez votre protection financière en français simple. Chaque paramètre affiche son exemple chiffré, sa valeur conseillée et le montant exact risqué avant de passer un trade.
       </div>
       <button id="btnAutoPilot1Click" class="pill-btn primary" style="padding:10px 16px;font-size:12px" onclick="runOneClickAutopilot()">
-        ⚡ Mode Simple 1-Clic : Entraîner l'IA &amp; Lancer les Trades Automatiquement
+        Mode Simple 1-Clic : Entraîner l'IA &amp; Lancer les Trades Automatiquement
       </button>
     </div>
 
@@ -1662,7 +1662,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span id="levApplyFeedback" style="font-size:12px;font-weight:600;display:none"></span>
-              <span id="badgeLevLevel" class="level-badge prudent">🟢 Prudent</span>
+              <span id="badgeLevLevel" class="level-badge prudent">Prudent</span>
             </div>
           </div>
           <div class="risk-field-desc">Multiplie votre pouvoir d'achat sur le marché. Plus le levier est élevé, plus les gains ET les pertes vont vite. Cliquez sur un preset ou modifiez la valeur puis cliquez sur <strong>Appliquer</strong>.</div>
@@ -1671,7 +1671,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <div style="display:flex;align-items:center;gap:6px">
               <input id="cfgLev" type="number" min="1" max="500" class="input-dark mono" style="width:74px;text-align:center;font-weight:700" oninput="syncLevFromNumber(this.value)" onkeydown="if(event.key==='Enter'){applyCurrentLeverageInput();}" />
               <span class="mono accent" style="font-weight:800">x</span>
-              <button id="btnApplyLevDirect" type="button" class="pill-btn primary" style="padding:6px 14px;font-size:12px;font-weight:700;white-space:nowrap" onclick="applyCurrentLeverageInput()" title="Appliquer immédiatement ce levier">⚡ Appliquer</button>
+              <button id="btnApplyLevDirect" type="button" class="pill-btn primary" style="padding:6px 14px;font-size:12px;font-weight:700;white-space:nowrap" onclick="applyCurrentLeverageInput()" title="Appliquer immédiatement ce levier">Appliquer</button>
             </div>
           </div>
           <div id="levPresetsWrap" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
@@ -1693,7 +1693,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               2. Risque par trade (Débloqué en € / $)
               <span class="info-tip" data-tip="Somme maximale que vous acceptez de perdre sur une position si le stop est touché. Débloqué : aucun bridage arbitraire, vous pouvez définir exactement 25 €, 50 €, 100 €, 250 €, 500 € ou plus selon votre stratégie.">?</span>
             </div>
-            <span id="badgeRiskLevel" class="level-badge balanced">🔵 Équilibré</span>
+            <span id="badgeRiskLevel" class="level-badge balanced">Équilibré</span>
           </div>
           <div class="risk-field-desc">Montant maximal mis en jeu sur une seule position en cas d'échec (sans plafond arbitraire).</div>
           <div class="mode-switch-row" id="riskModeSwitch">
@@ -1724,7 +1724,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               3. Stop-Loss : Montant (€ / $) ou ATR
               <span class="info-tip" data-tip="En mode Montant (€ / $), le desk coupe automatiquement le trade dès que la perte atteint ce montant (ex. : -50 € ou -100 €) et calcule le prix exact d'invalidation sur MT5. En mode ATR, le stop est placé à X fois l'amplitude moyenne.">?</span>
             </div>
-            <span id="badgeAtrLevel" class="level-badge balanced">🔵 Équilibré</span>
+            <span id="badgeAtrLevel" class="level-badge balanced">Équilibré</span>
           </div>
           <div class="risk-field-desc">Sélectionnez comment placer et déclencher le Stop-Loss : par montant fixe en €/$ ou par volatilité ATR.</div>
           <div class="mode-switch-row" id="slModeSwitch">
@@ -1785,7 +1785,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               4. Plafonds de perte maximale
               <span class="info-tip" data-tip="Coupe-circuit de sécurité : dès que la perte atteint ce seuil (par trade, sur la journée, ou sur le compte total), le desk s'arrête automatiquement pour protéger votre capital. Recommandé : 5 % max par jour.">?</span>
             </div>
-            <span id="badgeDayLossLevel" class="level-badge balanced">🔵 Équilibré</span>
+            <span id="badgeDayLossLevel" class="level-badge balanced">Équilibré</span>
           </div>
           <div class="risk-field-desc">Limites de protection automatiques par trade, par jour et sur le compte total.</div>
           <div class="form-grid" style="margin-bottom:8px">
@@ -1990,7 +1990,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <aside id="themeDrawer" class="drawer">
     <div class="card-hdr">
       <span class="card-title">Thèmes Studio (20 Palettes AA)</span>
-      <button class="pill-btn" onclick="closeDrawer(&quot;themeDrawer&quot;)">✕</button>
+      <button class="pill-btn" onclick="closeDrawer(&quot;themeDrawer&quot;)">X</button>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:14px;font-size:12px">
@@ -2029,7 +2029,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <aside id="journalDrawer" class="drawer">
     <div class="card-hdr">
       <span class="card-title" id="jDrawerTitle">Fiche Ticket</span>
-      <button class="pill-btn" onclick="closeDrawer(&quot;journalDrawer&quot;)">✕</button>
+      <button class="pill-btn" onclick="closeDrawer(&quot;journalDrawer&quot;)">X</button>
     </div>
     <div id="jDrawerBody" style="display:flex;flex-direction:column;gap:10px;font-size:12px"></div>
   </aside>
@@ -2037,8 +2037,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ==================== MOBILE MT5 CLOUD & TELEGRAM DRAWER ==================== -->
   <aside id="mobileDrawer" class="drawer" style="width:450px">
     <div class="card-hdr">
-      <span class="card-title">📱 Connexion Mobile MT5 (Sans PC) &amp; Bots Telegram</span>
-      <button class="pill-btn" onclick="closeDrawer(&quot;mobileDrawer&quot;)">✕</button>
+      <span class="card-title">Connexion Mobile MT5 &amp; Bots Telegram</span>
+      <button class="pill-btn" onclick="closeDrawer(&quot;mobileDrawer&quot;)">X</button>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:16px;font-size:12px">
@@ -2062,7 +2062,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               <input id="tgChatIdInput" class="input-dark mono" style="width:100%" placeholder="Détection auto ou -100..." />
             </div>
             <div style="display:flex;align-items:flex-end">
-              <button class="pill-btn primary" style="width:100%;justify-content:center" onclick="detectTelegramChatId()">🔍 Détecter Chat ID</button>
+              <button class="pill-btn primary" style="width:100%;justify-content:center" onclick="detectTelegramChatId()"> Détecter Chat ID</button>
             </div>
           </div>
 
@@ -2079,7 +2079,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             </div>
           </details>
 
-          <button class="pill-btn primary" onclick="saveAndTestTelegram()">📨 Sauvegarder &amp; Envoyer Test sur Téléphone</button>
+          <button class="pill-btn primary" onclick="saveAndTestTelegram()"> Sauvegarder &amp; Envoyer Test sur Téléphone</button>
           <div id="tgStatusMsg" class="mono" style="font-size:11px;color:var(--fg-2)">Statut Telegram : Mode local</div>
         </div>
       </div>
@@ -2098,10 +2098,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <input id="mt5LotsInput" type="number" step="0.01" min="0.01" max="50" value="0.05" class="input-dark mono" style="width:100%" />
           </div>
           <div style="display:flex;align-items:flex-end;height:52px">
-            <a href="/api/mt5-bridge/ea.mq5" download="TradingFloorBridge.mq5" class="pill-btn primary" style="text-decoration:none">📥 Télécharger TradingFloorBridge.mq5</a>
+            <a href="/api/mt5-bridge/ea.mq5" download="TradingFloorBridge.mq5" class="pill-btn primary" style="text-decoration:none"> Télécharger TradingFloorBridge.mq5</a>
           </div>
         </div>
-        <button id="btnMt5SyncNow" class="pill-btn auto-on" style="width:100%;justify-content:center;margin-bottom:8px" onclick="syncMt5Now()">🔄 Synchroniser Capital &amp; Trades MT5</button>
+        <button id="btnMt5SyncNow" class="pill-btn auto-on" style="width:100%;justify-content:center;margin-bottom:8px" onclick="syncMt5Now()"> Synchroniser Capital &amp; Trades MT5</button>
         <div id="mt5LocalBridgeStatus" class="mono" style="font-size:11px;color:var(--fg-2);margin-bottom:10px">Statut Pont Local : En attente de mt5_state.json...</div>
 
         <details style="background:rgba(255,255,255,0.02);padding:8px 10px;border-radius:10px;border:1px solid var(--ring-1)">
@@ -2119,8 +2119,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               <input id="mt5ServerInput" class="input-dark mono" style="grid-column:span 2" placeholder="Serveur (ex: MetaQuotes-Demo)" />
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:8px">
-              <button class="pill-btn primary" onclick="saveAndTestMt5()">🔗 Connecter MT5 Cloud</button>
-              <button class="pill-btn" onclick="sendTestMt5Trade()">🚀 Trade Test Cloud</button>
+              <button class="pill-btn primary" onclick="saveAndTestMt5()"> Connecter MT5 Cloud</button>
+              <button class="pill-btn" onclick="sendTestMt5Trade()"> Trade Test Cloud</button>
             </div>
             <div id="mt5StatusMsg" class="mono" style="font-size:11px;color:var(--fg-2)">Statut : Pont local prêt (/api/mt5-bridge/poll)</div>
           </div>
@@ -2718,35 +2718,64 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       floorRing3d.position.y = -1.5;
       scene3d.add(floorRing3d);
 
-      // Central Quantum Gyroscope Core
+      // Central Quantum Gyroscope Core + Geodesic Wireframe Cage
       coreMesh3d = new THREE.Mesh(
-        new THREE.OctahedronGeometry(1.1, 2),
-        new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 1.4, metalness: 0.3, roughness: 0.15, wireframe: false })
+        new THREE.IcosahedronGeometry(0.95, 2),
+        new THREE.MeshPhysicalMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 1.5, metalness: 0.25, roughness: 0.1, transmission: 0.55, clearcoat: 1.0 })
       );
-      coreMesh3d.position.y = 1.2;
+      coreMesh3d.position.y = 1.25;
       coreMesh3d.castShadow = true;
       scene3d.add(coreMesh3d);
 
-      var coreGlow = new THREE.Mesh(
-        new THREE.SphereGeometry(1.75, 24, 24),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending })
+      var coreCage3d = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(1.42, 1),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending })
       );
-      coreGlow.position.y = 1.2;
+      coreCage3d.position.y = 1.25;
+      scene3d.add(coreCage3d);
+
+      var coreGlow = new THREE.Mesh(
+        new THREE.SphereGeometry(1.95, 28, 28),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, blending: THREE.AdditiveBlending })
+      );
+      coreGlow.position.y = 1.25;
       scene3d.add(coreGlow);
 
       ring1_3d = new THREE.Mesh(
-        new THREE.TorusGeometry(2.05, 0.04, 16, 64),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.7 })
+        new THREE.TorusGeometry(2.05, 0.032, 16, 80),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.72 })
       );
-      ring1_3d.position.y = 1.2;
+      ring1_3d.position.y = 1.25;
       scene3d.add(ring1_3d);
 
       ring2_3d = new THREE.Mesh(
-        new THREE.TorusGeometry(2.55, 0.03, 16, 64),
+        new THREE.TorusGeometry(2.55, 0.025, 16, 80),
         new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.55 })
       );
-      ring2_3d.position.y = 1.2;
+      ring2_3d.position.y = 1.25;
       scene3d.add(ring2_3d);
+
+      var ring3_3d = new THREE.Mesh(
+        new THREE.TorusGeometry(3.05, 0.018, 16, 96),
+        new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.42 })
+      );
+      ring3_3d.position.y = 1.25;
+      ring3_3d.rotation.x = Math.PI / 2.6;
+      scene3d.add(ring3_3d);
+
+      // Expanding Floor Radar Ripples
+      var radarWaves = [];
+      for (var rw = 0; rw < 3; rw++) {
+        var rWave = new THREE.Mesh(
+          new THREE.RingGeometry(0.95, 1.05, 64),
+          new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending })
+        );
+        rWave.rotation.x = -Math.PI / 2;
+        rWave.position.y = -1.49;
+        rWave.userData = { phase: rw / 3 };
+        scene3d.add(rWave);
+        radarWaves.push(rWave);
+      }
 
       // 8 Detailed Agent Workstations (Octagon around Central Core)
       var radius = 7.4;
@@ -2887,21 +2916,43 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         };
       });
 
-      // Ambient holographic particle cloud
+      // Fiber-optic Bezier neural links connecting each Agent Sphere to the Central Quantum Core
+      var neuralLinks = [];
+      AGENTS.forEach(function (ag) {
+        var rig = agentRigs[ag.id];
+        if (!rig) return;
+        var p0 = new THREE.Vector3(rig.worldPos.x, 0.25, rig.worldPos.z);
+        var p2 = new THREE.Vector3(0, 1.25, 0);
+        var mid = p0.clone().lerp(p2, 0.5);
+        mid.y += 1.65;
+        var curve = new THREE.QuadraticBezierCurve3(p0, mid, p2);
+        var linkGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(36));
+        var linkMat = new THREE.LineBasicMaterial({
+          color: new THREE.Color(ag.color),
+          transparent: true,
+          opacity: 0.22,
+          blending: THREE.AdditiveBlending,
+        });
+        var linkLine = new THREE.Line(linkGeo, linkMat);
+        scene3d.add(linkLine);
+        neuralLinks.push({ id: ag.id, line: linkLine, mat: linkMat });
+      });
+
+      // Ambient holographic particle cloud (420 particles)
       var pGeo = new THREE.BufferGeometry();
-      var pCount = 260;
+      var pCount = 420;
       var pos = new Float32Array(pCount * 3);
       for (var i = 0; i < pCount; i++) {
         var a = Math.random() * Math.PI * 2;
-        var rad = 1.6 + Math.random() * 9.5;
+        var rad = 1.4 + Math.random() * 10.5;
         pos[i * 3] = Math.cos(a) * rad;
-        pos[i * 3 + 1] = -0.8 + Math.random() * 5.2;
+        pos[i * 3 + 1] = -1.2 + Math.random() * 6.0;
         pos[i * 3 + 2] = Math.sin(a) * rad;
       }
       pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       pts3d = new THREE.Points(
         pGeo,
-        new THREE.PointsMaterial({ color: 0x38bdf8, size: 0.09, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending })
+        new THREE.PointsMaterial({ color: 0x38bdf8, size: 0.085, transparent: true, opacity: 0.62, blending: THREE.AdditiveBlending })
       );
       scene3d.add(pts3d);
 
@@ -2943,6 +2994,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
 
       var clk = 0;
+      var lastAmbientPulseClk = 0;
+      var pipeOrder = ['analyst', 'strategist', 'risk', 'execution', 'reviewer', 'lead', 'hunter', 'sentinel'];
+      var pipeStep = 0;
       function animate3d() {
         requestAnimationFrame(animate3d);
         if (currentTab !== 'desk') return;
@@ -2952,7 +3006,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         mouseParallaxX += (targetParallaxX - mouseParallaxX) * 0.06;
         mouseParallaxY += (targetParallaxY - mouseParallaxY) * 0.06;
 
-        var sway = prefersReducedMotion ? 0 : Math.sin(clk * 0.18) * 0.07;
+        var sway = prefersReducedMotion ? 0 : Math.sin(clk * 0.18) * 0.09;
         var camAngle = yaw + sway + mouseParallaxX * 0.14;
         var effPitch = Math.max(0.18, Math.min(1.22, pitch + mouseParallaxY * 0.08));
         camera3d.position.x = Math.sin(camAngle) * Math.cos(effPitch) * zoom;
@@ -2961,35 +3015,70 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         camera3d.lookAt(mouseParallaxX * 0.35, 0.3 + mouseParallaxY * -0.2, 0);
 
         if (!prefersReducedMotion) {
-          coreMesh3d.rotation.y += 0.012;
-          coreMesh3d.rotation.x += 0.006;
-          ring1_3d.rotation.x += 0.014;
-          ring1_3d.rotation.y += 0.008;
-          ring2_3d.rotation.y -= 0.011;
-          ring2_3d.rotation.z += 0.007;
-          pts3d.rotation.y += 0.0014;
+          coreMesh3d.rotation.y += 0.014;
+          coreMesh3d.rotation.x += 0.007;
+          coreMesh3d.scale.setScalar(1 + Math.sin(clk * 2.4) * 0.06);
+          if (typeof coreCage3d !== 'undefined') {
+            coreCage3d.rotation.y -= 0.009;
+            coreCage3d.rotation.z += 0.005;
+          }
+          ring1_3d.rotation.x += 0.016;
+          ring1_3d.rotation.y += 0.009;
+          ring2_3d.rotation.y -= 0.013;
+          ring2_3d.rotation.z += 0.008;
+          if (typeof ring3_3d !== 'undefined') {
+            ring3_3d.rotation.z -= 0.011;
+            ring3_3d.rotation.y += 0.006;
+          }
+          pts3d.rotation.y += 0.0016;
+          pts3d.position.y = Math.sin(clk * 0.45) * 0.18;
+
+          // Expanding floor radar ripples
+          if (typeof radarWaves !== 'undefined') {
+            for (var rwi = 0; rwi < radarWaves.length; rwi++) {
+              var rwObj = radarWaves[rwi];
+              var prog = ((clk * 0.22 + rwObj.userData.phase) % 1);
+              var sc = 1.2 + prog * 10.5;
+              rwObj.scale.set(sc, sc, 1);
+              rwObj.material.opacity = (1 - prog) * 0.32;
+            }
+          }
+
+          // Autonomous ambient telemetry packet stream along pipeline
+          if (clk - lastAmbientPulseClk > 1.35 && pulseArcs.length < 10) {
+            lastAmbientPulseClk = clk;
+            var fromId = pipeOrder[pipeStep % pipeOrder.length];
+            var toId = pipeOrder[(pipeStep + 1) % pipeOrder.length];
+            pipeStep++;
+            var agMeta = AGENTS.find(function (a) { return a.id === fromId; });
+            spawn3dPulse(fromId, toId, agMeta ? agMeta.color : '#38bdf8');
+          }
         }
 
         AGENTS.forEach(function (ag, idx) {
           var rig = agentRigs[ag.id];
           if (!rig) return;
           var act = deskState && deskState.agentActivity && deskState.agentActivity[ag.id];
-          var busy = act && act.status && act.status !== 'idle';
+          var busy = act && act.status && act.status !== 'idle' && act.status !== 'watch';
           if (!prefersReducedMotion) {
-            rig.avatar.position.y = 0.75 + Math.sin(clk * (busy ? 5.2 : 1.5) + idx) * (busy ? 0.055 : 0.022);
+            rig.avatar.position.y = 1.15 + Math.sin(clk * (busy ? 3.2 : 1.4) + idx * 0.9) * (busy ? 0.14 : 0.06);
             if (rig.headGroup) {
-              rig.headGroup.rotation.y = Math.sin(clk * (busy ? 2.4 : 0.7) + idx * 1.3) * (busy ? 0.24 : 0.10);
-              rig.headGroup.rotation.x = Math.sin(clk * 1.1 + idx) * 0.06;
+              rig.headGroup.rotation.y += busy ? 0.028 : 0.009;
+              var corePulse = 1 + Math.sin(clk * (busy ? 6.0 : 2.1) + idx) * (busy ? 0.16 : 0.06);
+              rig.headGroup.scale.setScalar(corePulse);
             }
             if (rig.armL && rig.armR) {
-              var typeSpd = busy ? 11.0 : 2.2;
-              var amp = busy ? 0.18 : 0.04;
-              rig.armL.rotation.x = -0.95 + Math.sin(clk * typeSpd + idx) * amp;
-              rig.armR.rotation.x = -0.95 + Math.cos(clk * typeSpd + idx) * amp;
+              rig.armL.rotation.z += busy ? 0.045 : 0.012;
+              rig.armL.rotation.y += busy ? 0.024 : 0.007;
+              rig.armR.rotation.x -= busy ? 0.036 : 0.010;
+              rig.armR.rotation.z -= busy ? 0.022 : 0.006;
             }
           }
           rig.padRing.scale.setScalar(busy && !prefersReducedMotion ? 1.18 + Math.sin(clk * 6) * 0.08 : busy ? 1.15 : 1.0);
           rig.padRing.material.opacity = busy ? 0.95 : 0.45;
+          if (typeof neuralLinks !== 'undefined' && neuralLinks[idx]) {
+            neuralLinks[idx].mat.opacity = busy ? (0.48 + Math.sin(clk * 7 + idx) * 0.22) : 0.18;
+          }
 
           if (rig.sentinelLed && deskState && deskState.sentinel) {
             var st = deskState.sentinel;
@@ -3013,7 +3102,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         // Animate inter-agent pulses
         for (var pi = pulseArcs.length - 1; pi >= 0; pi--) {
           var p = pulseArcs[pi];
-          p.t += 0.022;
+          p.t += 0.024;
           if (p.t >= 1) {
             scene3d.remove(p.dot);
             scene3d.remove(p.line);
@@ -3316,7 +3405,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var favBtns = favTimeframes.map(function (id) {
         var found = ALL_TIMEFRAMES.find(function (t) { return t.id === id; });
         var lbl = found ? found.lbl : id;
-        return '<button class="tf-btn fav' + (activeTimeframe === id ? ' active' : '') + '" onclick="setChartTimeframe(&quot;' + id + '&quot;)" title="Favori">★ ' + lbl + '</button>';
+        return '<button class="tf-btn fav' + (activeTimeframe === id ? ' active' : '') + '" onclick="setChartTimeframe(&quot;' + id + '&quot;)" title="Favori"> ' + lbl + '</button>';
       }).join('');
       var allBtns = ALL_TIMEFRAMES.filter(function (t) { return favTimeframes.indexOf(t.id) < 0; }).map(function (t) {
         return '<button class="tf-btn' + (activeTimeframe === t.id ? ' active' : '') + '" onclick="setChartTimeframe(&quot;' + t.id + '&quot;)">' + t.lbl + '</button>';
@@ -3328,7 +3417,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var starBtn = document.getElementById('btnFavTfStar');
       if (starBtn) {
         var isFav = favTimeframes.indexOf(activeTimeframe) >= 0;
-        starBtn.textContent = isFav ? '★ Favori' : '☆ Favori';
+        starBtn.textContent = isFav ? 'Favori ON' : 'Favori';
         starBtn.classList.toggle('primary', isFav);
       }
     }
@@ -3615,7 +3704,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       pushDrawUndo();
       chartDrawings[selectedDrawIdx].locked = !chartDrawings[selectedDrawIdx].locked;
       var btn = document.getElementById('btnLockDrawing');
-      if (btn) btn.textContent = chartDrawings[selectedDrawIdx].locked ? '🔒' : '🔓';
+      if (btn) btn.textContent = chartDrawings[selectedDrawIdx].locked ? 'VERR' : 'LIBRE';
       saveDrawingsForSymbol();
       renderDrawingsCanvas();
     }
@@ -3761,7 +3850,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (activeDrawTool === 'select') {
           selectedDrawIdx = findDrawingAt(px, py, r.width, r.height);
           var btn = document.getElementById('btnLockDrawing');
-          if (btn && selectedDrawIdx >= 0) btn.textContent = chartDrawings[selectedDrawIdx].locked ? '🔒' : '🔓';
+          if (btn && selectedDrawIdx >= 0) btn.textContent = chartDrawings[selectedDrawIdx].locked ? 'VERR' : 'LIBRE';
           if (selectedDrawIdx >= 0 && !chartDrawings[selectedDrawIdx].locked) {
             pushDrawUndo();
             activeDragDraw = { mode: 'move', idx: selectedDrawIdx, lastNx: nx, lastNy: ny };
@@ -4132,9 +4221,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (qInput && document.activeElement !== qInput) qInput.value = String(n);
       var navCur = document.getElementById('navLevCurrentBadge');
       if (navCur) {
-        if (n <= 3) { navCur.className = 'level-badge prudent'; navCur.textContent = '🟢 Prudent (' + n + 'x)'; }
-        else if (n <= 10) { navCur.className = 'level-badge balanced'; navCur.textContent = '🔵 Équilibré (' + n + 'x)'; }
-        else { navCur.className = 'level-badge aggressive'; navCur.textContent = '🟠 Agressif (' + n + 'x)'; }
+        if (n <= 3) { navCur.className = 'level-badge prudent'; navCur.textContent = 'Prudent (' + n + 'x)'; }
+        else if (n <= 10) { navCur.className = 'level-badge balanced'; navCur.textContent = 'Équilibré (' + n + 'x)'; }
+        else { navCur.className = 'level-badge aggressive'; navCur.textContent = 'Agressif (' + n + 'x)'; }
       }
     }
 
@@ -4168,7 +4257,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (slider) slider.value = String(n);
       if (input) input.value = String(n);
       if (badge) badge.textContent = 'x' + n;
-      if (applyBtn) applyBtn.textContent = '⚡ Appliquer';
+      if (applyBtn) applyBtn.textContent = 'Appliquer';
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
       highlightLevPresets(n);
@@ -4194,7 +4283,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (fb) {
           fb.style.display = 'inline-block';
           fb.style.color = 'var(--up)';
-          fb.textContent = '✅ Levier x' + n + ' actif !';
+          fb.textContent = 'OK · Levier x' + n + ' actif !';
           setTimeout(function () { if (fb) fb.style.display = 'none'; }, 3500);
         }
         if (badge) badge.textContent = 'x' + n;
@@ -4205,7 +4294,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (fb) {
           fb.style.display = 'inline-block';
           fb.style.color = 'var(--down)';
-          fb.textContent = '❌ Erreur : ' + (err.message || 'échec');
+          fb.textContent = 'ERR · Erreur : ' + (err.message || 'échec');
         }
         if (typeof callback === 'function') callback(err);
       });
@@ -4224,7 +4313,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var rChip = document.getElementById('deskRegimeChip');
         if (rChip) {
           if (regime === 'hft_kamikaze') {
-            rChip.textContent = '⚡ RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
+            rChip.textContent = ' RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
             rChip.style.background = 'rgba(239, 68, 68, 0.25)';
             rChip.style.color = '#fca5a5';
             rChip.style.borderColor = 'rgba(239, 68, 68, 0.6)';
@@ -4258,7 +4347,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var el = document.getElementById('cfgLev');
       if (el) el.value = String(n);
       var btn = document.getElementById('btnApplyLevDirect');
-      if (btn) btn.textContent = '⚡ Appliquer x' + n;
+      if (btn) btn.textContent = 'Appliquer x' + n;
       highlightLevPresets(n);
       markStrategyFormDirty();
       updateRiskLevelBadges();
@@ -4270,7 +4359,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var el = document.getElementById('cfgLevSlider');
       if (el) el.value = String(n);
       var btn = document.getElementById('btnApplyLevDirect');
-      if (btn) btn.textContent = '⚡ Appliquer x' + n;
+      if (btn) btn.textContent = 'Appliquer x' + n;
       highlightLevPresets(n);
       markStrategyFormDirty();
       updateRiskLevelBadges();
@@ -4463,33 +4552,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var lev = Number(document.getElementById('cfgLev')?.value || 5);
       var bLev = document.getElementById('badgeLevLevel');
       if (bLev) {
-        if (lev <= 3) { bLev.className = 'level-badge conservative'; bLev.textContent = '🟢 Prudent'; }
-        else if (lev <= 10) { bLev.className = 'level-badge balanced'; bLev.textContent = '🔵 Équilibré'; }
-        else { bLev.className = 'level-badge aggressive'; bLev.textContent = '🟠 Agressif (' + lev + 'x)'; }
+        if (lev <= 3) { bLev.className = 'level-badge conservative'; bLev.textContent = 'Prudent'; }
+        else if (lev <= 10) { bLev.className = 'level-badge balanced'; bLev.textContent = 'Équilibré'; }
+        else { bLev.className = 'level-badge aggressive'; bLev.textContent = 'Agressif (' + lev + 'x)'; }
       }
 
       var bRisk = document.getElementById('badgeRiskLevel');
       if (bRisk) {
         var rVal = currentRiskMode === 'pct' ? Number(document.getElementById('cfgRiskPct')?.value || 2) : 2;
-        if (rVal <= 1.0) { bRisk.className = 'level-badge conservative'; bRisk.textContent = '🟢 Prudent'; }
-        else if (rVal <= 2.5) { bRisk.className = 'level-badge balanced'; bRisk.textContent = '🔵 Équilibré'; }
-        else { bRisk.className = 'level-badge aggressive'; bRisk.textContent = '🟠 Agressif'; }
+        if (rVal <= 1.0) { bRisk.className = 'level-badge conservative'; bRisk.textContent = 'Prudent'; }
+        else if (rVal <= 2.5) { bRisk.className = 'level-badge balanced'; bRisk.textContent = 'Équilibré'; }
+        else { bRisk.className = 'level-badge aggressive'; bRisk.textContent = 'Agressif'; }
       }
 
       var bAtr = document.getElementById('badgeAtrLevel');
       if (bAtr) {
         var atrV = Number(document.getElementById('cfgAtrMult')?.value || 1.35);
-        if (atrV >= 1.6) { bAtr.className = 'level-badge conservative'; bAtr.textContent = '🟢 Stop Large'; }
-        else if (atrV >= 1.2) { bAtr.className = 'level-badge balanced'; bAtr.textContent = '🔵 Équilibré'; }
-        else { bAtr.className = 'level-badge aggressive'; bAtr.textContent = '🟠 Stop Serré'; }
+        if (atrV >= 1.6) { bAtr.className = 'level-badge conservative'; bAtr.textContent = ' Stop Large'; }
+        else if (atrV >= 1.2) { bAtr.className = 'level-badge balanced'; bAtr.textContent = 'Équilibré'; }
+        else { bAtr.className = 'level-badge aggressive'; bAtr.textContent = 'Stop Serré'; }
       }
 
       var bDay = document.getElementById('badgeDayLossLevel');
       if (bDay) {
         var dVal = Number(document.getElementById('cfgDayLossPct')?.value || 5);
-        if (dVal <= 3.0) { bDay.className = 'level-badge conservative'; bDay.textContent = '🟢 Prudent'; }
-        else if (dVal <= 6.0) { bDay.className = 'level-badge balanced'; bDay.textContent = '🔵 Équilibré'; }
-        else { bDay.className = 'level-badge aggressive'; bDay.textContent = '🟠 Agressif'; }
+        if (dVal <= 3.0) { bDay.className = 'level-badge conservative'; bDay.textContent = 'Prudent'; }
+        else if (dVal <= 6.0) { bDay.className = 'level-badge balanced'; bDay.textContent = 'Équilibré'; }
+        else { bDay.className = 'level-badge aggressive'; bDay.textContent = 'Agressif'; }
       }
     }
 
@@ -4547,7 +4636,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       box.innerHTML =
         '<div style="font-size:12.5px;font-weight:700;color:var(--fg-0);margin-bottom:4px">' +
-          '📊 Simulation en direct (sur capital de ' + Number(eq).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + cur + ' · Débloqué en Euro) :' +
+          ' Simulation en direct (sur capital de ' + Number(eq).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + cur + ' · Débloqué en Euro) :' +
         '</div>' +
         '<div style="font-size:12px;line-height:1.55;color:var(--fg-1)">' +
           '• <strong>Stop-Loss (Perte max / trade) :</strong> <strong class="down">-' + Number(riskAmountUsd).toFixed(2) + ' ' + cur + '</strong> (coupure automatique garantie si touché)<br>' +
@@ -4713,7 +4802,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       if (errors.length) {
         if (alertBox) {
-          alertBox.textContent = '⚠️ ' + errors.join(' ');
+          alertBox.textContent = 'ALERTE · ' + errors.join(' ');
           alertBox.style.display = 'block';
         }
         return;
@@ -4785,7 +4874,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             if (navLev) navLev.textContent = 'x' + settings.defaultLeverage;
           }
           if (btn) {
-            btn.textContent = '✅ Réglages enregistrés !';
+            btn.textContent = 'OK · Réglages enregistrés !';
             setTimeout(function () { if (btn) { btn.textContent = 'Sauvegarder les réglages'; btn.disabled = false; } }, 1800);
           }
         } else {
@@ -4821,7 +4910,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (alertBox) {
         alertBox.style.color = '#38bdf8';
         alertBox.style.display = 'block';
-        alertBox.textContent = 'ℹ️ Réglages réinitialisés aux valeurs recommandées (Levier 5x, Risque 2%, Stop ATR 1.35x). Cliquez sur "Sauvegarder les réglages" pour les appliquer.';
+        alertBox.textContent = 'ℹ Réglages réinitialisés aux valeurs recommandées (Levier 5x, Risque 2%, Stop ATR 1.35x). Cliquez sur "Sauvegarder les réglages" pour les appliquer.';
       }
     }
 
@@ -4852,7 +4941,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var out = await res.json();
         bar.style.width = '100%';
         if (out.ok) {
-          st.textContent = '✅ IA entraînée (Ép #' + out.training.episode + ') · Full Auto ACTIVÉ · ' + out.openPositions + ' position(s) ouverte(s) !';
+          st.textContent = 'OK · IA entraînée (Ép #' + out.training.episode + ') · Full Auto ACTIVÉ · ' + out.openPositions + ' position(s) ouverte(s) !';
           await fetchRlMemory();
         } else {
           st.textContent = 'Erreur Autopilot : ' + (out.error || 'inconnue');
@@ -4957,11 +5046,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var out = await res.json();
         if (stEl) {
           stEl.textContent = out.ok
-            ? '✅ Synchronisé MT5 #' + ((out.mt5Live && out.mt5Live.login) || '--') + ' · ' + (out.openTickets ? out.openTickets.length : 0) + ' position(s) active(s)'
-            : '⚠️ Erreur sync : ' + (out.error || 'inconnue');
+            ? 'OK · Synchronisé MT5 #' + ((out.mt5Live && out.mt5Live.login) || '--') + ' · ' + (out.openTickets ? out.openTickets.length : 0) + ' position(s) active(s)'
+            : 'ALERTE · Erreur sync : ' + (out.error || 'inconnue');
         }
       } catch (e) {
-        if (stEl) stEl.textContent = '⚠️ Erreur réseau sync MT5';
+        if (stEl) stEl.textContent = 'ALERTE · Erreur réseau sync MT5';
       } finally {
         if (btn) btn.disabled = false;
       }
@@ -4986,7 +5075,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         body: JSON.stringify(payload)
       });
       var out = await res.json();
-      stEl.textContent = (out.ok ? '✅ ' : '⚠️ ') + (out.message || 'Terminé');
+      stEl.textContent = (out.ok ? 'OK · ' : 'ALERTE · ') + (out.message || 'Terminé');
     }
 
     async function sendTestMt5Trade() {
@@ -5001,7 +5090,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         })
       });
       var out = await res.json();
-      stEl.textContent = (out.ok ? '✅ ' : '⚠️ ') + (out.message || 'Terminé');
+      stEl.textContent = (out.ok ? 'OK · ' : 'ALERTE · ') + (out.message || 'Terminé');
     }
 
     function collectTgTokensPayload() {
@@ -5033,7 +5122,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
       var out = await res.json();
       if (out.chatId) document.getElementById('tgChatIdInput').value = out.chatId;
-      stEl.textContent = (out.ok ? '✅ ' : '⚠️ ') + (out.message || 'Terminé');
+      stEl.textContent = (out.ok ? 'OK · ' : 'ALERTE · ') + (out.message || 'Terminé');
     }
 
     async function saveAndTestTelegram() {
@@ -5049,7 +5138,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         })
       });
       var out = await res.json();
-      stEl.textContent = (out.ok ? '✅ ' : '⚠️ ') + (out.message || 'Terminé');
+      stEl.textContent = (out.ok ? 'OK · ' : 'ALERTE · ') + (out.message || 'Terminé');
     }
 
     function renderRlMetrics() {
@@ -5131,7 +5220,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var grid = document.getElementById('strategyWidgetsGrid');
       var btn = document.getElementById('btnLockGrid');
       grid.classList.toggle('unlocked', !gridLocked);
-      btn.textContent = gridLocked ? '🔒 Grille Verrouillée' : '🔓 Grille Déverrouillée';
+      btn.textContent = gridLocked ? 'VERR Grille Verrouillée' : 'LIBRE Grille Déverrouillée';
       Array.from(grid.children).forEach(function (el) { el.setAttribute('draggable', gridLocked ? 'false' : 'true'); });
     }
     function moveWidget(id, dir) {
@@ -5186,7 +5275,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var isAuto = s.executionMode === 'auto' || Boolean(s.autoPaperScalp);
       var btnExec = document.getElementById('btnExecMode');
       if (btnExec) {
-        btnExec.textContent = isAuto ? 'Full Auto ⚡' : 'Confirmation Humaine';
+        btnExec.textContent = isAuto ? 'Full Auto' : 'Confirmation Humaine';
         btnExec.className = 'pill-btn ' + (isAuto ? 'auto-on' : 'auto-off');
       }
 
@@ -5195,7 +5284,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (hDot) hDot.classList.toggle('halted', isHalted);
       var haltBtn = document.getElementById('btnPanicHalt');
       if (haltBtn) {
-        haltBtn.textContent = isHalted ? '▶️ REPRENDRE DESK' : '⚠️ HALT DESK';
+        haltBtn.textContent = isHalted ? 'REPRENDRE' : 'ALERTE · HALT DESK';
         haltBtn.classList.toggle('resuming', isHalted);
       }
 
@@ -5217,7 +5306,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           mt5Chip.style.display = 'inline-flex';
           mt5Chip.style.borderColor = 'rgba(16,185,129,0.55)';
           mt5Chip.style.color = '#10b981';
-          mt5Chip.textContent = '🟢 MT5 LIVE #' + deskState.mt5Live.login + ' · Capital Synchronisé (' + Number(deskState.mt5Live.equity || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + (deskState.mt5Live.currency || 'EUR') + ')';
+          mt5Chip.textContent = 'MT5 LIVE #' + deskState.mt5Live.login + ' · Capital Synchronisé (' + Number(deskState.mt5Live.equity || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + (deskState.mt5Live.currency || 'EUR') + ')';
         } else {
           mt5Chip.style.display = 'none';
         }
@@ -5226,7 +5315,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (localStEl) {
         if (hasMt5Live) {
           localStEl.style.color = '#10b981';
-          localStEl.textContent = '🟢 Connecté MT5 #' + deskState.mt5Live.login + ' (' + deskState.mt5Live.server + ') · Solde ' + Number(deskState.mt5Live.balance).toFixed(2) + ' ' + deskState.mt5Live.currency + ' · ' + deskState.mt5Live.positionsCount + ' position(s)';
+          localStEl.textContent = 'Connecté MT5 #' + deskState.mt5Live.login + ' (' + deskState.mt5Live.server + ') · Solde ' + Number(deskState.mt5Live.balance).toFixed(2) + ' ' + deskState.mt5Live.currency + ' · ' + deskState.mt5Live.positionsCount + ' position(s)';
         } else {
           localStEl.style.color = 'var(--fg-2)';
           localStEl.textContent = 'En attente du terminal MT5 PC (TradingFloorBridge)...';
@@ -5260,7 +5349,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var rChip = document.getElementById('deskRegimeChip');
       if (rChip) {
         if (activeRegime === 'hft_kamikaze') {
-          rChip.textContent = '⚡ RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
+          rChip.textContent = ' RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
           rChip.style.background = 'rgba(239, 68, 68, 0.25)';
           rChip.style.color = '#fca5a5';
           rChip.style.borderColor = 'rgba(239, 68, 68, 0.6)';
@@ -5362,9 +5451,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (s.mt5Server && !document.getElementById('mt5ServerInput').value) document.getElementById('mt5ServerInput').value = s.mt5Server;
         document.getElementById('mt5LotsInput').value = String(s.mt5DefaultLots || 0.01);
         if (s.tgChatId && !document.getElementById('tgChatIdInput').value) document.getElementById('tgChatIdInput').value = s.tgChatId;
-        if (s.mt5LastStatus) document.getElementById('mt5StatusMsg').textContent = (s.mt5Connected ? '✅ ' : '') + s.mt5LastStatus;
+        if (s.mt5LastStatus) document.getElementById('mt5StatusMsg').textContent = (s.mt5Connected ? 'OK · ' : '') + s.mt5LastStatus;
         if (s.tgBotsConfigured > 0 && s.tgChatId) {
-          document.getElementById('tgStatusMsg').textContent = '✅ ' + s.tgBotsConfigured + ' bot(s) Telegram actif(s) · Chat ID ' + s.tgChatId;
+          document.getElementById('tgStatusMsg').textContent = 'OK · ' + s.tgBotsConfigured + ' bot(s) Telegram actif(s) · Chat ID ' + s.tgChatId;
         }
       }
 
