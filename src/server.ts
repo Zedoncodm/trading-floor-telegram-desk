@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 import type { TradingFloorDesk } from "./desk.ts";
 import { Mt5CloudBridge } from "./mt5.ts";
 import type { AgentId, AgentPromptConfig, DeskRuntimeSettings } from "./types.ts";
@@ -41,6 +42,25 @@ export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url
     if (req.method === "GET" && url.pathname === "/") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       res.end(DASHBOARD_HTML);
+      return;
+    }
+
+    // Polices auto-hébergées (whitelist stricte : aucun chemin libre fourni par le client).
+    if (req.method === "GET" && url.pathname.startsWith("/assets/fonts/")) {
+      const allowed = new Set(["inter-latin-wght-normal.woff2", "inter-latin-ext-wght-normal.woff2"]);
+      const name = url.pathname.slice("/assets/fonts/".length);
+      if (allowed.has(name)) {
+        try {
+          const buf = await readFile(new URL(`../assets/fonts/${name}`, import.meta.url));
+          res.writeHead(200, { "content-type": "font/woff2", "cache-control": "public, max-age=31536000, immutable" });
+          res.end(buf);
+          return;
+        } catch {
+          /* tombe sur le 404 ci-dessous */
+        }
+      }
+      res.writeHead(404);
+      res.end();
       return;
     }
 
@@ -360,7 +380,7 @@ export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url
       try {
         const sym = url.searchParams.get("symbol") || desk.state.settings.symbols[0] || "BTCUSDT";
         const rawTf = url.searchParams.get("interval") || "15m";
-        const interval = rawTf === "1h" || rawTf === "4h" || rawTf === "15m" ? rawTf : "15m";
+        const interval = /^[0-9]+(s|m|h|d|j|w|M|sem|mois)$/.test(rawTf) ? rawTf : "15m";
         const limit = Number(url.searchParams.get("limit") || 240);
         const data = await desk.getChartCandles(sym, interval, limit);
         res.writeHead(200, { "content-type": "application/json" });

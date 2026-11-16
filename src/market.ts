@@ -263,10 +263,13 @@ type BinanceKlineRaw = [
 
 export async function fetchBinanceKlines(
   symbol: string,
-  interval: "1m" | "5m" | "15m" | "1h" | "4h",
+  interval: string,
   limit: number,
 ): Promise<Kline[]> {
-  const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const url =
+    interval === "1s"
+      ? `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1s&limit=${limit}`
+      : `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const raw = await getJson<BinanceKlineRaw[]>(url, { timeoutMs: 7000 });
   return raw.map((row) => ({
     openTime: Number(row[0]),

@@ -131,6 +131,22 @@ export type DeskRuntimeSettings = {
   fvgMinSizeAtr: number;
   defaultLeverage: number;
   maintenanceMarginRate: number;
+  // Paramètres avancés gestion du risque & TP (Phase 3 — inactifs par défaut)
+  riskMode?: "pct" | "pips" | "amount";
+  riskPips?: number;
+  riskAmount?: number;
+  maxLossPerTradeMode?: "pct" | "pips" | "amount";
+  maxLossPerTradeVal?: number;
+  maxDayLossMode?: "pct" | "pips" | "amount";
+  maxDayLossVal?: number;
+  maxTotalLossMode?: "pct" | "pips" | "amount";
+  maxTotalLossVal?: number;
+  autoStopOnMaxLoss?: boolean;
+  tpMode?: "rr" | "pips" | "pct" | "amount";
+  tpVal?: number;
+  dailyProfitTargetEnabled?: boolean;
+  dailyProfitTargetMode?: "amount" | "pct";
+  dailyProfitTargetVal?: number;
   mt5Enabled?: boolean;
   metaApiAccountId?: string;
   mt5Login?: string;
@@ -473,6 +489,7 @@ export type DeskState = {
   rlSummary?: {
     totalEpisodes: number;
     meanAdvantage: number;
+    meanReward?: number;
     klDivergence: number;
     lastUpdated: number;
     regime: string;

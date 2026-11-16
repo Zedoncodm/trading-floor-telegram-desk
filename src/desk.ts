@@ -354,12 +354,22 @@ export interface LeveragedSizingResult {
   notional?: number;
   qty?: number;
   riskUsd?: number;
+  riskCapital?: number;
   riskPct?: number;
   exposurePct?: number;
   binding?: Binding;
   stopPct?: number;
   leverage?: number;
   liqPrice?: number;
+}
+
+export function pipSizeForAsset(asset: string, entryPrice: number): number {
+  const a = String(asset || "").toUpperCase();
+  if (a.includes("JPY")) return 0.01;
+  if (a.startsWith("XAU")) return 0.1;
+  if (a.startsWith("XAG")) return 0.01;
+  if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF){2}/.test(a)) return 0.0001;
+  return Math.max(0.0001, entryPrice * 0.001);
 }
 
 export function computeLeveragedSizing(
@@ -456,7 +466,12 @@ export function computeLeveragedSizing(
   }
   const liqPrice = computeLiqPrice(effectiveLev);
 
-  const remainingDayBudget = state.dayStartEquity * maxDayLoss + currentDayPnl(state);
+  const dayMode = state.settings?.maxDayLossMode ?? "pct";
+  const dayLimitUsd =
+    dayMode === "amount" && (state.settings?.maxDayLossVal ?? 0) > 0
+      ? Number(state.settings!.maxDayLossVal)
+      : state.dayStartEquity * maxDayLoss;
+  const remainingDayBudget = dayLimitUsd + currentDayPnl(state);
   if (remainingDayBudget <= 0) {
     return {
       ok: false,
@@ -475,7 +490,22 @@ export function computeLeveragedSizing(
     riskPct = Math.min(maxRisk, Math.max(0.005, quarterKelly));
   }
 
-  const riskCapital = Math.min(eq * riskPct, remainingDayBudget);
+  let targetRiskUsd = eq * riskPct;
+  const rMode = state.settings?.riskMode ?? "pct";
+  if (rMode === "amount" && (state.settings?.riskAmount ?? 0) > 0) {
+    targetRiskUsd = Number(state.settings!.riskAmount);
+  } else if (rMode === "pips" && (state.settings?.riskPips ?? 0) > 0) {
+    const pipRiskPct = Math.min(maxRisk, Math.max(0.002, Number(state.settings!.riskPips) * 0.0005));
+    targetRiskUsd = eq * pipRiskPct;
+  }
+  const perTradeMode = state.settings?.maxLossPerTradeMode ?? "pct";
+  if (perTradeMode === "amount" && (state.settings?.maxLossPerTradeVal ?? 0) > 0) {
+    targetRiskUsd = Math.min(targetRiskUsd, Number(state.settings!.maxLossPerTradeVal));
+  } else if (perTradeMode === "pct" && (state.settings?.maxLossPerTradeVal ?? 0) > 0) {
+    targetRiskUsd = Math.min(targetRiskUsd, eq * (Number(state.settings!.maxLossPerTradeVal) / 100));
+  }
+
+  const riskCapital = Math.min(targetRiskUsd, remainingDayBudget);
   const takerFee = options.takerFee ?? (effectiveLev > 1 ? 0.0004 : 0);
   const expectedSlippage = options.expectedSlippage ?? (effectiveLev > 1 ? 0.0002 : 0);
   const denom = Math.max(1e-6, priceStopDistance + takerFee * 2 + expectedSlippage);
@@ -503,10 +533,14 @@ export function computeLeveragedSizing(
   }
 
   const riskUsd = finalPositionNotional * priceStopDistance;
-  if (riskUsd > eq * maxRisk + 0.01) {
+  const maxAllowedRiskUsd =
+    rMode === "amount" && (state.settings?.riskAmount ?? 0) > 0
+      ? Number(state.settings!.riskAmount) * 1.05 + 1
+      : eq * maxRisk + 0.01;
+  if (riskUsd > maxAllowedRiskUsd) {
     return {
       ok: false,
-      reason: `Veto : le risque à l'invalidation dépasse le plafond de ${fmtPct(maxRisk, 1)} par trade.`,
+      reason: `Veto : le risque à l'invalidation dépasse le plafond autorisé par trade.`,
     };
   }
 
@@ -515,6 +549,7 @@ export function computeLeveragedSizing(
     notional: finalPositionNotional,
     qty: finalPositionNotional / entryPrice,
     riskUsd,
+    riskCapital,
     riskPct: riskUsd / eq,
     exposurePct: finalPositionNotional / eq,
     binding,
@@ -999,6 +1034,7 @@ export class TradingFloorDesk {
     this.state.rlSummary = {
       totalEpisodes: this.grpo.memory.totalEpisodes,
       meanAdvantage: lastHist?.meanAdvantage ?? 0,
+      meanReward: lastHist?.meanReward ?? 0,
       klDivergence: lastHist?.klDivergence ?? 0,
       lastUpdated: this.grpo.memory.timestamp,
       regime,
@@ -1242,7 +1278,7 @@ export class TradingFloorDesk {
 
   async getChartCandles(
     symbol: string,
-    interval: "1m" | "5m" | "15m" | "1h" | "4h" = "15m",
+    interval = "15m",
     limit = 240,
   ): Promise<{
     ok: boolean;
@@ -1256,10 +1292,31 @@ export class TradingFloorDesk {
     const now = Date.now();
     const sym = (symbol || this.state.settings.symbols[0] || "BTCUSDT").toUpperCase();
     const snap = await fetchMarketSnapshot(sym, now, this.state.settings.fvgMinSizeAtr ?? 0.5);
+    const normTf = String(interval || "15m").trim();
+    const tfMap: Record<string, string> = {
+      "1s": "1s",
+      "1m": "1m",
+      "2m": "1m",
+      "3m": "3m",
+      "5m": "5m",
+      "10m": "5m",
+      "15m": "15m",
+      "30m": "30m",
+      "1h": "1h",
+      "2h": "2h",
+      "4h": "4h",
+      "1d": "1d",
+      "1j": "1d",
+      "1w": "1w",
+      "1sem": "1w",
+      "1M": "1M",
+      "1mois": "1M",
+    };
+    const binanceTf = tfMap[normTf] ?? "15m";
     let candles = snap.bars4h ?? [];
-    if (sym.endsWith("USDT") && interval !== "4h") {
+    if (sym.endsWith("USDT")) {
       try {
-        const fetched = await fetchBinanceKlines(sym, interval === "1m" || interval === "5m" ? "15m" : interval, Math.min(500, Math.max(60, limit)));
+        const fetched = await fetchBinanceKlines(sym, binanceTf, Math.min(500, Math.max(60, limit)));
         if (fetched.length >= 20) {
           candles = fetched;
         }
@@ -1270,7 +1327,7 @@ export class TradingFloorDesk {
     return {
       ok: true,
       symbol: sym,
-      interval,
+      interval: normTf,
       candles: candles.slice(-Math.min(500, Math.max(30, limit))),
       vwap: snap.vwapContext ?? null,
       fvg: snap.fvgZone ?? null,
@@ -2250,6 +2307,23 @@ export class TradingFloorDesk {
       }
 
       const isFullAuto = this.state.settings.executionMode === "auto" || isScalp;
+      let finalTarget = target;
+      const tpMode = this.state.settings?.tpMode ?? "rr";
+      const tpVal = Number(this.state.settings?.tpVal ?? 0);
+      if (!macroShieldApplied && !selectedIdea?.customTarget && tpVal > 0) {
+        if (tpMode === "rr") {
+          finalTarget = activeDir === "long" ? entry + actualStopDist * tpVal : entry - actualStopDist * tpVal;
+        } else if (tpMode === "pct") {
+          const d = entry * (tpVal / 100);
+          finalTarget = activeDir === "long" ? entry + d : entry - d;
+        } else if (tpMode === "pips") {
+          const d = tpVal * pipSizeForAsset(chosen.symbol, entry);
+          finalTarget = activeDir === "long" ? entry + d : entry - d;
+        } else if (tpMode === "amount" && sized.notional > 0) {
+          const d = (tpVal / sized.notional) * entry;
+          finalTarget = activeDir === "long" ? entry + d : entry - d;
+        }
+      }
       const id = this.nextTicketId(now);
       const currentRegime = selectedIdea?.regime ?? this.grpo.classifyRegime({
         ret24h: chosen.ret24h ?? 0,
@@ -2265,7 +2339,7 @@ export class TradingFloorDesk {
         thesis: activeThesis,
         entry,
         invalidation,
-        target,
+        target: finalTarget,
         timeStopHours: activePlaybook === "HFT_OrderFlow_Imbalance" ? 0.033 : activePlaybook === "Session_VWAP_Reversion" ? 8 : activePlaybook === "Macro_FVG_Mitigation" ? 72 : 120,
         timeStopMs: selectedIdea?.timeStopMs,
         partialTpPrice: selectedIdea?.partialTpPrice,
@@ -2731,13 +2805,18 @@ export class TradingFloorDesk {
         continue;
       }
 
+      const hitAmountTp =
+        this.state.settings?.tpMode === "amount" &&
+        Number(this.state.settings?.tpVal ?? 0) > 0 &&
+        curUnrealized >= Number(this.state.settings.tpVal);
+
       const hitStop = isLong ? mark <= ticket.invalidation : mark >= ticket.invalidation;
       const hitTarget = isLong ? mark >= ticket.target : mark <= ticket.target;
 
       if (hitStop) {
         await this.closeOpenTicket(ticket, ticket.invalidation, "invalidation", now);
-      } else if (hitTarget) {
-        await this.closeOpenTicket(ticket, ticket.target, "target", now);
+      } else if (hitAmountTp || hitTarget) {
+        await this.closeOpenTicket(ticket, hitAmountTp ? mark : ticket.target, "target", now);
       }
     }
 
@@ -2773,9 +2852,55 @@ export class TradingFloorDesk {
 
   private async enforceDailyLossLimit(now = Date.now()): Promise<void> {
     if (this.state.halted && this.state.haltKind === "loss") return;
-    const maxDayLoss = this.state.settings?.maxDayLossPct ?? MAX_DAY_LOSS;
-    const loss = -currentDayPnl(this.state);
-    if (loss < this.state.dayStartEquity * maxDayLoss) return;
+    const s = this.state.settings;
+
+    // 1) Objectif de profit journalier : fermer tout quand le profit du jour atteint X
+    if (s?.dailyProfitTargetEnabled && Number(s.dailyProfitTargetVal ?? 0) > 0) {
+      const targetUsd =
+        s.dailyProfitTargetMode === "pct"
+          ? this.state.dayStartEquity * (Number(s.dailyProfitTargetVal) / 100)
+          : Number(s.dailyProfitTargetVal);
+      if (currentDayPnl(this.state) >= targetUsd) {
+        const openForProfit = this.state.tickets.filter((t) => t.status === "open");
+        if (openForProfit.length > 0) {
+          for (const t of openForProfit) {
+            const px = markPriceOf(this.state, t.asset, t.fillPrice ?? t.entry);
+            await this.closeOpenTicket(t, px, "target", now);
+          }
+          await this.say(
+            "lead",
+            `Objectif de profit journalier (${fmtUsd(targetUsd, 0)}) atteint : toutes les positions ouvertes ont été clôturées pour sécuriser les gains du jour.`,
+            "fill",
+          );
+        }
+      }
+    }
+
+    if (s?.autoStopOnMaxLoss === false) return;
+
+    // 2) Perte maximale journalière (% ou montant)
+    const maxDayLoss = s?.maxDayLossPct ?? MAX_DAY_LOSS;
+    const dayLimitUsd =
+      s?.maxDayLossMode === "amount" && Number(s.maxDayLossVal ?? 0) > 0
+        ? Number(s.maxDayLossVal)
+        : this.state.dayStartEquity * maxDayLoss;
+    const dayLoss = -currentDayPnl(this.state);
+    const hitDayLoss = dayLoss >= dayLimitUsd;
+
+    // 3) Perte maximale totale sur le compte (% ou montant)
+    let hitTotalLoss = false;
+    if (Number(s?.maxTotalLossVal ?? 0) > 0) {
+      const totalLimitUsd =
+        s?.maxTotalLossMode === "amount"
+          ? Number(s!.maxTotalLossVal)
+          : this.state.startEquity * (Number(s!.maxTotalLossVal) / 100);
+      const totalLoss = this.state.startEquity - currentEquity(this.state);
+      if (totalLimitUsd > 0 && totalLoss >= totalLimitUsd) {
+        hitTotalLoss = true;
+      }
+    }
+
+    if (!hitDayLoss && !hitTotalLoss) return;
 
     const openTickets = this.state.tickets.filter((t) => t.status === "open");
     for (const t of openTickets) {
@@ -2784,11 +2909,12 @@ export class TradingFloorDesk {
     }
     this.state.halted = true;
     this.state.haltKind = "loss";
-    setAgentActivity(this.state, "risk", "veto", `HALT -${fmtPct(maxDayLoss, 0)} journalier : desk à plat`, now);
+    const reasonLabel = hitTotalLoss ? "Perte max totale atteinte" : `HALT -${fmtPct(maxDayLoss, 0)} journalier`;
+    setAgentActivity(this.state, "risk", "veto", `${reasonLabel} : desk à plat`, now);
 
     await this.wakeHuman(
       "halt",
-      `Limite de perte journalière de ${fmtPct(maxDayLoss, 0)} atteinte. Le Directeur des Risques et le Trader d'Exécution ont mis tout le portefeuille à plat (FLAT). Aucun nouveau trade aujourd'hui.`,
+      `${hitTotalLoss ? "Limite de perte maximale totale" : `Limite de perte journalière de ${fmtPct(maxDayLoss, 0)}`} atteinte. Le Directeur des Risques et le Trader d'Exécution ont mis tout le portefeuille à plat (FLAT). Aucun nouveau trade.`,
     );
   }
 

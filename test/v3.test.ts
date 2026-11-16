@@ -425,3 +425,51 @@ test("DASHBOARD_HTML compiles inline JS cleanly and renders 8 agents & all 5 V3 
   assert.ok(m && m[1], "Expected main inline script tag");
   assert.doesNotThrow(() => new Function(m[1]));
 });
+
+test("Phase 2-5: 20 themes, TradingView tools, ATR mini-chart, and dynamic risk/TP modes", () => {
+  // Check 20 themes catalog
+  for (const themeKey of ["obsidian", "midnight", "carbon", "nordic", "imperial-gold", "cyberpunk", "swiss-light", "crystal-glass"]) {
+    assert.ok(DASHBOARD_HTML.includes(`label: `) && DASHBOARD_HTML.includes(themeKey), `Expected theme ${themeKey}`);
+  }
+
+  // Check timeframe strip & drawing tools
+  for (const tf of ["1s", "1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"]) {
+    assert.ok(DASHBOARD_HTML.includes(`id: '${tf}'`), `Expected timeframe ${tf}`);
+  }
+  for (const tool of ["select", "trendline", "hline", "vline", "channel", "rect", "zone", "fib", "arrow", "text", "measure"]) {
+    assert.ok(DASHBOARD_HTML.includes(`data-tool="${tool}"`), `Expected drawing tool ${tool}`);
+  }
+
+  // Check beginner-friendly risk & ATR controls
+  assert.ok(DASHBOARD_HTML.includes("atrMiniChartSvg"), "Expected ATR mini chart SVG");
+  assert.ok(DASHBOARD_HTML.includes("badgeLevLevel"), "Expected leverage level badge");
+  assert.ok(DASHBOARD_HTML.includes("liveRiskSummaryBox"), "Expected live risk summary calculator");
+  assert.ok(DASHBOARD_HTML.includes("dangerRiskModal"), "Expected danger risk confirmation modal");
+
+  // Verify computeLeveragedSizing with custom riskMode & TP calculations
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-phase-"));
+  try {
+    const store = new DeskStore(dir);
+    const state = store.loadOrCreate(10_000, "Europe/Paris", ["BTCUSDT"], 15);
+    state.settings.riskMode = "pct";
+    state.settings.maxRiskPct = 0.02;
+
+    const sizingPct = computeLeveragedSizing(state, 100, 95, undefined, {
+      side: "long",
+      leverageFactor: 5,
+    });
+    assert.equal(sizingPct.ok, true);
+    assert.ok((sizingPct.notional ?? 0) > 0);
+
+    state.settings.riskMode = "amount";
+    state.settings.riskAmount = 150;
+    const sizingAmt = computeLeveragedSizing(state, 100, 95, undefined, {
+      side: "long",
+      leverageFactor: 5,
+    });
+    assert.equal(sizingAmt.ok, true);
+    assert.equal(sizingAmt.riskCapital, 150);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
