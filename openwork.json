@@ -1,0 +1,16 @@
+{
+  "name": "trading-floor-desk",
+  "version": "5.0.0",
+  "runtime": "node>=23.6",
+  "entrypoint": "src/main.ts",
+  "scripts": {
+    "start": "npm run sim",
+    "dev": "npm run dev",
+    "test": "npm test",
+    "typecheck": "npm run typecheck",
+    "desktopShortcut": "npm run desk:desktop"
+  },
+  "defaultPort": 4080,
+  "agentInstructions": "AGENTS.md",
+  "portable": true
+}

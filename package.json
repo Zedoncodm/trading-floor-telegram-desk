@@ -10,6 +10,8 @@
   "scripts": {
     "start": "node --env-file=.env src/main.ts",
     "sim": "node --env-file-if-exists=.env src/main.ts --console",
+    "dev": "node --env-file-if-exists=.env src/main.ts --console",
+    "desk:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-desktop-shortcut.ps1",
     "chat-id": "node --env-file=.env scripts/chat-id.ts",
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
