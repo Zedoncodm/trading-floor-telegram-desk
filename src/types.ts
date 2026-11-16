@@ -63,7 +63,7 @@ export type CloseReason =
 export type Binding = "risk" | "exposure" | "day";
 export type ExecutionMode = "auto" | "human_confirm";
 
-export type LlmProvider = "auto" | "gemini" | "groq" | "deepseek" | "openrouter" | "openai" | "ollama";
+export type LlmProvider = "auto" | "freellm" | "gemini" | "groq" | "deepseek" | "openrouter" | "openai" | "ollama";
 export type TradingStyle = "scalping" | "daytrade" | "longtrade";
 
 export type TrainingCandidate = {

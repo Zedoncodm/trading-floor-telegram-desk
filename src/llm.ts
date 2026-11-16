@@ -176,14 +176,18 @@ function env(k: string): string {
 
 /**
  * Détecte automatiquement le fournisseur LLM le moins cher / gratuit disponible :
- * 1. Gemini 2.5 Flash-Lite (Gratuit sur Google AI Studio ou ~$0.075/1M tokens)
- * 2. Groq Llama-3.3-70B / 8B (Gratuit sur Groq Cloud)
- * 3. DeepSeek V3 (`deepseek-chat`) (~$0.14/1M tokens)
- * 4. OpenRouter (`google/gemini-2.5-flash-lite` ou `meta-llama/llama-3.3-70b-instruct:free`)
- * 5. OpenAI (`gpt-4o-mini`)
- * 6. Ollama local (`qwen2.5:7b` / `llama3.2` — 100% gratuit sur la machine)
+ * 1. FreeLLM local Gateway (`http://127.0.0.1:31415/v1` — auto / auto:fast)
+ * 2. Gemini 2.5 Flash-Lite (Gratuit sur Google AI Studio ou ~$0.075/1M tokens)
+ * 3. Groq Llama-3.3-70B / 8B (Gratuit sur Groq Cloud)
+ * 4. DeepSeek V3 (`deepseek-chat`) (~$0.14/1M tokens)
+ * 5. OpenRouter (`google/gemini-2.5-flash-lite` ou `meta-llama/llama-3.3-70b-instruct:free`)
+ * 6. OpenAI (`gpt-4o-mini`)
+ * 7. Ollama local (`qwen2.5:7b` / `llama3.2` — 100% gratuit sur la machine)
  */
 export function detectBestCheapProvider(): { provider: LlmProvider; model: string; hint: string } {
+  if (env("FREELLM_API_KEY") || env("FREELLM_KEY")) {
+    return { provider: "freellm", model: env("FREELLM_MODEL") || "auto:fast", hint: "Passerelle FreeLLM détectée (.env)" };
+  }
   if (env("GEMINI_API_KEY") || env("GOOGLE_API_KEY")) {
     return { provider: "gemini", model: "gemini-2.5-flash-lite", hint: "Clé Gemini détectée (.env)" };
   }
@@ -215,6 +219,8 @@ export function setRuntimeLlmApiKey(key: string): void {
 function resolveApiKey(provider: LlmProvider): string {
   if (runtimeApiKeyOverride) return runtimeApiKeyOverride;
   switch (provider) {
+    case "freellm":
+      return env("FREELLM_API_KEY") || env("FREELLM_KEY") || env("LLM_API_KEY");
     case "gemini":
       return env("GEMINI_API_KEY") || env("GOOGLE_API_KEY") || env("LLM_API_KEY");
     case "groq":
@@ -252,7 +258,8 @@ export async function generateAgentVoice(
   const key = resolveApiKey(provider);
 
   if (provider === "auto") {
-    if (env("GEMINI_API_KEY") || env("GOOGLE_API_KEY") || key.startsWith("AIza")) provider = "gemini";
+    if (env("FREELLM_API_KEY") || env("FREELLM_KEY")) provider = "freellm";
+    else if (env("GEMINI_API_KEY") || env("GOOGLE_API_KEY") || key.startsWith("AIza")) provider = "gemini";
     else if (env("GROQ_API_KEY") || key.startsWith("gsk_")) provider = "groq";
     else if (env("DEEPSEEK_API_KEY")) provider = "deepseek";
     else if (env("OPENROUTER_API_KEY") || key.startsWith("sk-or-")) provider = "openrouter";
@@ -317,8 +324,13 @@ export async function generateAgentVoice(
       if (out) return { text: out, usedProvider: `Ollama Local (${model})` };
     }
 
-    // OpenAI-compatible endpoints: Groq, DeepSeek, OpenRouter, OpenAI
+    // OpenAI-compatible endpoints: FreeLLM, Groq, DeepSeek, OpenRouter, OpenAI
     const endpointMap: Record<string, { url: string; defaultModel: string; label: string }> = {
+      freellm: {
+        url: (env("FREELLM_BASE_URL") || "http://127.0.0.1:31415/v1").replace(/\/+$/, "") + "/chat/completions",
+        defaultModel: "auto:fast",
+        label: "FreeLLM",
+      },
       groq: {
         url: "https://api.groq.com/openai/v1/chat/completions",
         defaultModel: "llama-3.3-70b-versatile",

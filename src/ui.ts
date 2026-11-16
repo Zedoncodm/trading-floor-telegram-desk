@@ -2015,12 +2015,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <input id="prefGlassAlpha" type="range" min="35" max="98" value="80" style="width:100%" oninput="updateGlassAlpha(this.value)" />
       </div>
 
-      <div style="border-top:1px solid var(--ring-1);padding-top:12px">
-        <label class="field-lbl">Clé API LLM Agents (Optionnel)</label>
+      <div style="border-top:1px solid var(--ring-1);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+        <label class="field-lbl">Passerelle LLM Agents</label>
         <div style="display:flex;gap:6px">
-          <input id="llmKeyInput" type="password" class="input-dark" style="flex:1" placeholder="sk-... ou AIza..." />
+          <select id="llmProviderSelect" class="input-dark" style="flex:1" onchange="onLlmProviderChanged()">
+            <option value="auto">Auto (Meilleur dispo)</option>
+            <option value="freellm" selected>FreeLLM (127.0.0.1:31415)</option>
+            <option value="gemini">Google Gemini 2.5 Flash</option>
+            <option value="groq">Groq Cloud (Llama 3.3)</option>
+            <option value="deepseek">DeepSeek V3</option>
+            <option value="openrouter">OpenRouter Free</option>
+            <option value="openai">OpenAI (GPT-4o-mini)</option>
+            <option value="ollama">Ollama Local (11434)</option>
+          </select>
+          <select id="llmModelSelect" class="input-dark" style="width:110px">
+            <option value="auto:fast">auto:fast</option>
+            <option value="auto">auto</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:6px">
+          <input id="llmKeyInput" type="password" class="input-dark" style="flex:1" placeholder="Clé FreeLLM / Provider API key..." />
           <button class="pill-btn primary" onclick="saveLlmApiKey()">Activer</button>
         </div>
+        <div id="llmStatusBadge" style="font-size:10px;color:var(--text-subtle)">URL : http://127.0.0.1:31415/v1 · Routes : auto / auto:fast</div>
       </div>
     </div>
   </aside>
@@ -5025,15 +5042,52 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       validateAndSaveRiskSettings(true);
     }
 
+    function onLlmProviderChanged() {
+      var prov = document.getElementById('llmProviderSelect').value;
+      var modelSel = document.getElementById('llmModelSelect');
+      var badge = document.getElementById('llmStatusBadge');
+      if (prov === 'freellm') {
+        modelSel.innerHTML = '<option value="auto:fast">auto:fast</option><option value="auto">auto</option>';
+        badge.textContent = 'URL : http://127.0.0.1:31415/v1 · Routes : auto / auto:fast';
+      } else if (prov === 'gemini') {
+        modelSel.innerHTML = '<option value="gemini-2.5-flash-lite">flash-lite</option><option value="gemini-2.5-flash">flash</option>';
+        badge.textContent = 'Google AI Studio / GenerativeLanguage API';
+      } else if (prov === 'groq') {
+        modelSel.innerHTML = '<option value="llama-3.3-70b-versatile">llama-3.3-70b</option><option value="llama-3.1-8b-instant">llama-3.1-8b</option>';
+        badge.textContent = 'Groq Cloud API (Llama 3.3)';
+      } else if (prov === 'ollama') {
+        modelSel.innerHTML = '<option value="qwen2.5:7b">qwen2.5:7b</option><option value="llama3.2">llama3.2</option>';
+        badge.textContent = 'Ollama local sur 127.0.0.1:11434';
+      } else {
+        modelSel.innerHTML = '<option value="auto">auto</option>';
+        badge.textContent = 'Sélection automatique selon les clés configurées';
+      }
+    }
+
     async function saveLlmApiKey() {
       var k = document.getElementById('llmKeyInput').value.trim();
-      if (!k) return;
-      await fetch('/api/ai-config', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ llmApiKey: k })
-      });
-      document.getElementById('llmKeyInput').value = '';
+      var prov = document.getElementById('llmProviderSelect').value;
+      var model = document.getElementById('llmModelSelect').value;
+      var badge = document.getElementById('llmStatusBadge');
+      badge.textContent = 'Activation en cours...';
+      try {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            llmApiKey: k || undefined,
+            settings: {
+              llmEnabled: true,
+              llmProvider: prov,
+              llmModel: model
+            }
+          })
+        });
+        badge.textContent = 'Passerelle active · ' + prov + ' (' + model + ')';
+        document.getElementById('llmKeyInput').value = '';
+      } catch (e) {
+        badge.textContent = "Erreur lors de l'activation de la passerelle";
+      }
     }
 
     async function syncMt5Now() {
