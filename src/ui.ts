@@ -169,7 +169,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       align-items: flex-start;
       padding-top: 6px;
     }
-    body:not(.stealth-desk) #stealthHoverZone { pointer-events: none; }
+    body:not(.stealth-desk) #stealthHoverZone,
+    body.nav-pinned #stealthHoverZone,
+    body.nav-revealed #stealthHoverZone { pointer-events: none; }
     #stealthHintPill {
       width: 54px;
       height: 4px;
@@ -859,6 +861,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       cursor: pointer;
     }
 
+    .lev-preset-btn {
+      transition: all 0.18s ease;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .lev-preset-btn.active {
+      background: var(--accent) !important;
+      border-color: var(--accent) !important;
+      color: #ffffff !important;
+      font-weight: 800 !important;
+      box-shadow: 0 0 12px rgba(99, 102, 241, 0.45) !important;
+      transform: translateY(-1px);
+    }
+
     .progress-track {
       width: 100%;
       height: 8px;
@@ -1175,7 +1191,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </nav>
 
     <div class="nav-actions">
-      <button class="pill-btn mono" id="navLevBadge" onclick="switchTab(&quot;strategy&quot;)" title="Levier actif (cliquer pour modifier)">x5</button>
+      <div style="position:relative;display:inline-block">
+        <button class="pill-btn mono" id="navLevBadge" onclick="toggleNavLevDropdown(event)" title="Levier actif (cliquer pour modifier en 1 clic)">x5</button>
+        <div id="navLevDropdown" style="display:none;position:absolute;top:calc(100% + 8px);left:0;background:var(--bg-panel);border:1px solid var(--ring-2);box-shadow:0 16px 36px rgba(0,0,0,0.65);border-radius:12px;padding:14px;z-index:99999;width:290px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-weight:700;font-size:12px;letter-spacing:0.02em;color:var(--text-main)">⚡ LEVIER DE TRADING</div>
+            <span id="navLevCurrentBadge" class="level-badge prudent" style="font-size:11px">Prudent</span>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;line-height:1.4">
+            Modifiez le levier en 1 clic pour l'appliquer en direct au desk et à MT5 :
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin-bottom:12px">
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="2" onclick="quickApplyLeverage(2); closeNavLevDropdown()">2x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="5" onclick="quickApplyLeverage(5); closeNavLevDropdown()">5x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="10" onclick="quickApplyLeverage(10); closeNavLevDropdown()">10x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="25" onclick="quickApplyLeverage(25); closeNavLevDropdown()">25x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="50" onclick="quickApplyLeverage(50); closeNavLevDropdown()">50x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="100" onclick="quickApplyLeverage(100); closeNavLevDropdown()">100x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="250" onclick="quickApplyLeverage(250); closeNavLevDropdown()">250x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="500" style="border-color:var(--down-ring);color:var(--down)" onclick="quickApplyLeverage(500); closeNavLevDropdown()">500x</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px solid var(--ring-1)">
+            <input id="navLevQuickInput" type="number" min="1" max="500" value="5" class="input-dark mono" style="width:68px;text-align:center;font-weight:700" onkeydown="if(event.key==='Enter'){quickApplyLeverage(this.value);closeNavLevDropdown();}" />
+            <button type="button" class="pill-btn primary" style="flex:1;font-size:11px;font-weight:700" onclick="quickApplyLeverage(document.getElementById('navLevQuickInput').value); closeNavLevDropdown()">⚡ Appliquer</button>
+          </div>
+          <div style="margin-top:8px;text-align:right">
+            <a href="javascript:void(0)" onclick="closeNavLevDropdown(); switchTab('strategy')" style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:600">⚙️ Tous les réglages de risque →</a>
+          </div>
+        </div>
+      </div>
       <button id="btnExecMode" class="pill-btn auto-off" onclick="toggleExecutionMode()">Confirmation Humaine</button>
       <button class="pill-btn primary" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Connecter MT5 Téléphone &amp; Telegram">📱 <span class="btn-text-hide-sm">MT5 &amp; Telegram</span></button>
       <button id="btnAssetsToggle" class="pill-btn" onclick="toggleAssetDropdown()">Actifs ▾</button>
@@ -1489,23 +1533,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               1. Levier de trading (1x à 500x)
               <span class="info-tip" data-tip="Multiplie la taille de votre position par rapport à votre capital. Ex. : avec 1 000 € et levier 5x, vous ouvrez une position de 5 000 €. Le garde-fou réduit automatiquement le levier si le stop est trop proche de la liquidation. Conseillé : 2x à 10x.">?</span>
             </div>
-            <span id="badgeLevLevel" class="level-badge prudent">🟢 Prudent</span>
-          </div>
-          <div class="risk-field-desc">Multiplie votre pouvoir d'achat sur le marché. Plus le levier est élevé, plus les gains ET les pertes vont vite.</div>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-            <input id="cfgLevSlider" type="range" min="1" max="500" value="5" class="lev-slider" oninput="syncLevFromSlider(this.value)" />
-            <div style="display:flex;align-items:center;gap:4px">
-              <input id="cfgLev" type="number" min="1" max="500" class="input-dark mono" style="width:74px;text-align:center;font-weight:700" oninput="syncLevFromNumber(this.value)" />
-              <span class="mono accent" style="font-weight:800">x</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span id="levApplyFeedback" style="font-size:12px;font-weight:600;display:none"></span>
+              <span id="badgeLevLevel" class="level-badge prudent">🟢 Prudent</span>
             </div>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">
-            <button class="pill-btn mono" onclick="setLevPreset(2)">2x</button>
-            <button class="pill-btn mono" onclick="setLevPreset(5)">5x (Reco)</button>
-            <button class="pill-btn mono" onclick="setLevPreset(25)">25x</button>
-            <button class="pill-btn mono" onclick="setLevPreset(100)">100x</button>
-            <button class="pill-btn mono" onclick="setLevPreset(250)">250x</button>
-            <button class="pill-btn mono" style="border-color:var(--down-ring);color:var(--down)" onclick="setLevPreset(500)">500x MAX</button>
+          <div class="risk-field-desc">Multiplie votre pouvoir d'achat sur le marché. Plus le levier est élevé, plus les gains ET les pertes vont vite. Cliquez sur un preset ou modifiez la valeur puis cliquez sur <strong>Appliquer</strong>.</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <input id="cfgLevSlider" type="range" min="1" max="500" value="5" class="lev-slider" oninput="syncLevFromSlider(this.value)" />
+            <div style="display:flex;align-items:center;gap:6px">
+              <input id="cfgLev" type="number" min="1" max="500" class="input-dark mono" style="width:74px;text-align:center;font-weight:700" oninput="syncLevFromNumber(this.value)" onkeydown="if(event.key==='Enter'){applyCurrentLeverageInput();}" />
+              <span class="mono accent" style="font-weight:800">x</span>
+              <button id="btnApplyLevDirect" type="button" class="pill-btn primary" style="padding:6px 14px;font-size:12px;font-weight:700;white-space:nowrap" onclick="applyCurrentLeverageInput()" title="Appliquer immédiatement ce levier">⚡ Appliquer</button>
+            </div>
+          </div>
+          <div id="levPresetsWrap" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="2" onclick="quickApplyLeverage(2)">2x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="5" onclick="quickApplyLeverage(5)">5x (Reco)</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="10" onclick="quickApplyLeverage(10)">10x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="25" onclick="quickApplyLeverage(25)">25x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="50" onclick="quickApplyLeverage(50)">50x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="100" onclick="quickApplyLeverage(100)">100x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="250" onclick="quickApplyLeverage(250)">250x</button>
+            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="500" style="border-color:var(--down-ring);color:var(--down)" onclick="quickApplyLeverage(500)">500x MAX</button>
           </div>
         </div>
 
@@ -2327,6 +2377,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           closeDrawer('mobileDrawer');
           closePanicModal();
           closeDangerRiskModal();
+          closeNavLevDropdown();
           var am = document.getElementById('assetDropdownMenu');
           if (am) am.style.display = 'none';
           var ins = document.getElementById('deskNodeInspector');
@@ -2345,6 +2396,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (e.key.toLowerCase() === 't') {
           var td = document.getElementById('themeDrawer');
           if (td && td.classList.contains('open')) closeDrawer('themeDrawer'); else openDrawer('themeDrawer');
+        }
+      });
+
+      document.addEventListener('click', function (e) {
+        var levDd = document.getElementById('navLevDropdown');
+        var levBtn = document.getElementById('navLevBadge');
+        if (levDd && levDd.style.display === 'block') {
+          if (!levDd.contains(e.target) && !levBtn.contains(e.target)) {
+            levDd.style.display = 'none';
+          }
+        }
+        var am = document.getElementById('assetDropdownMenu');
+        var ab = document.getElementById('btnAssetsToggle');
+        if (am && am.style.display === 'block') {
+          if (!am.contains(e.target) && !ab.contains(e.target)) {
+            am.style.display = 'none';
+          }
         }
       });
     }
@@ -3888,12 +3956,117 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (rEl && currentRiskMode === 'amount') rEl.value = val;
     }
 
+    function highlightLevPresets(currentLev) {
+      var n = Math.round(Number(currentLev) || 1);
+      var btns = document.querySelectorAll('.lev-preset-btn');
+      btns.forEach(function (btn) {
+        var bLev = Number(btn.getAttribute('data-lev'));
+        if (bLev === n) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+      var qInput = document.getElementById('navLevQuickInput');
+      if (qInput && document.activeElement !== qInput) qInput.value = String(n);
+      var navCur = document.getElementById('navLevCurrentBadge');
+      if (navCur) {
+        if (n <= 3) { navCur.className = 'level-badge prudent'; navCur.textContent = '🟢 Prudent (' + n + 'x)'; }
+        else if (n <= 10) { navCur.className = 'level-badge balanced'; navCur.textContent = '🔵 Équilibré (' + n + 'x)'; }
+        else { navCur.className = 'level-badge aggressive'; navCur.textContent = '🟠 Agressif (' + n + 'x)'; }
+      }
+    }
+
+    function toggleNavLevDropdown(e) {
+      if (e) e.stopPropagation();
+      var dd = document.getElementById('navLevDropdown');
+      if (!dd) return;
+      var isOpen = dd.style.display === 'block';
+      var am = document.getElementById('assetDropdownMenu');
+      if (am) am.style.display = 'none';
+      if (isOpen) {
+        dd.style.display = 'none';
+      } else {
+        dd.style.display = 'block';
+        var curLev = Number((deskState && deskState.settings && deskState.settings.defaultLeverage) || document.getElementById('cfgLev')?.value || 5);
+        highlightLevPresets(curLev);
+      }
+    }
+
+    function closeNavLevDropdown() {
+      var dd = document.getElementById('navLevDropdown');
+      if (dd) dd.style.display = 'none';
+    }
+
+    function applyLeverageDirectly(val, callback) {
+      var n = Math.max(1, Math.min(500, Math.round(Number(val) || 1)));
+      var slider = document.getElementById('cfgLevSlider');
+      var input = document.getElementById('cfgLev');
+      var badge = document.getElementById('navLevBadge');
+      var applyBtn = document.getElementById('btnApplyLevDirect');
+      if (slider) slider.value = String(n);
+      if (input) input.value = String(n);
+      if (badge) badge.textContent = 'x' + n;
+      if (applyBtn) applyBtn.textContent = '⚡ Appliquer';
+      updateRiskLevelBadges();
+      updateLiveRiskCalculator();
+      highlightLevPresets(n);
+
+      var fb = document.getElementById('levApplyFeedback');
+      if (fb) {
+        fb.style.display = 'inline-block';
+        fb.style.color = 'var(--text-muted)';
+        fb.textContent = '⏳ Application...';
+      }
+
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: { defaultLeverage: n } })
+      })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (deskState) {
+          if (!deskState.settings) deskState.settings = {};
+          deskState.settings.defaultLeverage = n;
+        }
+        if (fb) {
+          fb.style.display = 'inline-block';
+          fb.style.color = 'var(--up)';
+          fb.textContent = '✅ Levier x' + n + ' actif !';
+          setTimeout(function () { if (fb) fb.style.display = 'none'; }, 3500);
+        }
+        if (badge) badge.textContent = 'x' + n;
+        highlightLevPresets(n);
+        if (typeof callback === 'function') callback(null, n);
+      })
+      .catch(function (err) {
+        if (fb) {
+          fb.style.display = 'inline-block';
+          fb.style.color = 'var(--down)';
+          fb.textContent = '❌ Erreur : ' + (err.message || 'échec');
+        }
+        if (typeof callback === 'function') callback(err);
+      });
+    }
+
+    function quickApplyLeverage(val) {
+      applyLeverageDirectly(val);
+    }
+
+    function applyCurrentLeverageInput() {
+      var input = document.getElementById('cfgLev');
+      var val = Number(input?.value || 5);
+      applyLeverageDirectly(val);
+    }
+
     function syncLevFromSlider(val) {
       var n = Math.max(1, Math.min(500, Math.round(Number(val) || 1)));
       var el = document.getElementById('cfgLev');
       if (el) el.value = String(n);
-      var bd = document.getElementById('navLevBadge');
-      if (bd) bd.textContent = 'x' + n;
+      var btn = document.getElementById('btnApplyLevDirect');
+      if (btn) btn.textContent = '⚡ Appliquer x' + n;
+      highlightLevPresets(n);
       markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
@@ -3903,16 +4076,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var n = Math.max(1, Math.min(500, Math.round(Number(val) || 1)));
       var el = document.getElementById('cfgLevSlider');
       if (el) el.value = String(n);
-      var bd = document.getElementById('navLevBadge');
-      if (bd) bd.textContent = 'x' + n;
+      var btn = document.getElementById('btnApplyLevDirect');
+      if (btn) btn.textContent = '⚡ Appliquer x' + n;
+      highlightLevPresets(n);
       markStrategyFormDirty();
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
     }
 
     function setLevPreset(val) {
-      syncLevFromSlider(val);
-      markStrategyFormDirty();
+      quickApplyLeverage(val);
     }
 
     function syncAtrInputs(val) {
@@ -4203,6 +4376,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (levSl) levSl.value = String(lev);
       var navLev = document.getElementById('navLevBadge');
       if (navLev) navLev.textContent = 'x' + lev;
+      highlightLevPresets(lev);
 
       var rMode = settings.riskMode || 'pct';
       currentRiskMode = rMode;
@@ -4376,7 +4550,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         dailyProfitTargetVal: dailyTpVal
       };
 
-      var isDangerous = lev > 20 || (rMode === 'pct' && rPct > 0.10) || (dayLossMode === 'pct' && dayLossPct > 0.20);
+      var isDangerous = lev > 50 || (rMode === 'pct' && rPct > 0.10) || (dayLossMode === 'pct' && dayLossPct > 0.20);
       if (isDangerous && !skipDangerModal) {
         pendingDangerousSettings = payload;
         var desc = document.getElementById('dangerRiskModalDesc');
@@ -4411,6 +4585,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             deskState.settings = Object.assign({}, deskState.settings || {}, settings);
           }
           isStrategyFormDirty = false;
+          if (settings.defaultLeverage) {
+            highlightLevPresets(settings.defaultLeverage);
+            var navLev = document.getElementById('navLevBadge');
+            if (navLev) navLev.textContent = 'x' + settings.defaultLeverage;
+          }
           if (btn) {
             btn.textContent = '✅ Réglages enregistrés !';
             setTimeout(function () { if (btn) { btn.textContent = 'Sauvegarder les réglages'; btn.disabled = false; } }, 1800);
@@ -4826,8 +5005,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         haltBtn.classList.toggle('resuming', isHalted);
       }
 
-      var lev = s.defaultLeverage || 5;
-      document.getElementById('navLevBadge').textContent = 'x' + lev;
+      var lev = (deskState && deskState.settings && deskState.settings.defaultLeverage) || s.defaultLeverage || 5;
+      var navLevEl = document.getElementById('navLevBadge');
+      if (navLevEl) navLevEl.textContent = 'x' + lev;
+      highlightLevPresets(lev);
 
       var open = (deskState.tickets || []).filter(function (t) { return t.status === 'open'; });
       var pending = (deskState.tickets || []).filter(function (t) { return t.status === 'pending'; });
