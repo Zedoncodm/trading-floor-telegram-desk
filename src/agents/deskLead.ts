@@ -99,6 +99,40 @@ export class DeskLeadAgent {
   }
 
   /**
+   * Adjusts global risk appetite multiplier based on recent alpha decay
+   * (rolling win-rate & R-multiple decay across closed trades).
+   */
+  static computeAlphaDecayRiskMultiplier(recentPnls: number[]): {
+    multiplier: number;
+    alphaDecayDetected: boolean;
+    reason: string;
+  } {
+    if (recentPnls.length < 4) {
+      return { multiplier: 1.0, alphaDecayDetected: false, reason: "Échantillon insuffisant (<4 trades)" };
+    }
+    const lastWindow = recentPnls.slice(-8);
+    const prevWindow = recentPnls.slice(-16, -8);
+    const avgLast = lastWindow.reduce((a, b) => a + b, 0) / lastWindow.length;
+    const avgPrev = prevWindow.length ? prevWindow.reduce((a, b) => a + b, 0) / prevWindow.length : avgLast;
+
+    if (avgLast < 0 && avgLast < avgPrev * 0.7) {
+      return {
+        multiplier: 0.6,
+        alphaDecayDetected: true,
+        reason: `Alpha Decay détecté (moy=${avgLast.toFixed(1)}$ vs ${avgPrev.toFixed(1)}$) -> Appétit au risque réduit à 0.60x.`,
+      };
+    }
+    if (avgLast > 0 && avgLast >= avgPrev) {
+      return {
+        multiplier: 1.25,
+        alphaDecayDetected: false,
+        reason: `Alpha en expansion (moy=${avgLast.toFixed(1)}$) -> Appétit au risque relevé à 1.25x.`,
+      };
+    }
+    return { multiplier: 1.0, alphaDecayDetected: false, reason: "Alpha stable (1.00x)." };
+  }
+
+  /**
    * Tick-by-tick evaluation of pacing and state transitions
    */
   static evaluateTick(

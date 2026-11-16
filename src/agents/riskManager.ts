@@ -116,4 +116,51 @@ export class RiskManagerAgent {
       liquidationPrice: Number(liquidationPrice.toFixed(4)),
     };
   }
+
+  /**
+   * Kelly Criterion modified for HFT micro-edges with alpha decay scaling.
+   */
+  static computeModifiedHftKelly(
+    winRate: number,
+    payoffRatio: number,
+    alphaDecayMultiplier = 1.0,
+    maxRiskPct = 0.03,
+  ): number {
+    const p = Math.max(0.25, Math.min(0.85, winRate));
+    const b = Math.max(1.05, payoffRatio);
+    const fullKelly = Math.max(0.005, (p * b - (1 - p)) / b);
+    const fractionalHftKelly = fullKelly * 0.25 * alphaDecayMultiplier;
+    return Number(Math.max(0.002, Math.min(maxRiskPct, fractionalHftKelly)).toFixed(5));
+  }
+
+  /**
+   * Strictly verifies that the Liquidation Price is at least 15% further
+   * from entry than the Stop-Loss price.
+   */
+  static verifyLiquidationBuffer15Pct(
+    entryPrice: number,
+    stopLossPrice: number,
+    leverage: number,
+    side: "long" | "short",
+    maintenanceMarginRate = 0.005,
+  ): { safe: boolean; liqPrice: number; bufferRatio: number } {
+    const lev = Math.max(1, Math.min(500, leverage));
+    const mmr = Math.min(maintenanceMarginRate, (1 / lev) * 0.35);
+    const liqPrice =
+      side === "long"
+        ? entryPrice * (1 - 1 / lev + mmr)
+        : entryPrice * (1 + 1 / lev - mmr);
+    const liqDist = Math.abs(entryPrice - liqPrice);
+    if (liqDist <= 1e-9) {
+      return { safe: false, liqPrice, bufferRatio: 0 };
+    }
+    if (side === "long") {
+      if (stopLossPrice <= liqPrice) return { safe: false, liqPrice, bufferRatio: 0 };
+      const ratio = (stopLossPrice - liqPrice) / liqDist;
+      return { safe: ratio >= 0.15, liqPrice, bufferRatio: Number(ratio.toFixed(4)) };
+    }
+    if (stopLossPrice >= liqPrice) return { safe: false, liqPrice, bufferRatio: 0 };
+    const ratio = (liqPrice - stopLossPrice) / liqDist;
+    return { safe: ratio >= 0.15, liqPrice, bufferRatio: Number(ratio.toFixed(4)) };
+  }
 }

@@ -757,10 +757,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .chart-shell {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      min-height: 600px;
-      height: calc(100vh - 150px);
+      gap: 6px;
+      min-height: calc(100vh - 64px);
+      height: calc(100vh - 64px);
+      padding: 8px 10px !important;
+      border-radius: 0 !important;
     }
+    #view-charts.view-panel { padding: 64px 0 0 0 !important; }
     .chart-toolbar {
       display: flex;
       align-items: center;
@@ -1188,7 +1191,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     /* ================= PHASE 5 : CHARTS, TIMEFRAMES & DESSIN ================= */
-    .chart-shell { min-height: 620px; height: calc(100vh - 148px); }
+    .chart-shell { min-height: calc(100vh - 64px); height: calc(100vh - 64px); }
     .chart-tf-strip {
       display: flex;
       align-items: center;
@@ -1360,6 +1363,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span id="pinNavLabel" class="btn-text-hide-sm">Barre Auto</span>
       </button>
       <button class="pill-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" title="Thèmes &amp; Préférences (Raccourci : T)">🎨 <span class="btn-text-hide-sm">Thèmes</span></button>
+      <!-- PANIC CONTROLS RELOCATED TO HEADER TOP-RIGHT -->
+      <button class="pill-btn" style="background:rgba(239,68,68,0.92);color:#fff;border-color:#f87171;font-weight:800;font-size:10.5px;padding:5px 10px" onclick="openPanicModal()" title="Liquider toutes les positions immédiatement">CLOSE ALL</button>
+      <button id="btnPanicHalt" class="pill-btn" style="background:#facc15;color:#09090b;border-color:#eab308;font-weight:800;font-size:10.5px;padding:5px 10px" onclick="toggleManualHalt()" title="Mettre le desk en pause immédiate">HALT</button>
     </div>
 
     <div id="assetDropdownMenu">
@@ -1370,12 +1376,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div id="assetChecklistHost"></div>
     </div>
   </header>
-
-  <!-- PERSISTENT EMERGENCY KILL-SWITCH BAR -->
-  <div id="panicDock">
-    <button class="btn-panic-close" onclick="openPanicModal()">🚨 CLOSE ALL POSITIONS</button>
-    <button id="btnPanicHalt" class="btn-panic-halt" onclick="toggleManualHalt()">⚠️ HALT DESK</button>
-  </div>
 
   <!-- EMERGENCY CONFIRM MODAL -->
   <div id="panicModal" class="modal-backdrop">
@@ -1395,62 +1395,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section id="view-desk" class="view-panel active">
     <div id="canvas3dWrap"></div>
 
-    <!-- LIVE GOAL TRACKER WIDGET FLOATING OVER 3D CANVAS -->
-    <div id="goalTrackerWidget">
-      <div class="goal-tracker-header">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span class="goal-tracker-dot" id="goalTrackerDot"></span>
-          <span style="font-size:11px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-main)">OBJECTIF FINANCIER DE SESSION</span>
-        </div>
-        <div id="goalTrackerStatusBadge" class="goal-status-badge">EN COURS</div>
-      </div>
-      <div class="goal-metrics-grid">
-        <div class="goal-metric-cell">
-          <div class="goal-metric-lbl">CIBLE</div>
-          <div class="goal-metric-val mono" id="goalTargetVal">$2,000</div>
-        </div>
-        <div class="goal-metric-cell">
-          <div class="goal-metric-lbl">PNL SESSION</div>
-          <div class="goal-metric-val mono up" id="goalCurrentVal">+$0.00</div>
-        </div>
-        <div class="goal-metric-cell">
-          <div class="goal-metric-lbl">ÉCHÉANCE</div>
-          <div class="goal-metric-val mono" id="goalDeadlineVal">--:--</div>
-        </div>
-        <div class="goal-metric-cell">
-          <div class="goal-metric-lbl">CADENCE REQ.</div>
-          <div class="goal-metric-val mono" id="goalVelocityVal">$500/h</div>
-        </div>
-      </div>
-      <div class="goal-progress-wrap">
-        <div id="goalProgressBar" class="goal-progress-bar" style="width:0%"></div>
-      </div>
-    </div>
-
     <div id="deskStatusStrip">
-      <div class="badge-chip mono" id="deskMt5LiveChip" style="display:none">🟢 MT5 LIVE</div>
-      <div class="badge-chip mono" id="deskRegimeChip">RÉGIME : MEAN_REVERTING</div>
+      <div class="badge-chip mono" id="deskRegimeChip">RÉGIME : STANDARD</div>
       <div class="badge-chip mono" id="deskRlChip">IA ÉPISODE #0</div>
       <div class="badge-chip mono" id="deskThemeChip">THÈME : OBSIDIAN</div>
       <div class="badge-chip shield" id="deskShieldChip" style="display:none">VOLATILITY_SHIELD ACTIF (1.5x ATR)</div>
     </div>
 
     <div id="deskFloatingBadge">
+      <div class="desk-mini-stat">
+        <span class="pnl-hero-label">Équité Totale</span>
+        <span class="mono" style="font-size:18px;font-weight:800" id="heroEquity">$10,000</span>
+      </div>
       <div>
-        <div class="pnl-hero-label">PnL Net Session (Capital Live)</div>
+        <div class="pnl-hero-label">PNL Actuel</div>
         <div class="pnl-hero-value mono" id="heroDayPnl">+$0.00</div>
       </div>
       <div class="desk-mini-stat">
-        <span class="pnl-hero-label">Équité Totale</span>
-        <span class="mono" style="font-size:15px;font-weight:700" id="heroEquity">$10,000</span>
-      </div>
-      <div class="desk-mini-stat">
-        <span class="pnl-hero-label">Positions Actives</span>
-        <span class="mono accent" style="font-size:15px;font-weight:700" id="heroOpenCount">0</span>
-      </div>
-      <div class="desk-mini-stat">
-        <span class="pnl-hero-label">En Attente</span>
-        <span class="mono amber" style="font-size:15px;font-weight:700" id="heroPendingCount">0</span>
+        <span class="pnl-hero-label">Profit Fermé de la journée</span>
+        <span class="mono up" style="font-size:17px;font-weight:800" id="heroClosedProfit">+$0.00</span>
       </div>
     </div>
 
@@ -2797,71 +2760,73 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         station.position.set(x, -1.5, z);
         station.lookAt(0, -1.5, 0);
 
-        // Desk console
+        // Sleek circular holographic pedestal (no boxy desks)
         var deskMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(2.4, 0.72, 1.05),
-          new THREE.MeshStandardMaterial({ color: 0x111a2b, metalness: 0.6, roughness: 0.35 })
+          new THREE.CylinderGeometry(1.05, 1.25, 0.18, 36),
+          new THREE.MeshPhysicalMaterial({
+            color: 0x0b1220,
+            metalness: 0.75,
+            roughness: 0.18,
+            clearcoat: 0.9,
+            clearcoatRoughness: 0.1,
+          })
         );
-        deskMesh.position.set(0, 0.42, 0.55);
+        deskMesh.position.set(0, 0.12, 0);
         deskMesh.castShadow = true;
         deskMesh.receiveShadow = true;
         station.add(deskMesh);
 
-        // Triple curved monitor screens with live glowing textures
-        var scrTex = makeScreenTexture(ag.color);
-        var scrMat = new THREE.MeshStandardMaterial({ map: scrTex, emissive: col, emissiveIntensity: 0.75, roughness: 0.2 });
-        [-0.75, 0, 0.75].forEach(function (ox, si) {
-          var scr = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.46, 0.05), scrMat);
-          scr.position.set(ox, 1.05, 0.45 + (si === 1 ? 0.08 : -0.04));
-          scr.rotation.y = si === 0 ? -0.35 : si === 2 ? 0.35 : 0;
-          station.add(scr);
-        });
-
-        // Stylized Agent Figure seated behind console
+        // Stylized Holographic Sphere Node (Glass + Metallic Core + Orbital Rings)
         var avatar = new THREE.Group();
-        avatar.position.set(0, 0.75, -0.32);
+        avatar.position.set(0, 1.15, 0);
 
-        var torso = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.28, 0.36, 0.78, 16),
-          new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.4, roughness: 0.5 })
+        var outerGlassSphere = new THREE.Mesh(
+          new THREE.SphereGeometry(0.62, 36, 36),
+          new THREE.MeshPhysicalMaterial({
+            color: col,
+            metalness: 0.15,
+            roughness: 0.08,
+            transmission: 0.72,
+            thickness: 0.8,
+            ior: 1.45,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.06,
+            transparent: true,
+            opacity: 0.88,
+          })
         );
-        torso.castShadow = true;
-        avatar.add(torso);
+        outerGlassSphere.castShadow = true;
+        avatar.add(outerGlassSphere);
 
         var headGroup = new THREE.Group();
-        headGroup.position.y = 0.58;
         var head = new THREE.Mesh(
-          new THREE.SphereGeometry(0.24, 18, 18),
-          new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.5, roughness: 0.3 })
+          new THREE.SphereGeometry(0.28, 28, 28),
+          new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.4, roughness: 0.15, metalness: 0.3 })
         );
-        head.castShadow = true;
         headGroup.add(head);
 
         var visor = new THREE.Mesh(
-          new THREE.BoxGeometry(0.32, 0.10, 0.18),
-          new THREE.MeshBasicMaterial({ color: col })
+          new THREE.SphereGeometry(0.42, 24, 24),
+          new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending })
         );
-        visor.position.set(0, 0.01, 0.16);
         headGroup.add(visor);
         avatar.add(headGroup);
 
-        var armGeo = new THREE.BoxGeometry(0.11, 0.34, 0.11);
-        var armMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.4, roughness: 0.45 });
-        var armL = new THREE.Mesh(armGeo, armMat);
-        armL.position.set(-0.36, 0.12, 0.24);
-        armL.rotation.x = -0.95;
+        // Dual orbital gyroscopic rings (animated in place of blocky arms)
+        var ringMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.85, metalness: 0.85, roughness: 0.15 });
+        var armL = new THREE.Mesh(new THREE.TorusGeometry(0.78, 0.022, 16, 48), ringMat);
+        armL.rotation.x = Math.PI / 3;
         avatar.add(armL);
-        var armR = new THREE.Mesh(armGeo, armMat);
-        armR.position.set(0.36, 0.12, 0.24);
-        armR.rotation.x = -0.95;
+        var armR = new THREE.Mesh(new THREE.TorusGeometry(0.90, 0.018, 16, 48), ringMat);
+        armR.rotation.y = Math.PI / 4;
         avatar.add(armR);
 
         // Clickable invisible hitbox around station
         var hitSphere = new THREE.Mesh(
-          new THREE.SphereGeometry(1.45, 12, 12),
+          new THREE.SphereGeometry(1.45, 16, 16),
           new THREE.MeshBasicMaterial({ visible: false })
         );
-        hitSphere.position.set(0, 1.0, 0);
+        hitSphere.position.set(0, 1.15, 0);
         hitSphere.userData = { agentId: ag.id };
         station.add(hitSphere);
         station.add(avatar);
@@ -3192,16 +3157,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (m.speaker === 'sentinel' || txt.indexOf('SYS_OPS') >= 0 || txt.indexOf('LATENCY') >= 0 || txt.indexOf('TOKENBUCKET') >= 0) {
         return 'sys-ops';
       }
-      if (m.speaker === 'hunter' || txt.indexOf('LIQUIDITY_L2') >= 0 || txt.indexOf('SPOOFING') >= 0 || txt.indexOf('SQUEEZE') >= 0) {
+      if (m.speaker === 'hunter' || txt.indexOf('LIQUIDITY_L2') >= 0 || txt.indexOf('SPOOFING') >= 0 || txt.indexOf('SQUEEZE') >= 0 || txt.indexOf('DÉSÉQUILIBRE L2') >= 0 || txt.indexOf('AIMANT') >= 0) {
         return 'liquidity-l2';
       }
-      if (m.tone === 'veto' || m.tone === 'kill' || txt.indexOf('VETO') >= 0 || txt.indexOf('HALT') >= 0 || txt.indexOf('EMERGENCY') >= 0) {
+      if (m.speaker === 'risk' || m.tone === 'veto' || m.tone === 'kill' || txt.indexOf('VETO') >= 0 || txt.indexOf('HALT') >= 0 || txt.indexOf('EMERGENCY') >= 0 || txt.indexOf('LEVIER') >= 0 || txt.indexOf('LIQUIDATION') >= 0 || txt.indexOf('STOP-LOSS') >= 0) {
         return 'risk-veto';
       }
-      if (txt.indexOf('MACRO_ALERT') >= 0 || txt.indexOf('VOLATILITY_SHIELD') >= 0 || txt.indexOf('COPY_SIGNAL') >= 0) {
+      if (m.speaker === 'analyst' || txt.indexOf('MACRO_ALERT') >= 0 || txt.indexOf('MACROSCORE') >= 0 || txt.indexOf('MACRO FILTER') >= 0 || txt.indexOf('VOLATILITY_SHIELD') >= 0 || txt.indexOf('COPY_SIGNAL') >= 0) {
         return 'macro-alerts';
       }
-      if (txt.indexOf('GRPO') >= 0 || txt.indexOf('RL_OPTIMIZER') >= 0 || txt.indexOf('WFO') >= 0 || m.tone === 'report') {
+      if (m.speaker === 'reviewer' || txt.indexOf('GRPO') >= 0 || txt.indexOf('RL_OPTIMIZER') >= 0 || txt.indexOf('WFO') >= 0 || m.tone === 'report') {
         return 'rl-optimizer';
       }
       return 'floor-general';
@@ -3885,8 +3850,37 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var now = Date.now();
       var cutoff = equityRange === '1D' ? now - 86400000 : equityRange === '1W' ? now - 7 * 86400000 : equityRange === '1M' ? now - 30 * 86400000 : 0;
-      var rawCurve = (deskState.curve || []).filter(function (pt) { return pt.t >= cutoff; });
-      if (rawCurve.length < 2) rawCurve = deskState.curve || [];
+
+      // Agrégation complète : courbe live + historique intégral des trades fermés + PnL latent ouvert
+      var baseEq = Number(deskState.startEquity || 10000);
+      var closedAll = (deskState.tickets || [])
+        .filter(function (t) { return t.status === 'closed' && (t.closedAt || t.createdAt); })
+        .slice()
+        .sort(function (a, b) { return (a.closedAt || a.createdAt) - (b.closedAt || b.createdAt); });
+
+      var synthesized = [];
+      var runningEq = baseEq;
+      var totalRealizedAll = 0;
+      if (closedAll.length > 0) {
+        var firstT = Math.max(0, (closedAll[0].closedAt || closedAll[0].createdAt) - 60000);
+        synthesized.push({ t: firstT, eq: baseEq, realized: 0, drawdownPct: 0 });
+        var peakEq = baseEq;
+        closedAll.forEach(function (t) {
+          var pnl = Number(t.pnl || 0);
+          runningEq += pnl;
+          totalRealizedAll += pnl;
+          if (runningEq > peakEq) peakEq = runningEq;
+          var dd = peakEq > 0 ? Math.max(0, (peakEq - runningEq) / peakEq) : 0;
+          synthesized.push({ t: t.closedAt || t.createdAt, eq: runningEq, realized: totalRealizedAll, drawdownPct: dd });
+        });
+      }
+
+      var merged = synthesized.concat(deskState.curve || []);
+      var rawCurve = merged.filter(function (pt) { return pt.t >= cutoff; });
+      if (rawCurve.length < 2 && merged.length >= 2) {
+        var lastVal = merged[merged.length - 1];
+        rawCurve = [{ t: Math.max(cutoff, now - 3600000), eq: lastVal.eq, realized: lastVal.realized, drawdownPct: lastVal.drawdownPct }, lastVal];
+      }
 
       var bySec = {};
       var points = [];
@@ -5244,9 +5238,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         hp.textContent = fmtSignedUsd(dayPnl, 2);
         hp.className = 'pnl-hero-value mono ' + (dayPnl >= 0 ? 'up' : 'down');
       }
-      document.getElementById('heroEquity').textContent = fmtUsd(eq, 2);
-      document.getElementById('heroOpenCount').textContent = String(open.length);
-      document.getElementById('heroPendingCount').textContent = String(pending.length);
+      var heEl = document.getElementById('heroEquity');
+      if (heEl) heEl.textContent = fmtUsd(eq, 2);
+
+      var dayStartMs = new Date().setHours(0, 0, 0, 0);
+      var closedToday = (deskState.tickets || [])
+        .filter(function (t) { return t.status === 'closed' && (t.closedAt || 0) >= dayStartMs; })
+        .reduce(function (acc, t) { return acc + Number(t.pnl || 0); }, 0);
+      var hcEl = document.getElementById('heroClosedProfit');
+      if (hcEl) {
+        hcEl.textContent = fmtSignedUsd(closedToday, 2);
+        hcEl.className = 'mono ' + (closedToday >= 0 ? 'up' : 'down');
+      }
 
       var rlSum = deskState.rlSummary || {};
       var activeRegime = (deskState.settings && deskState.settings.regime) || 'standard';

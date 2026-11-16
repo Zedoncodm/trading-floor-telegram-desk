@@ -6,6 +6,8 @@ import { DeskLeadAgent, PacingCalculator } from "./agents/deskLead.ts";
 import { RiskManagerAgent, type HftSizingResult } from "./agents/riskManager.ts";
 import { ExecutionTraderAgent } from "./agents/executionTrader.ts";
 import { StrategistAgent } from "./agents/strategist.ts";
+import { MarketAnalystAgent } from "./agents/analyst.ts";
+import { ReviewerAgent } from "./agents/reviewer.ts";
 import { Mt5CloudBridge, type LocalMt5Position, type LocalMt5State } from "./mt5.ts";
 import { GrpoEngine, type GrpoCandidateOutcome, type MarketRegime } from "./rl/grpo.ts";
 import {
@@ -646,6 +648,7 @@ export class TradingFloorDesk {
   private syncingMt5 = false;
   private latestBarsBySymbol = new Map<string, MarketSnapshot["bars4h"]>();
   private lastKnownEquity = 0;
+  private scanCursor = 0;
 
   constructor(cfg: Config, store: DeskStore, tg: TelegramFloorRoom, grpo?: GrpoEngine) {
     this.cfg = cfg;
@@ -2201,20 +2204,22 @@ export class TradingFloorDesk {
       }
 
       const allowMultiPositions = activeRegime === "hft_kamikaze" || currentAgg === "lagging_aggressive";
-      const freeSnaps = allowMultiPositions
-        ? snaps
-        : snaps.filter(
-            (s) => !this.state.tickets.some((t) => t.asset === s.symbol && (t.status === "open" || t.status === "pending")),
-          );
-      const pool = freeSnaps.length ? freeSnaps : snaps;
+      const notCooledDown = (sym: string) => (this.state.cooldowns?.[sym] ?? 0) <= now;
+      const freeSnaps = snaps.filter((s) => {
+        if (!notCooledDown(s.symbol)) return false;
+        if (allowMultiPositions) return true;
+        return !this.state.tickets.some((t) => t.asset === s.symbol && (t.status === "open" || t.status === "pending"));
+      });
+      const pool = freeSnaps.length ? freeSnaps : snaps.filter((s) => notCooledDown(s.symbol));
       if (!pool.length) {
-        await this.say("analyst", "Aucun actif disponible à scanner.");
+        await this.say("analyst", "Tous les actifs sont en période de cooldown (5 min) ou déjà en position.");
         return;
       }
 
       const activeStyle = isScalp ? "scalping" : (this.state.settings.tradingStyle || "daytrade");
       const tf: "15m" | "1h" | "4h" = activeStyle === "scalping" ? "15m" : activeStyle === "daytrade" ? "1h" : "4h";
-      const startIdx = (this.state.nonce + Math.floor(now / 10_000)) % pool.length;
+      const startIdx = this.scanCursor % pool.length;
+      this.scanCursor = (this.scanCursor + 1) % pool.length;
       const orderedPool = [...pool.slice(startIdx), ...pool.slice(0, startIdx)];
 
       let selectedSnap: MarketSnapshot | null = null;
@@ -2241,6 +2246,21 @@ export class TradingFloorDesk {
 
         const idea = this.choosePlay(candidate);
         if (!idea) continue;
+
+        const macroEval = MarketAnalystAgent.computeMacroScore(
+          candidate.symbol,
+          this.state.macroEvents ?? [],
+          this.state.socialSentiment ?? {},
+          now,
+        );
+        if (!MarketAnalystAgent.allowsDirection(idea.dir, macroEval.macroScore)) {
+          await this.say(
+            "analyst",
+            `[MACRO FILTER] ${candidate.symbol} ${idea.dir.toUpperCase()} bloqué (${macroEval.reason} contre la tendance fondamentale).`,
+            "plain",
+          );
+          continue;
+        }
 
         let activeBars = candidate.bars4h;
         if (candidate.symbol.endsWith("USDT") && (activeStyle === "scalping" || activeStyle === "daytrade")) {
@@ -2787,6 +2807,7 @@ export class TradingFloorDesk {
     ticket.postMortemReport = postMortem;
 
     this.state.realizedPnl += netPnl;
+    this.state.cooldowns[ticket.asset] = now + 5 * 60_000;
     this.store.appendBlotter("POSITION_CLOSED", ticket, `Clôture (${reason}) PnL=${netPnl.toFixed(2)}`, now);
 
     const regime: MarketRegime = (ticket.regime as MarketRegime) || "MEAN_REVERTING";

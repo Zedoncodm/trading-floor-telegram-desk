@@ -47,4 +47,31 @@ export class ExecutionTraderAgent {
       unrealizedPnl: Number(unrealizedPnl.toFixed(2)),
     };
   }
+
+  /**
+   * TWAP / VWAP Slicing planner for large non-HFT orders.
+   * For HFT Fiat-Target ($50-$100), uses instant single Market Orders.
+   */
+  static planTwapVwapSlices(
+    totalNotional: number,
+    isHftFiatTarget: boolean,
+    maxSingleSliceUsd = 100_000,
+    maxSlices = 6,
+  ): { mode: "INSTANT_MARKET" | "TWAP_VWAP"; slices: number; sliceNotional: number; intervalMs: number } {
+    if (isHftFiatTarget || totalNotional <= maxSingleSliceUsd) {
+      return {
+        mode: "INSTANT_MARKET",
+        slices: 1,
+        sliceNotional: Number(totalNotional.toFixed(2)),
+        intervalMs: 0,
+      };
+    }
+    const slices = Math.min(maxSlices, Math.max(2, Math.ceil(totalNotional / maxSingleSliceUsd)));
+    return {
+      mode: "TWAP_VWAP",
+      slices,
+      sliceNotional: Number((totalNotional / slices).toFixed(2)),
+      intervalMs: 15_000,
+    };
+  }
 }

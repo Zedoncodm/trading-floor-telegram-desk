@@ -1,73 +1,92 @@
 import type React from "react";
-import type { SessionGoal, TradingRegime } from "../types.ts";
+import type { TradingRegime } from "../types.ts";
 
 export interface HeaderProps {
   currentRegime: TradingRegime;
   onRegimeChange: (regime: TradingRegime) => void;
-  sessionGoal?: SessionGoal;
   equity: number;
-  realizedPnl: number;
+  currentPnl: number;
+  dailyClosedProfit: number;
+  halted: boolean;
+  onCloseAll: () => void;
+  onToggleHalt: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentRegime,
   onRegimeChange,
-  sessionGoal,
   equity,
-  realizedPnl,
+  currentPnl,
+  dailyClosedProfit,
+  halted,
+  onCloseAll,
+  onToggleHalt,
 }) => {
-  const isLagging = sessionGoal?.aggressiveness === "lagging_aggressive";
   const isKamikaze = currentRegime === "hft_kamikaze";
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-3 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800">
+    <header className="opacity-0 hover:opacity-100 transition-opacity duration-300 absolute top-0 z-50 w-full flex items-center justify-between px-6 py-3 bg-neutral-950/85 backdrop-blur-xl border-b border-neutral-800/80">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <h1 className="text-sm font-semibold tracking-wider text-neutral-100 uppercase">
-            Trading Floor Desk
-          </h1>
+          <span className="text-xs font-mono font-bold tracking-widest text-neutral-100 uppercase">
+            Trading Floor V5
+          </span>
         </div>
 
-        {/* ACTIVE REGIME FAST SWITCHER */}
-        <div className="flex items-center gap-2 pl-4 border-l border-neutral-800">
-          <label htmlFor="regime-select" className="text-xs font-mono text-neutral-400 font-medium">
-            RÉGIME ACTIF :
-          </label>
-          <select
-            id="regime-select"
-            value={currentRegime}
-            onChange={(e: any) => onRegimeChange(e.target.value as TradingRegime)}
-            className={`text-xs font-mono font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
-              isKamikaze
-                ? "bg-red-950/70 border-red-500/80 text-red-200 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.4)]"
-                : "bg-neutral-900 border-neutral-700 text-neutral-200 hover:border-neutral-500"
-            }`}
-          >
-            <option value="standard">Standard (WFO/GRPO)</option>
-            <option value="macro_fvg">Macro FVG</option>
-            <option value="hft_kamikaze">HFT FIAT-TARGET (KAMIKAZE)</option>
-          </select>
-        </div>
+        <select
+          aria-label="Régime actif"
+          value={currentRegime}
+          onChange={(e: any) => onRegimeChange(e.target.value as TradingRegime)}
+          className={`text-xs font-mono font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
+            isKamikaze
+              ? "bg-red-950/70 border-red-500/80 text-red-200 shadow-[0_0_12px_rgba(239,68,68,0.4)]"
+              : "bg-neutral-900 border-neutral-700 text-neutral-200 hover:border-neutral-500"
+          }`}
+        >
+          <option value="standard">Standard (WFO/GRPO)</option>
+          <option value="macro_fvg">Macro FVG</option>
+          <option value="hft_kamikaze">HFT FIAT-TARGET (KAMIKAZE)</option>
+        </select>
       </div>
 
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-5">
         <div className="text-right">
-          <div className="text-[10px] font-mono text-neutral-500 uppercase">Équité Totale</div>
+          <div className="text-[10px] font-mono text-neutral-400 uppercase">Équité Totale</div>
           <div className="text-sm font-mono font-bold text-neutral-100">
             {equity.toLocaleString("fr-FR", { style: "currency", currency: "USD" })}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-[10px] font-mono text-neutral-500 uppercase">PnL Réalisé</div>
-          <div
-            className={`text-sm font-mono font-bold ${
-              realizedPnl >= 0 ? "text-emerald-400" : "text-red-400"
-            }`}
-          >
-            {realizedPnl >= 0 ? "+" : ""}
-            {realizedPnl.toLocaleString("fr-FR", { style: "currency", currency: "USD" })}
+          <div className="text-[10px] font-mono text-neutral-400 uppercase">PNL Actuel</div>
+          <div className={`text-sm font-mono font-bold ${currentPnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            {currentPnl >= 0 ? "+" : ""}
+            {currentPnl.toLocaleString("fr-FR", { style: "currency", currency: "USD" })}
           </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] font-mono text-neutral-400 uppercase">Profit Fermé de la journée</div>
+          <div className={`text-sm font-mono font-bold ${dailyClosedProfit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            {dailyClosedProfit >= 0 ? "+" : ""}
+            {dailyClosedProfit.toLocaleString("fr-FR", { style: "currency", currency: "USD" })}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 pl-4 border-l border-neutral-800">
+          <button
+            type="button"
+            onClick={onCloseAll}
+            className="px-2.5 py-1 rounded text-[11px] font-mono font-extrabold bg-red-600 hover:bg-red-500 text-white shadow-md transition-colors"
+          >
+            CLOSE ALL
+          </button>
+          <button
+            type="button"
+            onClick={onToggleHalt}
+            className="px-2.5 py-1 rounded text-[11px] font-mono font-extrabold bg-yellow-400 hover:bg-yellow-300 text-black shadow-md transition-colors"
+          >
+            {halted ? "RESUME" : "HALT"}
+          </button>
         </div>
       </div>
     </header>
