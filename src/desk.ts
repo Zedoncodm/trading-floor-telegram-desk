@@ -1924,6 +1924,9 @@ export class TradingFloorDesk {
       const imbalance = p.book ?? (this.state.liquidityHunter?.imbalance ?? 0);
       const ofiZ = p.ofi ?? 0;
       const atr1m = snap.atr ? snap.atr * 0.1 : px * 0.001;
+      const tapeRow = this.state.tape.find((r) => r.symbol === snap.symbol);
+      const tickDelta = tapeRow && tapeRow.prev > 0 ? (tapeRow.px - tapeRow.prev) / tapeRow.prev : 0;
+      const momentumHint = tickDelta !== 0 ? tickDelta : ret1h;
 
       const hftTrigger = StrategistAgent.evaluateHftBarrageEntry(
         snap.symbol,
@@ -1934,6 +1937,7 @@ export class TradingFloorDesk {
         atr1m,
         currentAgg,
         activeRegime,
+        momentumHint,
       );
 
       if (hftTrigger) {
@@ -1949,7 +1953,7 @@ export class TradingFloorDesk {
           customEntry: entryPx,
           customStop: stopPx,
           customTarget: targetPx,
-          timeStopMs: 60_000,
+          timeStopMs: 300_000,
           trailingAtr1m: atr1m,
         });
       }
@@ -2522,8 +2526,8 @@ export class TradingFloorDesk {
         entry,
         invalidation: finalStop,
         target: finalTarget,
-        timeStopHours: (activePlaybook === "HFT_Kamikaze_FiatTarget" || this.state.settings?.regime === "hft_kamikaze" || this.state.settings?.tradingStyle === "scalping")
-          ? 0.0167
+        timeStopHours: activePlaybook === "HFT_Kamikaze_FiatTarget"
+          ? 0.083
           : activePlaybook === "HFT_OrderFlow_Imbalance"
             ? 0.033
             : activePlaybook === "Session_VWAP_Reversion"
@@ -2531,9 +2535,7 @@ export class TradingFloorDesk {
               : activePlaybook === "Macro_FVG_Mitigation"
                 ? 72
                 : 120,
-        timeStopMs: (activePlaybook === "HFT_Kamikaze_FiatTarget" || this.state.settings?.regime === "hft_kamikaze" || this.state.settings?.tradingStyle === "scalping")
-          ? 60_000
-          : selectedIdea?.timeStopMs,
+        timeStopMs: selectedIdea?.timeStopMs,
         partialTpPrice: selectedIdea?.partialTpPrice,
         trailingStop: selectedIdea?.trailingAtr1m ? invalidation : undefined,
         leverage: sized.leverage ?? 1,
@@ -2945,8 +2947,9 @@ export class TradingFloorDesk {
         }
       }
 
-      // MODULE 2 : THE FIAT-TARGET TAKE PROFIT LOGIC (Execution Trader Agent)
-      // Clôture instantanée au marché dès que le PnL non-réalisé atteint entre 50$ et 100$
+      // MODULE 2 : THE FIAT-TARGET TAKE PROFIT & AUTONOMOUS THF MANAGEMENT (Execution Trader Agent)
+      // Clôture instantanée au marché dès que le PnL non-réalisé atteint la cible fiat (50$-100$),
+      // et protection dynamique autonome (Break-Even / Trailing) si le trade part en gain.
       const isKamikazeActive = this.state.settings?.regime === "hft_kamikaze" || engine === "HFT_Kamikaze_FiatTarget";
       if (isKamikazeActive) {
         const minTarget = this.state.settings?.hftTargetPnlMin ?? 50;
@@ -2961,6 +2964,18 @@ export class TradingFloorDesk {
             ticket.id,
           );
           continue;
+        }
+
+        // Protection autonome des gains THF : passage au Break-Even + trailing serré dès +20$ de gain
+        const refPx = ticket.fillPrice ?? ticket.entry;
+        if (curUnrealized >= 20 && refPx > 0) {
+          const lockPx = isLong
+            ? refPx + (mark - refPx) * 0.45
+            : refPx - (refPx - mark) * 0.45;
+          if ((isLong && lockPx > ticket.invalidation) || (!isLong && lockPx < ticket.invalidation)) {
+            ticket.invalidation = lockPx;
+            ticket.breakEvenActive = true;
+          }
         }
       }
 
@@ -3016,28 +3031,11 @@ export class TradingFloorDesk {
         }
       }
 
-      // Time-Stop : RÈGLE STRICTE 60 SECONDES (1 minute) en mode THF / Scalping / Kamikaze
-      const isHft =
-        this.state.settings?.regime === "hft_kamikaze" ||
-        engine === "HFT_Kamikaze_FiatTarget" ||
-        engine === "HFT_OrderFlow_Imbalance" ||
-        this.state.settings?.tradingStyle === "scalping" ||
-        Boolean(this.state.settings?.autoPaperScalp);
-
-      const maxHftLimitMs = 60_000; // 1 minute STRICTEMENT en mode THF / Scalping
-      const timeLimitMs = isHft
-        ? Math.min(ticket.timeStopMs ?? maxHftLimitMs, maxHftLimitMs)
-        : (ticket.timeStopMs ?? ticket.timeStopHours * 3600_000);
-
+      // Time-Stop naturel défini par chaque stratégie (ex: 120s Moteur A, 300s THF Kamikaze si stagnant, 8h Moteur B, 72h Moteur C)
+      const timeLimitMs = ticket.timeStopMs ?? ticket.timeStopHours * 3600_000;
       const ticketStart = ticket.filledAt || ticket.decidedAt || ticket.createdAt;
       if (ticketStart && now - ticketStart >= timeLimitMs) {
         await this.closeOpenTicket(ticket, mark, "time", now);
-        await this.say(
-          "execution",
-          `⏱️ [TIME-STOP 60s EXPIRÉ] Clôture automatique de ${ticket.id} (${ticket.asset}) après ${Math.round((now - ticketStart) / 1000)}s en mode THF/Scalping (PnL: ${fmtSignedUsd(curUnrealized, 2)}).`,
-          "fill",
-          ticket.id,
-        );
         continue;
       }
 
@@ -3077,7 +3075,9 @@ export class TradingFloorDesk {
     }
 
     const pending = this.state.tickets.find((t) => t.status === "pending");
+    const isHftRegime = this.state.settings?.regime === "hft_kamikaze";
     const isScalp =
+      isHftRegime ||
       Boolean(this.state.settings?.autoPaperScalp) ||
       this.state.settings?.executionMode === "auto" ||
       this.state.settings?.tradingStyle === "scalping";
@@ -3086,9 +3086,11 @@ export class TradingFloorDesk {
       await this.approveTicket(pending.id);
     }
     const hasPending = this.state.tickets.some((t) => t.status === "pending");
-    const intervalMs = isScalp
-      ? (this.state.settings?.scalpIntervalSec || 12) * 1000
-      : (this.state.settings?.scanIntervalMin || this.cfg.scanIntervalMin) * 60_000;
+    const intervalMs = isHftRegime
+      ? Math.min(this.state.settings?.scalpIntervalSec || 5, 5) * 1000
+      : isScalp
+        ? (this.state.settings?.scalpIntervalSec || 12) * 1000
+        : (this.state.settings?.scanIntervalMin || this.cfg.scanIntervalMin) * 60_000;
     if (!hasPending && !this.state.halted && now - this.state.lastScanAt >= intervalMs) {
       await this.runDeskScan("scheduled");
     }
