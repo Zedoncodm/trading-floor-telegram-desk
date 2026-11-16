@@ -488,6 +488,8 @@ export class Mt5CloudBridge {
       notional?: number;
       qty?: number;
       leverage?: number;
+      closedAt?: number;
+      mt5PositionId?: string;
     }>,
     defaultLots = 0.01,
     now = Date.now(),
@@ -502,6 +504,10 @@ export class Mt5CloudBridge {
       entry: number;
       sl: number;
       tp: number;
+    }>;
+    closeOrders: Array<{
+      ticket: number;
+      id: string;
     }>;
   } {
     const usOpen = isUsRegularMarketHoursUtc(now);
@@ -529,10 +535,19 @@ export class Mt5CloudBridge {
           tp: Number(t.target.toFixed(5)),
         };
       });
+
+    const closeOrders = tickets
+      .filter((t) => t.status === "closed" && t.mt5PositionId && (now - (t.closedAt ?? now)) < 120_000)
+      .map((t) => ({
+        ticket: Number(t.mt5PositionId),
+        id: t.id,
+      }));
+
     return {
       ok: true,
       timestamp: now,
       openOrders,
+      closeOrders,
     };
   }
 
@@ -940,11 +955,32 @@ void OnTimer() {
       }
    }
 
+   // Extraction des tickets à clôturer explicitement (closeOrders)
+   string closeIds = "|";
+   int closeCursor = StringFind(body, "\\"closeOrders\\":[");
+   if(closeCursor >= 0) {
+      while(true) {
+         int tPos = StringFind(body, "\\"ticket\\":", closeCursor);
+         if(tPos < 0) break;
+         double ticketNum = ExtractNum(body, "ticket", tPos);
+         if(ticketNum > 0.0) {
+            closeIds += IntegerToString((long)ticketNum) + "|";
+         }
+         int oEnd = StringFind(body, "}", tPos);
+         closeCursor = (oEnd > tPos) ? oEnd : (tPos + 20);
+      }
+   }
+
    for(int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong ticket = PositionGetTicket(i);
-      if(ticket > 0 && PositionGetInteger(POSITION_MAGIC) == InpMagic) {
+      if(ticket > 0) {
+         string ticketStr = IntegerToString((long)ticket);
          string cmt = PositionGetString(POSITION_COMMENT);
-         if(StringLen(cmt) > 0 && StringFind(activeIds, "|" + cmt + "|") < 0) {
+         long pMagic = PositionGetInteger(POSITION_MAGIC);
+         bool shouldClose = false;
+         if(StringFind(closeIds, "|" + ticketStr + "|") >= 0) shouldClose = true;
+         if(pMagic == InpMagic && StringLen(cmt) > 0 && StringFind(activeIds, "|" + cmt + "|") < 0) shouldClose = true;
+         if(shouldClose) {
             if(trade.PositionClose(ticket)) {
                stateDirty = true;
             }

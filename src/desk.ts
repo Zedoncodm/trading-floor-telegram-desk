@@ -1949,7 +1949,7 @@ export class TradingFloorDesk {
           customEntry: entryPx,
           customStop: stopPx,
           customTarget: targetPx,
-          timeStopMs: 180_000,
+          timeStopMs: 60_000,
           trailingAtr1m: atr1m,
         });
       }
@@ -2522,8 +2522,18 @@ export class TradingFloorDesk {
         entry,
         invalidation: finalStop,
         target: finalTarget,
-        timeStopHours: activePlaybook === "HFT_OrderFlow_Imbalance" ? 0.033 : activePlaybook === "Session_VWAP_Reversion" ? 8 : activePlaybook === "Macro_FVG_Mitigation" ? 72 : 120,
-        timeStopMs: selectedIdea?.timeStopMs,
+        timeStopHours: (activePlaybook === "HFT_Kamikaze_FiatTarget" || this.state.settings?.regime === "hft_kamikaze" || this.state.settings?.tradingStyle === "scalping")
+          ? 0.0167
+          : activePlaybook === "HFT_OrderFlow_Imbalance"
+            ? 0.033
+            : activePlaybook === "Session_VWAP_Reversion"
+              ? 8
+              : activePlaybook === "Macro_FVG_Mitigation"
+                ? 72
+                : 120,
+        timeStopMs: (activePlaybook === "HFT_Kamikaze_FiatTarget" || this.state.settings?.regime === "hft_kamikaze" || this.state.settings?.tradingStyle === "scalping")
+          ? 60_000
+          : selectedIdea?.timeStopMs,
         partialTpPrice: selectedIdea?.partialTpPrice,
         trailingStop: selectedIdea?.trailingAtr1m ? invalidation : undefined,
         leverage: sized.leverage ?? 1,
@@ -3006,10 +3016,28 @@ export class TradingFloorDesk {
         }
       }
 
-      // Time-Stop (120s pour Moteur A, 8h pour Moteur B, 72h pour Moteur C)
-      const timeLimitMs = ticket.timeStopMs ?? ticket.timeStopHours * 3600_000;
-      if (ticket.filledAt && now - ticket.filledAt >= timeLimitMs) {
+      // Time-Stop : RÈGLE STRICTE 60 SECONDES (1 minute) en mode THF / Scalping / Kamikaze
+      const isHft =
+        this.state.settings?.regime === "hft_kamikaze" ||
+        engine === "HFT_Kamikaze_FiatTarget" ||
+        engine === "HFT_OrderFlow_Imbalance" ||
+        this.state.settings?.tradingStyle === "scalping" ||
+        Boolean(this.state.settings?.autoPaperScalp);
+
+      const maxHftLimitMs = 60_000; // 1 minute STRICTEMENT en mode THF / Scalping
+      const timeLimitMs = isHft
+        ? Math.min(ticket.timeStopMs ?? maxHftLimitMs, maxHftLimitMs)
+        : (ticket.timeStopMs ?? ticket.timeStopHours * 3600_000);
+
+      const ticketStart = ticket.filledAt || ticket.decidedAt || ticket.createdAt;
+      if (ticketStart && now - ticketStart >= timeLimitMs) {
         await this.closeOpenTicket(ticket, mark, "time", now);
+        await this.say(
+          "execution",
+          `⏱️ [TIME-STOP 60s EXPIRÉ] Clôture automatique de ${ticket.id} (${ticket.asset}) après ${Math.round((now - ticketStart) / 1000)}s en mode THF/Scalping (PnL: ${fmtSignedUsd(curUnrealized, 2)}).`,
+          "fill",
+          ticket.id,
+        );
         continue;
       }
 
