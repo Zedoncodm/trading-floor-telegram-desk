@@ -860,18 +860,22 @@ export class TradingFloorDesk {
       this.state.settings.mt5Server = mt5State.server;
       this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${mt5State.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s))`;
 
-      // 1. Synchronisation stricte du Capital avec le compte MT5 réel
+      // 1. Synchronisation stricte du Capital avec le compte MT5 réel (sans jamais effacer l'historique multi-mois)
       if (Number.isFinite(mt5State.balance) && mt5State.balance > 0) {
         const nextStart = Number((mt5State.balance - this.state.realizedPnl).toFixed(2));
         const jumpPct = Math.abs(this.state.startEquity - nextStart) / Math.max(mt5State.balance, 1);
         this.state.startEquity = nextStart;
         this.state.dayStartEquity = mt5State.balance;
-        if (jumpPct > 0.15) {
+        if (this.state.curve.length === 0) {
           this.state.curve = [
             { t: now - 60_000, eq: mt5State.balance, realized: 0, unrealized: 0, drawdownPct: 0 },
             { t: now, eq: mt5State.equity, realized: this.state.realizedPnl, unrealized: mt5State.profit, drawdownPct: 0 },
           ];
           this.lastKnownEquity = mt5State.equity;
+          structuralChange = true;
+        } else if (jumpPct > 0.15) {
+          this.lastKnownEquity = mt5State.equity;
+          this.recordEquityPoint(now);
           structuralChange = true;
         }
       }
@@ -1625,10 +1629,30 @@ export class TradingFloorDesk {
     const eq = currentEquity(this.state);
     const realized = this.state.realizedPnl;
     const unrealized = unrealizedPnl(this.state);
-    const peak = this.state.curve.reduce((m, p) => Math.max(m, p.eq), this.state.startEquity);
+    const retentionCutoff = now - 65 * 86_400_000; // Conserve au minimum 65 jours (2+ mois) d'historique réel
+    const highResCutoff = now - 86_400_000; // Pleine résolution sur les dernières 24h
+    const bucketMs = 5 * 60_000; // Compression en pas de 5 min au-delà de 24h pour tenir largement sous 20 000 points
+
+    const existing = this.state.curve.filter((p) => p.t >= retentionCutoff && p.t <= now + 60_000);
+    const archivedBuckets = new Map<number, (typeof existing)[number]>();
+    const recentPoints: (typeof existing) = [];
+    for (const pt of existing) {
+      if (pt.t < highResCutoff) {
+        archivedBuckets.set(Math.floor(pt.t / bucketMs), pt);
+      } else {
+        recentPoints.push(pt);
+      }
+    }
+    const merged = [...archivedBuckets.values(), ...recentPoints];
+    const peak = merged.reduce((m, p) => Math.max(m, p.eq), this.state.startEquity);
     const drawdownPct = peak > 0 ? Math.max(0, (peak - eq) / peak) : 0;
+    const last = merged[merged.length - 1];
+    // Évite le spam : enregistre sur variation d'équité (>= 15s) ou au minimum toutes les 5 min à plat
+    if (last && (now - last.t < 15_000 || (Math.abs(last.eq - eq) < 0.01 && now - last.t < 300_000))) {
+      return;
+    }
     this.state.curve = [
-      ...this.state.curve.slice(-20_000),
+      ...merged.slice(-19_999),
       { t: now, eq, realized, unrealized, drawdownPct },
     ];
   }
@@ -3069,6 +3093,65 @@ export class TradingFloorDesk {
         continue;
       }
 
+      // STOP-LOSS PROGRESSIF (Break-Even 50% dynamique du pic de gain)
+      if (this.state.settings?.progressiveStopEnabled) {
+        const effectiveUnrealized =
+          ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)
+            ? ticket.mt5Profit
+            : curUnrealized;
+        const prevPeak = ticket.peakProfitUsd ?? 0;
+        if (effectiveUnrealized > prevPeak) {
+          ticket.peakProfitUsd = Number(effectiveUnrealized.toFixed(2));
+        }
+        const activePeak = ticket.peakProfitUsd ?? 0;
+        if (activePeak >= 5) {
+          const floorUsd = Number((activePeak * 0.5).toFixed(2));
+          if (floorUsd > (ticket.progressiveStopUsd ?? 0)) {
+            const firstLock = (ticket.progressiveStopUsd ?? 0) <= 0;
+            ticket.progressiveStopUsd = floorUsd;
+            const refPx = ticket.fillPrice ?? ticket.entry;
+            if (refPx > 0) {
+              const lockPx =
+                ticket.mt5Profit !== undefined && effectiveUnrealized > floorUsd
+                  ? refPx + (mark - refPx) * (floorUsd / effectiveUnrealized)
+                  : ticket.notional > 0
+                    ? isLong
+                      ? refPx + (floorUsd * refPx) / ticket.notional
+                      : refPx - (floorUsd * refPx) / ticket.notional
+                    : refPx;
+              if ((isLong && lockPx > ticket.invalidation) || (!isLong && lockPx < ticket.invalidation)) {
+                ticket.invalidation = lockPx;
+                ticket.breakEvenActive = true;
+              }
+            }
+            if (firstLock || floorUsd >= 25) {
+              this.say(
+                "risk",
+                `[BREAK-EVEN PROGRESSIF 50%] ${ticket.id} (${ticket.asset}) : pic ${fmtSignedUsd(activePeak, 2)} -> plancher de gain sécurisé à ${fmtSignedUsd(floorUsd, 2)}.`,
+                "plain",
+                ticket.id,
+              ).catch(() => {});
+            }
+          }
+        }
+        if ((ticket.progressiveStopUsd ?? 0) > 0 && effectiveUnrealized <= (ticket.progressiveStopUsd ?? 0)) {
+          await this.closeOpenTicket(
+            ticket,
+            mark,
+            "target",
+            now,
+            ticket.mt5Profit !== undefined ? effectiveUnrealized : undefined,
+          );
+          await this.say(
+            "execution",
+            `[BREAK-EVEN PROGRESSIF 50%] Clôture gagnante de ${ticket.id} (${ticket.asset}) : gain sécurisé ${fmtSignedUsd(effectiveUnrealized, 2)} (pic +${fmtUsd(ticket.peakProfitUsd ?? 0, 2)}, seuil 50% +${fmtUsd(ticket.progressiveStopUsd ?? 0, 2)}).`,
+            "fill",
+            ticket.id,
+          );
+          continue;
+        }
+      }
+
       // MODULE 2 : THE FIAT-TARGET TAKE PROFIT & AUTONOMOUS THF MANAGEMENT (Execution Trader Agent)
       // Clôture instantanée au marché dès que le PnL non-réalisé atteint la cible fiat (50$-100$ ou cible utilisateur),
       // et protection dynamique autonome (Break-Even / Trailing) si le trade part en gain.
@@ -3143,7 +3226,9 @@ export class TradingFloorDesk {
           ticket.qty = ticket.qty * 0.5;
           ticket.partialTpDone = true;
           ticket.breakEvenActive = true;
-          ticket.invalidation = refPx; // Passage du stop au Break-Even
+          if ((isLong && refPx > ticket.invalidation) || (!isLong && refPx < ticket.invalidation)) {
+            ticket.invalidation = refPx; // Passage du stop au Break-Even (sans reculer un stop progressif)
+          }
           await this.say(
             "execution",
             `TP Partiel 50% exécuté sur ${ticket.id} (${ticket.asset}) @ ${fmtPx(ticket.partialTpPrice)} (+${fmtUsd(partialPnl, 2)}). Stop ramené au Break-Even (${fmtPx(refPx)}).`,
@@ -3180,13 +3265,24 @@ export class TradingFloorDesk {
       const hitTarget = isLong ? mark >= ticket.target : mark <= ticket.target;
 
       if (hitAmountSl || hitStop) {
-        await this.closeOpenTicket(ticket, hitAmountSl ? mark : ticket.invalidation, "invalidation", now);
+        const isSecuredProgressiveHit =
+          !hitAmountSl && hitStop && (ticket.progressiveStopUsd ?? 0) > 0 && curUnrealized > 0;
+        await this.closeOpenTicket(
+          ticket,
+          hitAmountSl ? mark : ticket.invalidation,
+          isSecuredProgressiveHit ? "target" : "invalidation",
+          now,
+        );
       } else if (hitAmountTp || hitTarget) {
         await this.closeOpenTicket(ticket, hitAmountTp ? mark : ticket.target, "target", now);
       }
     }
 
     await this.enforceDailyLossLimit(now);
+    this.recordEquityPoint(now);
+    if (this.state.settings?.progressiveStopEnabled && this.state.tickets.some((t) => t.status === "open" && (t.progressiveStopUsd ?? 0) > 0)) {
+      this.pushLocalMt5BridgePayload(now);
+    }
 
     const parts = localParts(now, this.cfg.timeZone);
     const curWeek = isoWeek(now, this.cfg.timeZone);

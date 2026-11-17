@@ -150,6 +150,7 @@ export type DeskRuntimeSettings = {
   dailyProfitTargetEnabled?: boolean;
   dailyProfitTargetMode?: "amount" | "pct";
   dailyProfitTargetVal?: number;
+  progressiveStopEnabled?: boolean;
   mt5Enabled?: boolean;
   metaApiAccountId?: string;
   mt5Login?: string;
@@ -416,6 +417,8 @@ export type Ticket = {
   partialTpDone?: boolean;
   partialTpPrice?: number;
   breakEvenActive?: boolean;
+  peakProfitUsd?: number;
+  progressiveStopUsd?: number;
   timeStopMs?: number;
   fvgMidPrice?: number;
   dsrScore?: number;

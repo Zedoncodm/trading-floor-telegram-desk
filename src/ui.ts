@@ -881,6 +881,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       border-bottom: 1px solid var(--ring-1);
       flex-shrink: 0;
     }
+    .chart-pinned-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--ring-1);
+      background: rgba(255, 255, 255, 0.02);
+      overflow-x: auto;
+      flex-shrink: 0;
+      min-height: 32px;
+    }
+    .pinned-pos-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--ring-1);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--fg-1);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+    .pinned-pos-btn:hover { border-color: var(--accent); color: var(--fg-0); }
+    .pinned-pos-btn.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
     #lwChartContainer {
       flex: 1;
       width: 100%;
@@ -981,12 +1009,54 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .cal-cell.pos { background: var(--up-bg); border-color: var(--up-ring); }
     .cal-cell.neg { background: var(--down-bg); border-color: var(--down-ring); }
 
-    /* ================= TAB 5: ENTRAINEMENT IA & LEVIER 500x ================= */
-    .strat-grid {
+    /* ================= TAB 5: ENTRAINEMENT IA & BENTO COMPACT ================= */
+    .strat-bento-layout {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr));
-      gap: 14px;
-      padding-bottom: 24px;
+      grid-template-columns: minmax(0, 1.38fr) minmax(320px, 1fr);
+      gap: 12px;
+      align-items: start;
+      padding-bottom: 16px;
+    }
+    @media (max-width: 1120px) {
+      .strat-bento-layout { grid-template-columns: 1fr; }
+    }
+    .strat-col-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .strat-grid {
+      display: contents;
+    }
+    .risk-bento-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    @media (max-width: 760px) {
+      .risk-bento-grid { grid-template-columns: 1fr; }
+    }
+    .risk-bento-wide { grid-column: 1 / -1; }
+    .risk-field-card-compact { padding: 10px 11px !important; margin-bottom: 0 !important; }
+    .prog-stop-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--ring-2);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--fg-1);
+      font-size: 11.5px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all 0.16s ease;
+    }
+    .prog-stop-btn.active {
+      border-color: var(--up);
+      background: var(--up-bg);
+      color: var(--up);
+      box-shadow: 0 0 14px var(--up-bg);
     }
     .strat-widget { position: relative; }
     .strat-grid.unlocked .strat-widget {
@@ -1484,9 +1554,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </header>
 
   <div id="assetDropdownMenu">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--ring-1)">
-      <div style="display:flex;align-items:center;gap:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--ring-1)">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <strong style="font-size:12px;font-weight:800;letter-spacing:0.04em">Univers Multi-Marches</strong>
+        <button type="button" id="btnToggleAllAssets" class="pill-btn" style="padding:3px 9px;font-size:10.5px" onclick="toggleAllAssetsSelection()" title="Activer ou désactiver tous les actifs en un clic">Tout Activer / Désactiver</button>
         <button type="button" class="asset-quick-btn" onclick="selectAllAssets()" title="Cocher tous les actifs">Tous</button>
         <button type="button" class="asset-quick-btn" onclick="deselectAllAssets()" title="Tout decocher">Aucun</button>
       </div>
@@ -1649,6 +1720,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
 
+      <div id="chartPinnedPositionsBar" class="chart-pinned-bar" aria-label="Paires épinglées avec positions ouvertes">
+        <span style="font-size:10.5px;color:var(--fg-2);font-weight:700">Positions ouvertes épinglées : Aucune</span>
+      </div>
+
       <div class="chart-workspace">
         <aside class="draw-toolbar" id="drawToolbar" aria-label="Outils de dessin graphique">
           <button class="draw-tool-btn active" data-tool="select" onclick="setDrawTool(&quot;select&quot;)" title="Curseur : sélectionner / déplacer un tracé">↖</button>
@@ -1689,12 +1764,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="equity-header">
           <div>
             <div class="card-title">Courbe d'Équité &amp; PnL Portefeuille Temps Réel</div>
-            <div style="font-size:11px;color:var(--fg-2)">Mise à jour automatique sur chaque fill / clôture</div>
+            <div style="font-size:11px;color:var(--fg-2)">Historique persistant 60+ jours (1M / 2M / ALL) · Synchronisé avec le calendrier</div>
           </div>
           <div class="seg-group" id="equityTfGroup">
             <button class="seg-btn" data-range="1D" onclick="setEquityRange(&quot;1D&quot;)">1D</button>
             <button class="seg-btn" data-range="1W" onclick="setEquityRange(&quot;1W&quot;)">1W</button>
             <button class="seg-btn" data-range="1M" onclick="setEquityRange(&quot;1M&quot;)">1M</button>
+            <button class="seg-btn" data-range="2M" onclick="setEquityRange(&quot;2M&quot;)">2M</button>
             <button class="seg-btn active" data-range="ALL" onclick="setEquityRange(&quot;ALL&quot;)">ALL</button>
           </div>
         </div>
@@ -1752,11 +1828,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <!-- ==================== TAB 5: STRATÉGIE, RISQUE & ENTRAÎNEMENT IA ==================== -->
+  <!-- ==================== TAB 5: STRATÉGIE, RISQUE & ENTRAÎNEMENT IA (BENTO COMPACT) ==================== -->
   <section id="view-strategy" class="view-panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
-      <div>
-        <span class="card-title" style="font-size:15px">Entraînement de l'IA (Machine Learning) &amp; Gestion du Risque</span>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="card-title" style="font-size:14.5px">Entraînement de l'IA (Machine Learning) &amp; Gestion du Risque</span>
+        <button id="btnAutoPilot1Click" class="pill-btn primary" style="padding:7px 13px;font-size:11.5px" onclick="runOneClickAutopilot()">
+          Mode Simple 1-Clic : Entraîner l'IA &amp; Lancer les Trades Automatiquement
+        </button>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <button class="pill-btn" onclick="applyRiskProfile('prudent')" title="Levier 2x · Risque 1 % · Perte jour max 3 %">Prudent</button>
@@ -1766,343 +1845,309 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
 
-    <div class="summary-banner" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-      <div style="flex:1;min-width:260px">
-        Réglez votre protection financière en français simple. Chaque paramètre affiche son exemple chiffré, sa valeur conseillée et le montant exact risqué avant de passer un trade.
-      </div>
-      <button id="btnAutoPilot1Click" class="pill-btn primary" style="padding:10px 16px;font-size:12px" onclick="runOneClickAutopilot()">
-        Mode Simple 1-Clic : Entraîner l'IA &amp; Lancer les Trades Automatiquement
-      </button>
-    </div>
-
-    <div class="strat-grid" id="strategyWidgetsGrid">
-      <!-- WIDGET 1: CONTRÔLE DU RISQUE & TAKE PROFIT POUR DÉBUTANT -->
-      <div class="glass-card strat-widget" data-widget-id="w-risk-params" draggable="false">
-        <div class="card-hdr">
-          <span class="card-title">Gestion du Risque, Stop-Loss &amp; Take Profit</span>
-          <div class="widget-reorder-bar">
-            <button class="pill-btn" onclick="moveWidget(&quot;w-risk-params&quot;, -1)">↑</button>
-            <button class="pill-btn" onclick="moveWidget(&quot;w-risk-params&quot;, 1)">↓</button>
-          </div>
-        </div>
-
-        <!-- 1. LEVIER -->
-        <div class="risk-field-card">
-          <div class="risk-field-head">
-            <div class="risk-field-title">
-              1. Levier de trading (1x à 500x)
-              <span class="info-tip" data-tip="Multiplie la taille de votre position par rapport à votre capital. Ex. : avec 1 000 € et levier 5x, vous ouvrez une position de 5 000 €. Le garde-fou réduit automatiquement le levier si le stop est trop proche de la liquidation. Conseillé : 2x à 10x.">?</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span id="levApplyFeedback" style="font-size:12px;font-weight:600;display:none"></span>
-              <span id="badgeLevLevel" class="level-badge prudent">Prudent</span>
-            </div>
-          </div>
-          <div class="risk-field-desc">Multiplie votre pouvoir d'achat sur le marché. Plus le levier est élevé, plus les gains ET les pertes vont vite. Cliquez sur un preset ou modifiez la valeur puis cliquez sur <strong>Appliquer</strong>.</div>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-            <input id="cfgLevSlider" type="range" min="1" max="500" value="5" class="lev-slider" oninput="syncLevFromSlider(this.value)" />
+    <div class="strat-bento-layout">
+      <div class="strat-grid" id="strategyWidgetsGrid">
+        <!-- COLONNE GAUCHE BENTO : PARAMÈTRES COMPACTS & SAUVEGARDE TOUJOURS ACCESSIBLES -->
+        <div class="glass-card strat-widget" data-widget-id="w-risk-params" draggable="false" style="padding:14px">
+          <div class="card-hdr" style="margin-bottom:8px">
+            <span class="card-title">Gestion du Risque, Stop-Loss &amp; Take Profit</span>
             <div style="display:flex;align-items:center;gap:6px">
-              <input id="cfgLev" type="number" min="1" max="500" class="input-dark mono" style="width:74px;text-align:center;font-weight:700" oninput="syncLevFromNumber(this.value)" onkeydown="if(event.key==='Enter'){applyCurrentLeverageInput();}" />
-              <span class="mono accent" style="font-weight:800">x</span>
-              <button id="btnApplyLevDirect" type="button" class="pill-btn primary" style="padding:6px 14px;font-size:12px;font-weight:700;white-space:nowrap" onclick="applyCurrentLeverageInput()" title="Appliquer immédiatement ce levier">Appliquer</button>
-            </div>
-          </div>
-          <div id="levPresetsWrap" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="2" onclick="quickApplyLeverage(2)">2x</button>
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="5" onclick="quickApplyLeverage(5)">5x (Reco)</button>
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="10" onclick="quickApplyLeverage(10)">10x</button>
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="25" onclick="quickApplyLeverage(25)">25x</button>
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="50" onclick="quickApplyLeverage(50)">50x</button>
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="100" onclick="quickApplyLeverage(100)">100x</button>
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="250" onclick="quickApplyLeverage(250)">250x</button>
-            <button type="button" class="pill-btn mono lev-preset-btn" data-lev="500" style="border-color:var(--down-ring);color:var(--down)" onclick="quickApplyLeverage(500)">500x MAX</button>
-          </div>
-        </div>
-
-        <!-- 2. RISQUE PAR TRADE (3 MODES — DÉBLOQUÉ EN EURO) -->
-        <div class="risk-field-card">
-          <div class="risk-field-head">
-            <div class="risk-field-title">
-              2. Risque par trade (Débloqué en € / $)
-              <span class="info-tip" data-tip="Somme maximale que vous acceptez de perdre sur une position si le stop est touché. Débloqué : aucun bridage arbitraire, vous pouvez définir exactement 25 €, 50 €, 100 €, 250 €, 500 € ou plus selon votre stratégie.">?</span>
-            </div>
-            <span id="badgeRiskLevel" class="level-badge balanced">Équilibré</span>
-          </div>
-          <div class="risk-field-desc">Montant maximal mis en jeu sur une seule position en cas d'échec (sans plafond arbitraire).</div>
-          <div class="mode-switch-row" id="riskModeSwitch">
-            <button type="button" class="mode-switch-btn active" data-mode="pct" onclick="setRiskMode('pct')">% Capital</button>
-            <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setRiskMode('amount')">Montant (€ / $)</button>
-            <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setRiskMode('pips')">Pips</button>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input id="cfgRiskPct" type="number" step="0.1" min="0.1" max="100" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
-            <input id="cfgRiskAmount" type="number" step="5" min="1" max="1000000" value="100" class="input-dark mono" style="flex:1;display:none" oninput="syncRiskAmountToSl(this.value); updateLiveRiskCalculator()" />
-            <input id="cfgRiskPips" type="number" step="1" min="1" max="5000" value="25" class="input-dark mono" style="flex:1;display:none" oninput="updateLiveRiskCalculator()" />
-            <span id="cfgRiskUnitLbl" class="mono" style="font-weight:700;min-width:44px">%</span>
-          </div>
-          <div id="riskAmountPresets" style="display:none;gap:6px;flex-wrap:wrap;margin-top:7px">
-            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(100)">100 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(250)">250 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(500)">500 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(1000)">1 000 € (1%)</button>
-            <button type="button" class="pill-btn" onclick="setQuickRiskAmount(2000)">2 000 € (2%)</button>
-          </div>
-          <div class="reco-hint">En mode Montant (€/$), le sizing est calibré pour ne risquer que cette somme exacte.</div>
-        </div>
-
-        <!-- 3. STOP-LOSS & ATR (DÉBLOQUÉ EN EURO) -->
-        <div class="risk-field-card">
-          <div class="risk-field-head">
-            <div class="risk-field-title">
-              3. Stop-Loss : Montant (€ / $) ou ATR
-              <span class="info-tip" data-tip="En mode Montant (€ / $), le desk coupe automatiquement le trade dès que la perte atteint ce montant (ex. : -50 € ou -100 €) et calcule le prix exact d'invalidation sur MT5. En mode ATR, le stop est placé à X fois l'amplitude moyenne.">?</span>
-            </div>
-            <span id="badgeAtrLevel" class="level-badge balanced">Équilibré</span>
-          </div>
-          <div class="risk-field-desc">Sélectionnez comment placer et déclencher le Stop-Loss : par montant fixe en €/$ ou par volatilité ATR.</div>
-          <div class="mode-switch-row" id="slModeSwitch">
-            <button type="button" class="mode-switch-btn active" data-mode="atr" onclick="setSlMode('atr')">ATR (Volatilité)</button>
-            <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setSlMode('amount')">Montant Fixe (€ / $)</button>
-            <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setSlMode('pips')">Pips</button>
-            <button type="button" class="mode-switch-btn" data-mode="pct" onclick="setSlMode('pct')">% Capital</button>
-          </div>
-
-          <div id="slAmountWrap" style="display:none;margin-bottom:8px">
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="cfgSlAmount" type="number" step="5" min="1" max="1000000" value="100" class="input-dark mono" style="flex:1" oninput="syncSlAmountToRisk(this.value); updateLiveRiskCalculator()" />
-              <span class="mono" style="font-weight:700;min-width:44px">€ / $</span>
-            </div>
-            <div id="slAmountPresets" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
-              <button type="button" class="pill-btn" onclick="setQuickSlAmount(25)">-25 €</button>
-              <button type="button" class="pill-btn" onclick="setQuickSlAmount(50)">-50 €</button>
-              <button type="button" class="pill-btn" onclick="setQuickSlAmount(100)">-100 €</button>
-              <button type="button" class="pill-btn" onclick="setQuickSlAmount(250)">-250 €</button>
-              <button type="button" class="pill-btn" onclick="setQuickSlAmount(500)">-500 €</button>
-            </div>
-            <div class="reco-hint">Coupure automatique garantie dès que la perte latente atteint ce montant.</div>
-          </div>
-
-          <div id="slAtrWrap">
-            <div style="display:flex;align-items:center;gap:10px">
-              <input id="cfgAtrSlider" type="range" min="0.3" max="5.0" step="0.05" value="1.35" style="flex:1" oninput="syncAtrInputs(this.value)" />
-              <input id="cfgAtrMult" type="number" step="0.05" min="0.3" max="5" class="input-dark mono" style="width:78px;text-align:center" oninput="syncAtrInputs(this.value)" />
-            </div>
-            <div class="atr-preview-box">
-              <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--fg-2);margin-bottom:4px">
-                <span>Aperçu visuel du Stop-Loss selon l'ATR</span>
-                <span class="mono accent" id="atrPreviewLabel">1.35× ATR</span>
+              <button type="button" id="btnToggleProgressiveStop" class="prog-stop-btn" onclick="toggleProgressiveStop()" title="Verrouille un Stop-Loss dynamique à 50% du pic de profit (ex: +100 € -> Break-Even sécurisé à +50 €)">
+                <span>Break-Even 50% Progressif :</span>
+                <strong id="lblProgStopState">INACTIF</strong>
+              </button>
+              <input id="cfgProgressiveSlEnabled" type="checkbox" style="display:none" onchange="syncProgressiveStopUi(this.checked)" />
+              <div class="widget-reorder-bar">
+                <button class="pill-btn" onclick="moveWidget(&quot;w-risk-params&quot;, -1)">↑</button>
+                <button class="pill-btn" onclick="moveWidget(&quot;w-risk-params&quot;, 1)">↓</button>
               </div>
-              <svg id="atrMiniChartSvg" viewBox="0 0 360 92" style="width:100%;height:92px;display:block"></svg>
             </div>
           </div>
 
-          <div id="slPipsWrap" style="display:none;margin-bottom:8px">
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="cfgSlPips" type="number" step="1" min="1" max="5000" value="25" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
-              <span class="mono" style="font-weight:700;min-width:44px">Pips</span>
+          <div class="risk-bento-grid">
+            <!-- 1. LEVIER -->
+            <div class="risk-field-card risk-field-card-compact risk-bento-wide">
+              <div class="risk-field-head" style="margin-bottom:4px">
+                <div class="risk-field-title" style="font-size:12px">
+                  1. Levier de trading (1x à 500x)
+                  <span class="info-tip" data-tip="Multiplie la taille de votre position par rapport à votre capital. Conseillé : 2x à 10x.">?</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="levApplyFeedback" style="font-size:11px;font-weight:600;display:none"></span>
+                  <span id="badgeLevLevel" class="level-badge prudent">Prudent</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <input id="cfgLevSlider" type="range" min="1" max="500" value="5" class="lev-slider" oninput="syncLevFromSlider(this.value)" />
+                <input id="cfgLev" type="number" min="1" max="500" class="input-dark mono" style="width:68px;text-align:center;font-weight:700;padding:5px" oninput="syncLevFromNumber(this.value)" onkeydown="if(event.key==='Enter'){applyCurrentLeverageInput();}" />
+                <span class="mono accent" style="font-weight:800">x</span>
+                <button id="btnApplyLevDirect" type="button" class="pill-btn primary" style="padding:5px 11px;font-size:11px;font-weight:700" onclick="applyCurrentLeverageInput()">Appliquer</button>
+              </div>
+              <div id="levPresetsWrap" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="2" onclick="quickApplyLeverage(2)">2x</button>
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="5" onclick="quickApplyLeverage(5)">5x (Reco)</button>
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="10" onclick="quickApplyLeverage(10)">10x</button>
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="25" onclick="quickApplyLeverage(25)">25x</button>
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="50" onclick="quickApplyLeverage(50)">50x</button>
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="100" onclick="quickApplyLeverage(100)">100x</button>
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="250" onclick="quickApplyLeverage(250)">250x</button>
+                <button type="button" class="pill-btn mono lev-preset-btn" data-lev="500" style="border-color:var(--down-ring);color:var(--down)" onclick="quickApplyLeverage(500)">500x MAX</button>
+              </div>
             </div>
-          </div>
 
-          <div id="slPctWrap" style="display:none;margin-bottom:8px">
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="cfgSlPct" type="number" step="0.1" min="0.1" max="50" value="2.0" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
-              <span class="mono" style="font-weight:700;min-width:44px">%</span>
+            <!-- 2. RISQUE PAR TRADE -->
+            <div class="risk-field-card risk-field-card-compact">
+              <div class="risk-field-head" style="margin-bottom:4px">
+                <div class="risk-field-title" style="font-size:12px">
+                  2. Risque / Trade
+                  <span class="info-tip" data-tip="Somme maximale risquée sur une position (25 €, 50 €, 100 €, 500 € ou % du capital).">?</span>
+                </div>
+                <span id="badgeRiskLevel" class="level-badge balanced">Équilibré</span>
+              </div>
+              <div class="mode-switch-row" id="riskModeSwitch" style="margin-bottom:6px">
+                <button type="button" class="mode-switch-btn active" data-mode="pct" onclick="setRiskMode('pct')">% Capital</button>
+                <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setRiskMode('amount')">Montant (€/$)</button>
+                <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setRiskMode('pips')">Pips</button>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input id="cfgRiskPct" type="number" step="0.1" min="0.1" max="100" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+                <input id="cfgRiskAmount" type="number" step="5" min="1" max="1000000" value="100" class="input-dark mono" style="flex:1;display:none" oninput="syncRiskAmountToSl(this.value); updateLiveRiskCalculator()" />
+                <input id="cfgRiskPips" type="number" step="1" min="1" max="5000" value="25" class="input-dark mono" style="flex:1;display:none" oninput="updateLiveRiskCalculator()" />
+                <span id="cfgRiskUnitLbl" class="mono" style="font-weight:700;min-width:36px;font-size:11px">%</span>
+              </div>
+              <div id="riskAmountPresets" style="display:none;gap:4px;flex-wrap:wrap;margin-top:6px">
+                <button type="button" class="pill-btn" onclick="setQuickRiskAmount(100)">100 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickRiskAmount(250)">250 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickRiskAmount(500)">500 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickRiskAmount(1000)">1 000 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickRiskAmount(2000)">2 000 €</button>
+              </div>
             </div>
-          </div>
-        </div>
 
-        <!-- 4. LIMITES DE PERTE MAXIMALE + ARRÊT AUTO -->
-        <div class="risk-field-card">
-          <div class="risk-field-head">
-            <div class="risk-field-title">
-              4. Plafonds de perte maximale
-              <span class="info-tip" data-tip="Coupe-circuit de sécurité : dès que la perte atteint ce seuil (par trade, sur la journée, ou sur le compte total), le desk s'arrête automatiquement pour protéger votre capital. Recommandé : 5 % max par jour.">?</span>
+            <!-- 3. STOP-LOSS & ATR -->
+            <div class="risk-field-card risk-field-card-compact">
+              <div class="risk-field-head" style="margin-bottom:4px">
+                <div class="risk-field-title" style="font-size:12px">
+                  3. Stop-Loss
+                  <span class="info-tip" data-tip="Coupure automatique en montant fixe €/$ ou volatilité ATR.">?</span>
+                </div>
+                <span id="badgeAtrLevel" class="level-badge balanced">Équilibré</span>
+              </div>
+              <div class="mode-switch-row" id="slModeSwitch" style="margin-bottom:6px">
+                <button type="button" class="mode-switch-btn active" data-mode="atr" onclick="setSlMode('atr')">ATR</button>
+                <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setSlMode('amount')">Montant (€/$)</button>
+                <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setSlMode('pips')">Pips</button>
+                <button type="button" class="mode-switch-btn" data-mode="pct" onclick="setSlMode('pct')">%</button>
+              </div>
+
+              <div id="slAmountWrap" style="display:none">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="cfgSlAmount" type="number" step="5" min="1" max="1000000" value="100" class="input-dark mono" style="flex:1" oninput="syncSlAmountToRisk(this.value); updateLiveRiskCalculator()" />
+                  <span class="mono" style="font-weight:700;font-size:11px">€ / $</span>
+                </div>
+                <div id="slAmountPresets" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">
+                  <button type="button" class="pill-btn" onclick="setQuickSlAmount(25)">-25 €</button>
+                  <button type="button" class="pill-btn" onclick="setQuickSlAmount(50)">-50 €</button>
+                  <button type="button" class="pill-btn" onclick="setQuickSlAmount(100)">-100 €</button>
+                  <button type="button" class="pill-btn" onclick="setQuickSlAmount(250)">-250 €</button>
+                  <button type="button" class="pill-btn" onclick="setQuickSlAmount(500)">-500 €</button>
+                </div>
+              </div>
+
+              <div id="slAtrWrap">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <input id="cfgAtrSlider" type="range" min="0.3" max="5.0" step="0.05" value="1.35" style="flex:1" oninput="syncAtrInputs(this.value)" />
+                  <input id="cfgAtrMult" type="number" step="0.05" min="0.3" max="5" class="input-dark mono" style="width:66px;text-align:center;padding:5px" oninput="syncAtrInputs(this.value)" />
+                </div>
+                <div class="atr-preview-box" style="margin-top:6px;padding:6px">
+                  <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--fg-2)">
+                    <span>Stop ATR</span>
+                    <span class="mono accent" id="atrPreviewLabel">1.35× ATR</span>
+                  </div>
+                  <svg id="atrMiniChartSvg" viewBox="0 0 360 92" style="width:100%;height:56px;display:block"></svg>
+                </div>
+              </div>
+
+              <div id="slPipsWrap" style="display:none">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="cfgSlPips" type="number" step="1" min="1" max="5000" value="25" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+                  <span class="mono" style="font-weight:700;font-size:11px">Pips</span>
+                </div>
+              </div>
+
+              <div id="slPctWrap" style="display:none">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="cfgSlPct" type="number" step="0.1" min="0.1" max="50" value="2.0" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+                  <span class="mono" style="font-weight:700;font-size:11px">%</span>
+                </div>
+              </div>
             </div>
-            <span id="badgeDayLossLevel" class="level-badge balanced">Équilibré</span>
-          </div>
-          <div class="risk-field-desc">Limites de protection automatiques par trade, par jour et sur le compte total.</div>
-          <div class="form-grid" style="margin-bottom:8px">
-            <div>
-              <label class="field-lbl">Perte max / jour</label>
-              <div style="display:flex;gap:4px">
-                <select id="cfgDayLossMode" class="input-dark" style="padding:6px 8px" onchange="toggleDayLossInputs()">
-                  <option value="pct">%</option>
+
+            <!-- 4. TAKE PROFIT & CLÔTURE PNL OUVERT -->
+            <div class="risk-field-card risk-field-card-compact">
+              <div class="risk-field-head" style="margin-bottom:4px">
+                <div class="risk-field-title" style="font-size:12px">
+                  4. Take Profit &amp; Cible Ouverte
+                  <span class="info-tip" data-tip="Prise de gain automatique par trade ou clôture globale dès que les positions ouvertes atteignent le PnL défini.">?</span>
+                </div>
+                <span class="level-badge balanced">Cible</span>
+              </div>
+              <div class="mode-switch-row" id="tpModeSwitch" style="margin-bottom:6px">
+                <button type="button" class="mode-switch-btn active" data-mode="rr" onclick="setTpMode('rr')">Ratio (R)</button>
+                <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setTpMode('amount')">Montant (€/$)</button>
+                <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setTpMode('pips')">Pips</button>
+                <button type="button" class="mode-switch-btn" data-mode="pct" onclick="setTpMode('pct')">%</button>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+                <input id="cfgTpVal" type="number" step="0.1" min="0.2" max="1000000" value="2.0" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
+                <span id="cfgTpExampleLbl" style="font-size:10px;color:var(--fg-2)">Ex. : 2× R</span>
+              </div>
+              <div id="tpAmountPresets" style="display:none;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+                <button type="button" class="pill-btn" onclick="setQuickTpAmount(25)">+25 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickTpAmount(50)">+50 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickTpAmount(100)">+100 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickTpAmount(200)">+200 €</button>
+                <button type="button" class="pill-btn" onclick="setQuickTpAmount(500)">+500 €</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-top:6px;border-top:1px solid var(--ring-1)">
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer">
+                  <input id="cfgDailyTpEnabled" type="checkbox" onchange="updateLiveRiskCalculator()" />
+                  <span>Fermer tout à PnL ouvert</span>
+                </label>
+                <input id="cfgDailyTpVal" type="number" step="25" min="10" max="500000" value="500" class="input-dark mono" style="width:74px;padding:4px 6px" oninput="updateLiveRiskCalculator()" />
+                <select id="cfgDailyTpMode" class="input-dark" style="padding:4px 6px" onchange="updateLiveRiskCalculator()">
                   <option value="amount">€ / $</option>
-                  <option value="pips">Pips</option>
-                </select>
-                <input id="cfgDayLossPct" type="number" step="0.5" min="0.5" max="50" class="input-dark mono" style="width:100%" oninput="updateLiveRiskCalculator()" />
-                <input id="cfgDayLossVal" type="number" step="50" min="10" max="500000" value="500" class="input-dark mono" style="width:100%;display:none" oninput="updateLiveRiskCalculator()" />
-              </div>
-            </div>
-            <div>
-              <label class="field-lbl">Plafond perte / trade (0 = off)</label>
-              <div style="display:flex;gap:4px">
-                <select id="cfgMaxTradeLossMode" class="input-dark" style="padding:6px 8px" onchange="updateLiveRiskCalculator()">
-                  <option value="amount">€ / $</option>
                   <option value="pct">%</option>
-                  <option value="pips">Pips</option>
                 </select>
-                <input id="cfgMaxTradeLossVal" type="number" step="10" min="0" max="500000" value="0" class="input-dark mono" style="width:100%" oninput="updateLiveRiskCalculator()" />
+              </div>
+            </div>
+
+            <!-- 5. PLAFONDS DE PERTE -->
+            <div class="risk-field-card risk-field-card-compact">
+              <div class="risk-field-head" style="margin-bottom:4px">
+                <div class="risk-field-title" style="font-size:12px">
+                  5. Coupe-Circuits Perte Max
+                  <span class="info-tip" data-tip="Arrêt de sécurité par jour, par trade ou total.">?</span>
+                </div>
+                <span id="badgeDayLossLevel" class="level-badge balanced">Équilibré</span>
+              </div>
+              <div class="form-grid" style="gap:6px;margin-bottom:6px">
+                <div>
+                  <label class="field-lbl">Perte max / jour</label>
+                  <div style="display:flex;gap:4px">
+                    <select id="cfgDayLossMode" class="input-dark" style="padding:4px 6px" onchange="toggleDayLossInputs()">
+                      <option value="pct">%</option>
+                      <option value="amount">€</option>
+                      <option value="pips">Pips</option>
+                    </select>
+                    <input id="cfgDayLossPct" type="number" step="0.5" min="0.5" max="50" class="input-dark mono" style="width:100%" oninput="updateLiveRiskCalculator()" />
+                    <input id="cfgDayLossVal" type="number" step="50" min="10" max="500000" value="500" class="input-dark mono" style="width:100%;display:none" oninput="updateLiveRiskCalculator()" />
+                  </div>
+                </div>
+                <div>
+                  <label class="field-lbl">Max / trade (0=off)</label>
+                  <div style="display:flex;gap:4px">
+                    <select id="cfgMaxTradeLossMode" class="input-dark" style="padding:4px 6px" onchange="updateLiveRiskCalculator()">
+                      <option value="amount">€</option>
+                      <option value="pct">%</option>
+                      <option value="pips">Pips</option>
+                    </select>
+                    <input id="cfgMaxTradeLossVal" type="number" step="10" min="0" max="500000" value="0" class="input-dark mono" style="width:100%" oninput="updateLiveRiskCalculator()" />
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:4px">
+                  <span style="font-size:10px;color:var(--fg-2)">Tot :</span>
+                  <select id="cfgTotalLossMode" class="input-dark" style="padding:4px 6px" onchange="updateLiveRiskCalculator()">
+                    <option value="pct">%</option>
+                    <option value="amount">€</option>
+                  </select>
+                  <input id="cfgTotalLossVal" type="number" step="1" min="0" max="500000" value="0" class="input-dark mono" style="width:62px;padding:4px 6px" oninput="updateLiveRiskCalculator()" />
+                </div>
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer">
+                  <input id="cfgAutoStopLossChk" type="checkbox" checked onchange="updateLiveRiskCalculator()" />
+                  <span>Arrêt auto</span>
+                </label>
               </div>
             </div>
           </div>
-          <div class="form-grid" style="margin-bottom:8px">
-            <div>
-              <label class="field-lbl">Perte max totale (0 = off)</label>
-              <div style="display:flex;gap:4px">
-                <select id="cfgTotalLossMode" class="input-dark" style="padding:6px 8px" onchange="updateLiveRiskCalculator()">
-                  <option value="pct">%</option>
-                  <option value="amount">€ / $</option>
-                </select>
-                <input id="cfgTotalLossVal" type="number" step="1" min="0" max="500000" value="0" class="input-dark mono" style="width:100%" oninput="updateLiveRiskCalculator()" />
-              </div>
-            </div>
-            <label style="display:flex;align-items:center;gap:8px;padding-top:18px;font-size:12px;cursor:pointer">
-              <input id="cfgAutoStopLossChk" type="checkbox" checked onchange="updateLiveRiskCalculator()" />
-              <span>Arrêt automatique si limite atteinte</span>
-            </label>
-          </div>
-        </div>
 
-        <!-- 5. TAKE PROFIT (DÉBLOQUÉ EN EURO) & OBJECTIF DU JOUR -->
-        <div class="risk-field-card">
-          <div class="risk-field-head">
-            <div class="risk-field-title">
-              5. Take Profit (Débloqué en € / $) &amp; Objectif du jour
-              <span class="info-tip" data-tip="En mode Montant (€ / $), le trade se ferme automatiquement dès que le gain atteint ce montant (ex. : +100 € ou +200 €). Débloqué : aucun bridage de gain.">?</span>
-            </div>
-            <span class="level-badge balanced">Objectif</span>
+          <!-- 6. SIMULATEUR & SAUVEGARDE DIRECTEMENT ACCESSIBLES -->
+          <div id="liveRiskSummaryBox" class="live-calc-box" style="margin-top:8px;padding:9px 11px;font-size:11.5px">
+            Calcul en direct...
           </div>
-          <div class="risk-field-desc">Règle de prise de profit automatique par position en € / $, ratio R ou pips, plus objectif journalier optionnel.</div>
-          <div class="mode-switch-row" id="tpModeSwitch">
-            <button type="button" class="mode-switch-btn active" data-mode="rr" onclick="setTpMode('rr')">Ratio (R)</button>
-            <button type="button" class="mode-switch-btn" data-mode="amount" onclick="setTpMode('amount')">Montant (€ / $)</button>
-            <button type="button" class="mode-switch-btn" data-mode="pips" onclick="setTpMode('pips')">Pips</button>
-            <button type="button" class="mode-switch-btn" data-mode="pct" onclick="setTpMode('pct')">% Capital</button>
+          <div id="riskValidationAlert" class="validation-err-box"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <button id="btnSaveRisk" class="pill-btn primary" style="flex:1;justify-content:center" onclick="validateAndSaveRiskSettings()">Sauvegarder les réglages</button>
+            <button class="pill-btn" onclick="resetRiskToRecommended()">Réinitialiser</button>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-            <input id="cfgTpVal" type="number" step="0.1" min="0.2" max="1000000" value="2.0" class="input-dark mono" style="flex:1" oninput="updateLiveRiskCalculator()" />
-            <span id="cfgTpExampleLbl" style="font-size:11px;color:var(--fg-2)">Ex. : viser 2× le risque</span>
-          </div>
-          <div id="tpAmountPresets" style="display:none;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(25)">+25 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(50)">+50 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(100)">+100 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(200)">+200 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(500)">+500 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(1000)">+1 000 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(2000)">+2 000 €</button>
-            <button type="button" class="pill-btn" onclick="setQuickTpAmount(5000)">+5 000 €</button>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--ring-1)">
-            <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer">
-              <input id="cfgDailyTpEnabled" type="checkbox" onchange="updateLiveRiskCalculator()" />
-              <span>Fermer tout quand le PnL actuel ouvert atteint</span>
-            </label>
-            <input id="cfgDailyTpVal" type="number" step="25" min="10" max="500000" value="500" class="input-dark mono" style="width:92px" oninput="updateLiveRiskCalculator()" />
-            <select id="cfgDailyTpMode" class="input-dark" style="padding:6px 8px" onchange="updateLiveRiskCalculator()">
-              <option value="amount">€ / $</option>
-              <option value="pct">%</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- 6. CALCULATEUR EN DIRECT & VALIDATION -->
-        <div id="liveRiskSummaryBox" class="live-calc-box">
-          Calcul en direct...
-        </div>
-        <div id="riskValidationAlert" class="validation-err-box"></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button id="btnSaveRisk" class="pill-btn primary" style="flex:1;justify-content:center" onclick="validateAndSaveRiskSettings()">Sauvegarder les réglages</button>
-          <button class="pill-btn" onclick="resetRiskToRecommended()">Réinitialiser</button>
         </div>
       </div>
 
-      <!-- WIDGET 2: HUMAN-READABLE AI TELEMETRY -->
-      <div class="glass-card strat-widget" data-widget-id="w-rl-metrics" draggable="false">
-        <div class="card-hdr">
-          <span class="card-title">Performance &amp; Confiance de l'IA</span>
-          <div class="widget-reorder-bar">
-            <button class="pill-btn" onclick="moveWidget(&quot;w-rl-metrics&quot;, -1)">↑</button>
-            <button class="pill-btn" onclick="moveWidget(&quot;w-rl-metrics&quot;, 1)">↓</button>
+      <!-- COLONNE DROITE BENTO : STUDIO D'APPRENTISSAGE IA + MÉTRIQUES + RAPPORTS -->
+      <div class="strat-col-stack">
+        <div class="glass-card strat-widget" data-widget-id="w-grpo" draggable="false" style="padding:14px">
+          <div class="card-hdr" style="margin-bottom:8px">
+            <span class="card-title">Studio d'Apprentissage Pas-à-Pas</span>
+            <div class="widget-reorder-bar">
+              <button class="pill-btn" onclick="moveWidget(&quot;w-grpo&quot;, -1)">↑</button>
+              <button class="pill-btn" onclick="moveWidget(&quot;w-grpo&quot;, 1)">↓</button>
+            </div>
           </div>
-        </div>
-        <div id="rlMetricsHost">Chargement des métriques IA...</div>
-      </div>
-
-      <!-- WIDGET 3: STEP-BY-STEP ML TRAINING -->
-      <div class="glass-card strat-widget" data-widget-id="w-grpo" draggable="false">
-        <div class="card-hdr">
-          <span class="card-title">Studio d'Apprentissage Pas-à-Pas</span>
-          <div class="widget-reorder-bar">
-            <button class="pill-btn" onclick="moveWidget(&quot;w-grpo&quot;, -1)">↑</button>
-            <button class="pill-btn" onclick="moveWidget(&quot;w-grpo&quot;, 1)">↓</button>
-          </div>
-        </div>
-
-        <div class="step-box">
-          <div class="step-title">
-            Étape 1 : Sélectionner la Paire
-            <span class="info-tip" data-tip="Choisissez la paire ou l'actif sur lequel l'IA va rejouer les bougies passées pour s'améliorer.">?</span>
-          </div>
-          <select id="grpoSymbolSelect" class="input-dark mono" style="width:100%"></select>
-        </div>
-
-        <div class="step-box">
-          <div class="step-title">
-            Étape 2 : Horizon &amp; Période (DD/MM/YYYY)
-            <span class="info-tip" data-tip="Scalping = trades rapides 15m ; Day Trading = session 1h ; Swing = tendance 4h.">?</span>
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-            <button class="pill-btn" onclick="setDatePresetDays(7)">7 Jours</button>
-            <button class="pill-btn" onclick="setDatePresetDays(30)">30 Jours</button>
-            <button class="pill-btn" onclick="setDatePresetDays(90)">90 Jours</button>
-            <button class="pill-btn" onclick="setDatePresetDays(180)">180 Jours</button>
-          </div>
-          <div class="form-grid" style="margin-bottom:8px">
+          <div class="form-grid" style="gap:8px;margin-bottom:8px">
+            <div>
+              <label class="field-lbl">Paire d'entraînement</label>
+              <select id="grpoSymbolSelect" class="input-dark mono" style="width:100%"></select>
+            </div>
             <div>
               <label class="field-lbl">Horizon / Style</label>
               <select id="trainStyleSelect" class="input-dark" style="width:100%">
-                <option value="scalping">Scalping (Ultra-Court · 15m)</option>
-                <option value="daytrade">Day Trading (Session 1h)</option>
-                <option value="longtrade">Long / Swing (Macro 4h)</option>
+                <option value="scalping">Scalping (15m)</option>
+                <option value="daytrade">Day Trading (1h)</option>
+                <option value="longtrade">Long / Swing (4h)</option>
               </select>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-              <div>
-                <label class="field-lbl">Début</label>
-                <input id="grpoStartDate" class="input-dark mono" style="width:100%" placeholder="01/01/2026" />
-              </div>
-              <div>
-                <label class="field-lbl">Fin</label>
-                <input id="grpoEndDate" class="input-dark mono" style="width:100%" placeholder="16/11/2026" />
-              </div>
-            </div>
           </div>
-        </div>
-
-        <div class="step-box" style="margin-bottom:0">
-          <div class="step-title">Étape 3 : Lancer l'Entraînement</div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <button class="pill-btn" onclick="setDatePresetDays(7)">7 J</button>
+            <button class="pill-btn" onclick="setDatePresetDays(30)">30 J</button>
+            <button class="pill-btn" onclick="setDatePresetDays(90)">90 J</button>
+            <button class="pill-btn" onclick="setDatePresetDays(180)">180 J</button>
+            <input id="grpoStartDate" class="input-dark mono" style="width:96px;padding:4px 6px" placeholder="01/01/2026" />
+            <span style="color:var(--fg-3)">→</span>
+            <input id="grpoEndDate" class="input-dark mono" style="width:96px;padding:4px 6px" placeholder="16/11/2026" />
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">
             <button id="btnLaunchGrpo" class="pill-btn primary" onclick="launchGrpoTraining()">Lancer l'Entraînement IA (WFO + GRPO)</button>
-            <button class="pill-btn" onclick="hotReloadGrpo()">Recharger Mémoire IA</button>
-            <button class="pill-btn" onclick="runLegacyWfoTrain()">Audit Historique Multi-Paires</button>
+            <button class="pill-btn" onclick="hotReloadGrpo()">Recharger IA</button>
+            <button class="pill-btn" onclick="runLegacyWfoTrain()">Audit Multi-Paires</button>
           </div>
-          <div class="progress-track"><div class="progress-fill" id="grpoProgressBar"></div></div>
+          <div class="progress-track" style="margin:6px 0"><div class="progress-fill" id="grpoProgressBar"></div></div>
           <div class="mono" style="font-size:11px;color:var(--fg-2)" id="grpoLiveStatus">Prêt pour un nouvel épisode d'entraînement.</div>
         </div>
-      </div>
 
-      <!-- WIDGET 4: REPORTS -->
-      <div class="glass-card strat-widget" data-widget-id="w-reports" draggable="false">
-        <div class="card-hdr">
-          <span class="card-title">Rapports d'Optimisation &amp; Reviewer</span>
-          <div class="widget-reorder-bar">
-            <button class="pill-btn" onclick="moveWidget(&quot;w-reports&quot;, -1)">↑</button>
-            <button class="pill-btn" onclick="moveWidget(&quot;w-reports&quot;, 1)">↓</button>
+        <div class="glass-card strat-widget" data-widget-id="w-rl-metrics" draggable="false" style="padding:14px">
+          <div class="card-hdr" style="margin-bottom:6px">
+            <span class="card-title">Performance &amp; Confiance de l'IA</span>
+            <div class="widget-reorder-bar">
+              <button class="pill-btn" onclick="moveWidget(&quot;w-rl-metrics&quot;, -1)">↑</button>
+              <button class="pill-btn" onclick="moveWidget(&quot;w-rl-metrics&quot;, 1)">↓</button>
+            </div>
           </div>
+          <div id="rlMetricsHost">Chargement des métriques IA...</div>
         </div>
-        <div id="trainingReportHost" style="font-size:12px;color:var(--fg-1);max-height:380px;overflow-y:auto"></div>
+
+        <div class="glass-card strat-widget" data-widget-id="w-reports" draggable="false" style="padding:14px">
+          <div class="card-hdr" style="margin-bottom:6px">
+            <span class="card-title">Rapports d'Optimisation &amp; Reviewer</span>
+            <div class="widget-reorder-bar">
+              <button class="pill-btn" onclick="moveWidget(&quot;w-reports&quot;, -1)">↑</button>
+              <button class="pill-btn" onclick="moveWidget(&quot;w-reports&quot;, 1)">↓</button>
+            </div>
+          </div>
+          <div id="trainingReportHost" style="font-size:11.5px;color:var(--fg-1);max-height:175px;overflow-y:auto"></div>
+        </div>
       </div>
     </div>
   </section>
@@ -2819,6 +2864,208 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       return tex;
     }
 
+    var blackCat3d = null;
+    var profitBursts3d = [];
+    var lastClosedProfitCount = -1;
+
+    function spawn3dPulse(fromId, toId, colorHex) {
+      if (!scene3d) return;
+      var fromRig = agentRigs[fromId];
+      var toRig = agentRigs[toId];
+      if (!fromRig || !toRig) return;
+      var p0 = fromRig.worldPos.clone();
+      p0.y = 0.25;
+      var p2 = toRig.worldPos.clone();
+      p2.y = 0.25;
+      var mid = p0.clone().add(p2).multiplyScalar(0.5);
+      mid.y = 2.4 + Math.random() * 1.2;
+      var curve = new THREE.QuadraticBezierCurve3(p0, mid, p2);
+      var col = new THREE.Color(colorHex || '#38bdf8');
+      var geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(24));
+      var line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending }));
+      var dot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.11, 10, 10),
+        new THREE.MeshBasicMaterial({ color: col })
+      );
+      scene3d.add(line);
+      scene3d.add(dot);
+      pulseArcs.push({ line: line, dot: dot, curve: curve, t: 0 });
+    }
+
+    function spawnProfitBurst(originVec, amount) {
+      if (!scene3d || !originVec) return;
+      var count = amount > 50 ? 6 : 3;
+      for (var i = 0; i < count; i++) {
+        var coin = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.13, 0),
+          new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending })
+        );
+        coin.position.set(
+          originVec.x + (Math.random() - 0.5) * 0.9,
+          0.5 + Math.random() * 0.6,
+          originVec.z + (Math.random() - 0.5) * 0.9
+        );
+        scene3d.add(coin);
+        profitBursts3d.push({
+          mesh: coin,
+          vy: 0.035 + Math.random() * 0.025,
+          vx: (Math.random() - 0.5) * 0.015,
+          vz: (Math.random() - 0.5) * 0.015,
+          life: 1.0
+        });
+      }
+    }
+
+    function buildBlackCatMesh() {
+      var catGroup = new THREE.Group();
+      var furMat = new THREE.MeshStandardMaterial({
+        color: 0x0b0b10,
+        roughness: 0.42,
+        metalness: 0.16,
+        emissive: 0x111827,
+        emissiveIntensity: 0.25
+      });
+      var bellyTrimMat = new THREE.MeshStandardMaterial({ color: 0x171722, roughness: 0.5 });
+      var eyeMat = new THREE.MeshBasicMaterial({ color: 0x4ade80 });
+      var earInnerMat = new THREE.MeshStandardMaterial({ color: 0x3f2e3e, roughness: 0.7 });
+      var noseMat = new THREE.MeshBasicMaterial({ color: 0xf472b6 });
+
+      // Body (sleek stretched oval silhouette)
+      var torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.46, 8, 16), furMat);
+      torso.rotation.x = Math.PI / 2;
+      torso.position.set(0, 0.34, 0);
+      torso.castShadow = true;
+      catGroup.add(torso);
+
+      // Subtle collar glow so the black cat reads crisp on obsidian dark floor
+      var collar = new THREE.Mesh(
+        new THREE.TorusGeometry(0.155, 0.022, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0xf59e0b })
+      );
+      collar.rotation.x = Math.PI / 2.2;
+      collar.position.set(0, 0.43, 0.23);
+      catGroup.add(collar);
+
+      // Chest tuft
+      var chest = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 14), bellyTrimMat);
+      chest.position.set(0, 0.34, 0.22);
+      catGroup.add(chest);
+
+      // Head + ears + eyes + whiskers
+      var headPivot = new THREE.Group();
+      headPivot.position.set(0, 0.52, 0.32);
+
+      var head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 18, 18), furMat);
+      head.scale.set(1.05, 0.96, 1.0);
+      head.castShadow = true;
+      headPivot.add(head);
+
+      var muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.08, 12, 12), furMat);
+      muzzle.position.set(0, -0.04, 0.13);
+      headPivot.add(muzzle);
+
+      var nose = new THREE.Mesh(new THREE.SphereGeometry(0.024, 8, 8), noseMat);
+      nose.position.set(0, -0.02, 0.205);
+      headPivot.add(nose);
+
+      var earGeo = new THREE.ConeGeometry(0.065, 0.15, 6);
+      var earL = new THREE.Mesh(earGeo, furMat);
+      earL.position.set(-0.10, 0.17, 0.01);
+      earL.rotation.z = 0.26;
+      headPivot.add(earL);
+
+      var earR = new THREE.Mesh(earGeo, furMat);
+      earR.position.set(0.10, 0.17, 0.01);
+      earR.rotation.z = -0.26;
+      headPivot.add(earR);
+
+      var innerGeo = new THREE.ConeGeometry(0.035, 0.09, 6);
+      var inL = new THREE.Mesh(innerGeo, earInnerMat);
+      inL.position.set(-0.10, 0.16, 0.03);
+      inL.rotation.z = 0.26;
+      headPivot.add(inL);
+      var inR = new THREE.Mesh(innerGeo, earInnerMat);
+      inR.position.set(0.10, 0.16, 0.03);
+      inR.rotation.z = -0.26;
+      headPivot.add(inR);
+
+      var eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.028, 10, 10), eyeMat);
+      eyeL.position.set(-0.065, 0.03, 0.148);
+      headPivot.add(eyeL);
+      var eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.028, 10, 10), eyeMat);
+      eyeR.position.set(0.065, 0.03, 0.148);
+      headPivot.add(eyeR);
+
+      catGroup.add(headPivot);
+
+      // 4 articulated paws
+      function makeLeg(x, z) {
+        var pivot = new THREE.Group();
+        pivot.position.set(x, 0.26, z);
+        var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.036, 0.26, 10), furMat);
+        leg.position.y = -0.13;
+        leg.castShadow = true;
+        pivot.add(leg);
+        catGroup.add(pivot);
+        return pivot;
+      }
+      var legFL = makeLeg(-0.10, 0.21);
+      var legFR = makeLeg(0.10, 0.21);
+      var legBL = makeLeg(-0.10, -0.20);
+      var legBR = makeLeg(0.10, -0.20);
+
+      // Articulated multi-segment black tail
+      var tailBasePivot = new THREE.Group();
+      tailBasePivot.position.set(0, 0.40, -0.32);
+      var tailSeg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.028, 0.26, 8), furMat);
+      tailSeg1.rotation.x = -Math.PI / 3;
+      tailSeg1.position.set(0, 0.08, -0.10);
+      tailBasePivot.add(tailSeg1);
+
+      var tailMidPivot = new THREE.Group();
+      tailMidPivot.position.set(0, 0.15, -0.20);
+      var tailSeg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.018, 0.28, 8), furMat);
+      tailSeg2.rotation.x = -Math.PI / 5;
+      tailSeg2.position.set(0, 0.11, -0.07);
+      tailMidPivot.add(tailSeg2);
+      tailBasePivot.add(tailMidPivot);
+      catGroup.add(tailBasePivot);
+
+      // Ground soft glow outline ring so the black cat is easy to spot anywhere
+      var catHalo = new THREE.Mesh(
+        new THREE.RingGeometry(0.32, 0.38, 28),
+        new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide, transparent: true, opacity: 0.35 })
+      );
+      catHalo.rotation.x = -Math.PI / 2;
+      catHalo.position.y = 0.01;
+      catGroup.add(catHalo);
+
+      // Clickable hitbox for inspector
+      var hitCat = new THREE.Mesh(new THREE.SphereGeometry(0.75, 12, 12), new THREE.MeshBasicMaterial({ visible: false }));
+      hitCat.position.y = 0.45;
+      hitCat.userData = { catMascot: true };
+      catGroup.add(hitCat);
+
+      return {
+        group: catGroup,
+        head: headPivot,
+        earL: earL,
+        earR: earR,
+        legFL: legFL,
+        legFR: legFR,
+        legBL: legBL,
+        legBR: legBR,
+        tailBase: tailBasePivot,
+        tailMid: tailMidPivot,
+        hitSphere: hitCat,
+        pos: new THREE.Vector3(1.2, -1.5, 1.8),
+        target: new THREE.Vector3(-3.0, -1.5, 2.5),
+        heading: 0,
+        pauseTimer: 0,
+        mood: 'Patrouille curieuse sur le floor'
+      };
+    }
+
     function init3dDesk() {
       var host = document.getElementById('canvas3dWrap');
       if (!host || typeof THREE === 'undefined') return;
@@ -2826,11 +3073,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var h = host.clientHeight || window.innerHeight;
 
       scene3d = new THREE.Scene();
-      scene3d.fog = new THREE.FogExp2(0x03060c, 0.026);
+      scene3d.fog = new THREE.FogExp2(0x03060c, 0.022);
 
       camera3d = new THREE.PerspectiveCamera(46, w / h, 0.1, 220);
-      camera3d.position.set(0, 10.5, 18.5);
-      camera3d.lookAt(0, 0.4, 0);
+      camera3d.position.set(0, 11.2, 19.5);
+      camera3d.lookAt(0, 0.2, 0);
 
       renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer3d.setSize(w, h);
@@ -2842,224 +3089,230 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       host.innerHTML = '';
       host.appendChild(renderer3d.domElement);
 
-      ambient3d = new THREE.AmbientLight(0x94a3b8, 0.55);
+      ambient3d = new THREE.AmbientLight(0x94a3b8, 0.7);
       scene3d.add(ambient3d);
 
-      spot3d = new THREE.SpotLight(0x38bdf8, 3.2, 48, Math.PI / 3.4, 0.45, 1.2);
-      spot3d.position.set(0, 16, 4);
+      spot3d = new THREE.SpotLight(0x38bdf8, 3.0, 56, Math.PI / 2.8, 0.45, 1.1);
+      spot3d.position.set(0, 17, 6);
       spot3d.castShadow = true;
       spot3d.shadow.mapSize.width = 1024;
       spot3d.shadow.mapSize.height = 1024;
       scene3d.add(spot3d);
 
-      var rimLight = new THREE.PointLight(0xa855f7, 1.8, 30);
-      rimLight.position.set(-8, 6, -8);
-      scene3d.add(rimLight);
+      var warmRim = new THREE.PointLight(0x10b981, 1.6, 36);
+      warmRim.position.set(9, 7, 7);
+      scene3d.add(warmRim);
 
-      // Floor platform + glowing concentric rings
-      var floorGeo = new THREE.CylinderGeometry(11.5, 12.2, 0.35, 64);
-      var floorMat = new THREE.MeshStandardMaterial({ color: 0x09101d, metalness: 0.72, roughness: 0.32 });
-      var floor = new THREE.Mesh(floorGeo, floorMat);
-      floor.position.y = -1.7;
-      floor.receiveShadow = true;
-      scene3d.add(floor);
+      var coolRim = new THREE.PointLight(0xa855f7, 1.7, 36);
+      coolRim.position.set(-9, 7, -8);
+      scene3d.add(coolRim);
 
-      var grid = new THREE.GridHelper(36, 36, 0x1e3a5f, 0x0b1526);
-      grid.position.y = -1.52;
+      // Open Architectural Studio Deck (NO central gyroscope/orb/circular ring)
+      coreMesh3d = null;
+      ring1_3d = null;
+      ring2_3d = null;
+      floorRing3d = null;
+      agentRigs = {};
+      pulseArcs = [];
+      profitBursts3d = [];
+
+      var studioDeck = new THREE.Mesh(
+        new THREE.BoxGeometry(24, 0.34, 18.5),
+        new THREE.MeshPhysicalMaterial({ color: 0x070d18, metalness: 0.68, roughness: 0.28, clearcoat: 0.65 })
+      );
+      studioDeck.position.set(0, -1.68, 0);
+      studioDeck.receiveShadow = true;
+      scene3d.add(studioDeck);
+
+      var grid = new THREE.GridHelper(32, 32, 0x1e3a5f, 0x0b1526);
+      grid.position.y = -1.50;
       scene3d.add(grid);
 
-      floorRing3d = new THREE.Mesh(
-        new THREE.TorusGeometry(6.6, 0.05, 16, 96),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.65 })
-      );
-      floorRing3d.rotation.x = Math.PI / 2;
-      floorRing3d.position.y = -1.5;
-      scene3d.add(floorRing3d);
+      // Asymmetric Spatial Zones where each Agent builds its own custom environment & roams freely
+      var STUDIO_ZONES = {
+        analyst:    { x: -7.8, z: -4.2, rot: 0.45 },
+        strategist: { x: -2.4, z: -5.4, rot: 0.15 },
+        hunter:     { x:  4.6, z: -4.8, rot: -0.35 },
+        risk:       { x:  8.4, z: -0.4, rot: -1.15 },
+        execution:  { x:  5.8, z:  4.8, rot: -2.20 },
+        lead:       { x: -0.4, z: -0.6, rot: 0.00 },
+        reviewer:   { x: -5.2, z:  4.9, rot: 2.35 },
+        sentinel:   { x: -8.6, z:  1.1, rot: 1.40 }
+      };
 
-      // Central Quantum Gyroscope Core + Geodesic Wireframe Cage
-      coreMesh3d = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(0.95, 2),
-        new THREE.MeshPhysicalMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 1.5, metalness: 0.25, roughness: 0.1, transmission: 0.55, clearcoat: 1.0 })
-      );
-      coreMesh3d.position.y = 1.25;
-      coreMesh3d.castShadow = true;
-      scene3d.add(coreMesh3d);
-
-      var coreCage3d = new THREE.Mesh(
-        new THREE.IcosahedronGeometry(1.42, 1),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending })
-      );
-      coreCage3d.position.y = 1.25;
-      scene3d.add(coreCage3d);
-
-      var coreGlow = new THREE.Mesh(
-        new THREE.SphereGeometry(1.95, 28, 28),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, blending: THREE.AdditiveBlending })
-      );
-      coreGlow.position.y = 1.25;
-      scene3d.add(coreGlow);
-
-      ring1_3d = new THREE.Mesh(
-        new THREE.TorusGeometry(2.05, 0.032, 16, 80),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.72 })
-      );
-      ring1_3d.position.y = 1.25;
-      scene3d.add(ring1_3d);
-
-      ring2_3d = new THREE.Mesh(
-        new THREE.TorusGeometry(2.55, 0.025, 16, 80),
-        new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.55 })
-      );
-      ring2_3d.position.y = 1.25;
-      scene3d.add(ring2_3d);
-
-      var ring3_3d = new THREE.Mesh(
-        new THREE.TorusGeometry(3.05, 0.018, 16, 96),
-        new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.42 })
-      );
-      ring3_3d.position.y = 1.25;
-      ring3_3d.rotation.x = Math.PI / 2.6;
-      scene3d.add(ring3_3d);
-
-      // Expanding Floor Radar Ripples
-      var radarWaves = [];
-      for (var rw = 0; rw < 3; rw++) {
-        var rWave = new THREE.Mesh(
-          new THREE.RingGeometry(0.95, 1.05, 64),
-          new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending })
-        );
-        rWave.rotation.x = -Math.PI / 2;
-        rWave.position.y = -1.49;
-        rWave.userData = { phase: rw / 3 };
-        scene3d.add(rWave);
-        radarWaves.push(rWave);
-      }
-
-      // 8 Detailed Agent Workstations (Octagon around Central Core)
-      var radius = 7.4;
       AGENTS.forEach(function (ag, idx) {
-        var ang = (idx / AGENTS.length) * Math.PI * 2 - Math.PI / 2;
-        var x = Math.cos(ang) * radius;
-        var z = Math.sin(ang) * radius;
+        var zp = STUDIO_ZONES[ag.id] || { x: (idx - 3.5) * 2.4, z: ((idx % 2) - 0.5) * 5.0, rot: 0 };
         var col = new THREE.Color(ag.color);
 
-        var station = new THREE.Group();
-        station.position.set(x, -1.5, z);
-        station.lookAt(0, -1.5, 0);
+        // Agent's custom self-built Spatial Habitat (unique geometry per role, asymmetric)
+        var habitat = new THREE.Group();
+        habitat.position.set(zp.x, -1.5, zp.z);
+        habitat.rotation.y = zp.rot;
 
-        // Sleek circular holographic pedestal (no boxy desks)
-        var deskMesh = new THREE.Mesh(
-          new THREE.CylinderGeometry(1.05, 1.25, 0.18, 36),
-          new THREE.MeshPhysicalMaterial({
-            color: 0x0b1220,
-            metalness: 0.75,
-            roughness: 0.18,
-            clearcoat: 0.9,
-            clearcoatRoughness: 0.1,
-          })
-        );
-        deskMesh.position.set(0, 0.12, 0);
-        deskMesh.castShadow = true;
-        deskMesh.receiveShadow = true;
-        station.add(deskMesh);
+        var padMat = new THREE.MeshPhysicalMaterial({ color: 0x0b1324, metalness: 0.72, roughness: 0.22, clearcoat: 0.8 });
+        var neonMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.25, roughness: 0.2, metalness: 0.4 });
+        var glassScreenMat = new THREE.MeshBasicMaterial({ map: makeScreenTexture(ag.color), transparent: true, opacity: 0.88, side: THREE.DoubleSide });
 
-        // Stylized Holographic Sphere Node (Glass + Metallic Core + Orbital Rings)
+        // Base sculpted irregular island
+        var island = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.12, 2.0), padMat);
+        island.position.y = 0.06;
+        island.receiveShadow = true;
+        habitat.add(island);
+
+        var accentTrim = new THREE.Mesh(new THREE.BoxGeometry(2.54, 0.03, 0.08), neonMat);
+        accentTrim.position.set(0, 0.12, 0.98);
+        habitat.add(accentTrim);
+
+        // Custom self-built creative architecture per agent
+        var holoScreens = [];
+        var l2Bars = [];
+        var sentinelLed = null;
+
+        if (ag.id === 'analyst') {
+          // Floating curved crystal data wall + floating monitors
+          for (var si = 0; si < 3; si++) {
+            var scr = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.7), glassScreenMat);
+            scr.position.set(-0.9 + si * 0.9, 1.35 + (si % 2) * 0.22, -0.55 + Math.abs(si - 1) * 0.2);
+            scr.rotation.y = (1 - si) * 0.28;
+            habitat.add(scr);
+            holoScreens.push(scr);
+          }
+          var spire = new THREE.Mesh(new THREE.ConeGeometry(0.24, 1.5, 5), neonMat);
+          spire.position.set(-1.05, 0.75, -0.65);
+          habitat.add(spire);
+        } else if (ag.id === 'strategist') {
+          // Architectural tactical polyhedra sculpting live ideas
+          var sculpture = new THREE.Mesh(
+            new THREE.DodecahedronGeometry(0.45, 0),
+            new THREE.MeshPhysicalMaterial({ color: col, metalness: 0.3, roughness: 0.12, transmission: 0.6, clearcoat: 1.0 })
+          );
+          sculpture.position.set(0.6, 1.35, -0.4);
+          habitat.add(sculpture);
+          holoScreens.push(sculpture);
+          var mapScreen = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 0.82), glassScreenMat);
+          mapScreen.position.set(-0.45, 1.2, -0.6);
+          habitat.add(mapScreen);
+        } else if (ag.id === 'hunter') {
+          // Live 3D Orderbook Depth Cityscape
+          for (var bi = 0; bi < 8; bi++) {
+            var isBid = bi < 4;
+            var bar = new THREE.Mesh(
+              new THREE.BoxGeometry(0.2, 0.75, 0.22),
+              new THREE.MeshBasicMaterial({ color: isBid ? 0x10b981 : 0xf43f5e, transparent: true, opacity: 0.88 })
+            );
+            bar.position.set(-0.85 + bi * 0.24, 0.55, -0.45);
+            habitat.add(bar);
+            l2Bars.push(bar);
+          }
+        } else if (ag.id === 'risk') {
+          // Protective shield monolith pylons
+          for (var pi2 = -1; pi2 <= 1; pi2 += 2) {
+            var pylon = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.65, 0.42), padMat);
+            pylon.position.set(pi2 * 0.92, 0.85, -0.55);
+            habitat.add(pylon);
+            var barGlow = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.4, 0.08), neonMat);
+            barGlow.position.set(pi2 * 0.92, 0.85, -0.32);
+            habitat.add(barGlow);
+          }
+        } else if (ag.id === 'sentinel') {
+          // Quantum Server Racks + dynamic latency LED beacon
+          for (var ri = -1; ri <= 1; ri++) {
+            var rack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 1.5, 0.36), padMat);
+            rack.position.set(ri * 0.58, 0.8, -0.58);
+            habitat.add(rack);
+          }
+          var ledMat = new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x10b981, emissiveIntensity: 1.8 });
+          sentinelLed = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 16), ledMat);
+          sentinelLed.position.set(0, 1.85, -0.52);
+          habitat.add(sentinelLed);
+        } else {
+          // Asymmetric holographic light-fins + floating screen for Execution / Lead / Reviewer
+          var finA = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.45, 0.55), neonMat);
+          finA.position.set(-0.85, 0.75, -0.5);
+          finA.rotation.z = -0.14;
+          habitat.add(finA);
+          var boardScr = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.82), glassScreenMat);
+          boardScr.position.set(0.15, 1.25, -0.55);
+          habitat.add(boardScr);
+          holoScreens.push(boardScr);
+        }
+
+        scene3d.add(habitat);
+
+        // Living Free-Roaming Agent Avatar (walks & expresses visibly across the studio)
+        var walker = new THREE.Group();
+        walker.position.set(zp.x, -1.5, zp.z + 0.5);
+
         var avatar = new THREE.Group();
-        avatar.position.set(0, 1.15, 0);
+        avatar.position.y = 0.05;
 
-        var outerGlassSphere = new THREE.Mesh(
-          new THREE.SphereGeometry(0.62, 36, 36),
-          new THREE.MeshPhysicalMaterial({
-            color: col,
-            metalness: 0.15,
-            roughness: 0.08,
-            transmission: 0.72,
-            thickness: 0.8,
-            ior: 1.45,
-            clearcoat: 1.0,
-            clearcoatRoughness: 0.06,
-            transparent: true,
-            opacity: 0.88,
-          })
+        // Sleek floating hover-robe / articulated body
+        var bodyMesh = new THREE.Mesh(
+          new THREE.ConeGeometry(0.34, 0.92, 18),
+          new THREE.MeshPhysicalMaterial({ color: 0x111827, metalness: 0.45, roughness: 0.25, clearcoat: 0.9 })
         );
-        outerGlassSphere.castShadow = true;
-        avatar.add(outerGlassSphere);
+        bodyMesh.position.y = 0.56;
+        bodyMesh.castShadow = true;
+        avatar.add(bodyMesh);
+
+        var coreChest = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), neonMat);
+        coreChest.position.set(0, 0.72, 0.22);
+        avatar.add(coreChest);
 
         var headGroup = new THREE.Group();
+        headGroup.position.set(0, 1.18, 0);
         var head = new THREE.Mesh(
-          new THREE.SphereGeometry(0.28, 28, 28),
-          new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.4, roughness: 0.15, metalness: 0.3 })
+          new THREE.SphereGeometry(0.24, 24, 24),
+          new THREE.MeshPhysicalMaterial({ color: col, emissive: col, emissiveIntensity: 0.9, roughness: 0.15, metalness: 0.35 })
         );
         headGroup.add(head);
 
         var visor = new THREE.Mesh(
-          new THREE.SphereGeometry(0.42, 24, 24),
-          new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending })
+          new THREE.BoxGeometry(0.34, 0.09, 0.16),
+          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
         );
+        visor.position.set(0, 0.02, 0.17);
         headGroup.add(visor);
         avatar.add(headGroup);
 
-        // Dual orbital gyroscopic rings (animated in place of blocky arms)
-        var ringMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.85, metalness: 0.85, roughness: 0.15 });
-        var armL = new THREE.Mesh(new THREE.TorusGeometry(0.78, 0.022, 16, 48), ringMat);
-        armL.rotation.x = Math.PI / 3;
+        // Expressive articulated holographic hands/fins that gesture when trading/analyzing
+        var armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.28, 6, 10), neonMat);
+        armL.position.set(-0.36, 0.74, 0.08);
+        armL.rotation.z = 0.35;
         avatar.add(armL);
-        var armR = new THREE.Mesh(new THREE.TorusGeometry(0.90, 0.018, 16, 48), ringMat);
-        armR.rotation.y = Math.PI / 4;
+
+        var armR = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.28, 6, 10), neonMat);
+        armR.position.set(0.36, 0.74, 0.08);
+        armR.rotation.z = -0.35;
         avatar.add(armR);
 
-        // Clickable invisible hitbox around station
-        var hitSphere = new THREE.Mesh(
-          new THREE.SphereGeometry(1.45, 16, 16),
-          new THREE.MeshBasicMaterial({ visible: false })
-        );
-        hitSphere.position.set(0, 1.15, 0);
-        hitSphere.userData = { agentId: ag.id };
-        station.add(hitSphere);
-        station.add(avatar);
-
-        // Ground bloom status ring
         var padRing = new THREE.Mesh(
-          new THREE.RingGeometry(1.15, 1.32, 36),
-          new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending })
+          new THREE.RingGeometry(0.45, 0.58, 28),
+          new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, transparent: true, opacity: 0.72, blending: THREE.AdditiveBlending })
         );
         padRing.rotation.x = -Math.PI / 2;
-        padRing.position.y = 0.03;
-        station.add(padRing);
+        padRing.position.y = 0.02;
+        walker.add(padRing);
 
-        // Floating Holographic Nameplate Sprite
         var spTex = makeNameplateTexture(ag.name.toUpperCase(), 'EN VEILLE', ag.color);
-        var spMat = new THREE.SpriteMaterial({ map: spTex, transparent: true });
-        var sprite = new THREE.Sprite(spMat);
-        sprite.position.set(0, 2.35, 0);
-        sprite.scale.set(2.8, 0.88, 1);
-        station.add(sprite);
+        var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spTex, transparent: true }));
+        sprite.position.set(0, 1.95, 0);
+        sprite.scale.set(2.55, 0.8, 1);
+        walker.add(sprite);
 
-        // Agent 7 (Sentinel) Dynamic Emissive LED Pillar
-        var sentinelLed = null;
-        if (ag.id === 'sentinel') {
-          var ledMat = new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x10b981, emissiveIntensity: 1.8 });
-          sentinelLed = new THREE.Mesh(new THREE.SphereGeometry(0.24, 18, 18), ledMat);
-          sentinelLed.position.set(0, 1.72, 0.45);
-          station.add(sentinelLed);
-        }
+        var hitSphere = new THREE.Mesh(
+          new THREE.SphereGeometry(1.15, 14, 14),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        hitSphere.position.set(0, 0.95, 0);
+        hitSphere.userData = { agentId: ag.id };
+        walker.add(hitSphere);
+        walker.add(avatar);
+        scene3d.add(walker);
 
-        // Agent 8 (Liquidity Hunter) 3D Orderbook Depth Heat Bars
-        var l2Bars = [];
-        if (ag.id === 'hunter') {
-          for (var bi = 0; bi < 8; bi++) {
-            var isBid = bi < 4;
-            var barMat = new THREE.MeshBasicMaterial({ color: isBid ? 0x10b981 : 0xf43f5e, transparent: true, opacity: 0.88 });
-            var bar = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.8, 0.14), barMat);
-            bar.position.set(-0.7 + bi * 0.2, 1.55, 0.45);
-            station.add(bar);
-            l2Bars.push(bar);
-          }
-        }
-
-        scene3d.add(station);
         agentRigs[ag.id] = {
-          station: station,
+          station: walker,
+          habitat: habitat,
           avatar: avatar,
           headGroup: headGroup,
           armL: armL,
@@ -3069,48 +3322,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           sprite: sprite,
           sentinelLed: sentinelLed,
           l2Bars: l2Bars,
-          worldPos: new THREE.Vector3(x, 0.2, z),
+          holoScreens: holoScreens,
+          homePos: new THREE.Vector3(zp.x, -1.5, zp.z + 0.5),
+          wanderTarget: new THREE.Vector3(zp.x + (Math.random() - 0.5) * 2.5, -1.5, zp.z + (Math.random() - 0.5) * 2.5),
+          pauseTimer: Math.random() * 2.0,
+          worldPos: walker.position,
           lastLabel: 'EN VEILLE'
         };
       });
 
-      // Fiber-optic Bezier neural links connecting each Agent Sphere to the Central Quantum Core
-      var neuralLinks = [];
-      AGENTS.forEach(function (ag) {
-        var rig = agentRigs[ag.id];
-        if (!rig) return;
-        var p0 = new THREE.Vector3(rig.worldPos.x, 0.25, rig.worldPos.z);
-        var p2 = new THREE.Vector3(0, 1.25, 0);
-        var mid = p0.clone().lerp(p2, 0.5);
-        mid.y += 1.65;
-        var curve = new THREE.QuadraticBezierCurve3(p0, mid, p2);
-        var linkGeo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(36));
-        var linkMat = new THREE.LineBasicMaterial({
-          color: new THREE.Color(ag.color),
-          transparent: true,
-          opacity: 0.22,
-          blending: THREE.AdditiveBlending,
-        });
-        var linkLine = new THREE.Line(linkGeo, linkMat);
-        scene3d.add(linkLine);
-        neuralLinks.push({ id: ag.id, line: linkLine, mat: linkMat });
-      });
+      // Spawn the User's Real-Life Black Cat roaming the studio floor
+      blackCat3d = buildBlackCatMesh();
+      blackCat3d.group.position.copy(blackCat3d.pos);
+      scene3d.add(blackCat3d.group);
 
-      // Ambient holographic particle cloud (420 particles)
+      // Ambient holographic data motes across the open studio
       var pGeo = new THREE.BufferGeometry();
-      var pCount = 420;
+      var pCount = 260;
       var pos = new Float32Array(pCount * 3);
       for (var i = 0; i < pCount; i++) {
-        var a = Math.random() * Math.PI * 2;
-        var rad = 1.4 + Math.random() * 10.5;
-        pos[i * 3] = Math.cos(a) * rad;
-        pos[i * 3 + 1] = -1.2 + Math.random() * 6.0;
-        pos[i * 3 + 2] = Math.sin(a) * rad;
+        pos[i * 3] = (Math.random() - 0.5) * 22;
+        pos[i * 3 + 1] = -1.2 + Math.random() * 5.2;
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 16;
       }
       pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       pts3d = new THREE.Points(
         pGeo,
-        new THREE.PointsMaterial({ color: 0x38bdf8, size: 0.085, transparent: true, opacity: 0.62, blending: THREE.AdditiveBlending })
+        new THREE.PointsMaterial({ color: 0x38bdf8, size: 0.07, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending })
       );
       scene3d.add(pts3d);
 
@@ -3120,9 +3358,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var drag = false;
       var prevX = 0;
       var prevY = 0;
-      var yaw = 0.35;
-      var pitch = 0.52;
-      var zoom = 19.5;
+      var yaw = 0.28;
+      var pitch = 0.50;
+      var zoom = 19.8;
 
       renderer3d.domElement.addEventListener('pointerdown', function (e) { drag = true; prevX = e.clientX; prevY = e.clientY; });
       window.addEventListener('pointerup', function () { drag = false; });
@@ -3134,7 +3372,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         prevY = e.clientY;
       });
       renderer3d.domElement.addEventListener('wheel', function (e) {
-        zoom = Math.max(10, Math.min(32, zoom + e.deltaY * 0.015));
+        zoom = Math.max(9.5, Math.min(34, zoom + e.deltaY * 0.015));
       }, { passive: true });
       renderer3d.domElement.addEventListener('click', function (e) {
         if (!raycaster3d || !camera3d) return;
@@ -3143,9 +3381,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         pointer3d.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
         raycaster3d.setFromCamera(pointer3d, camera3d);
         var targets = Object.keys(agentRigs).map(function (k) { return agentRigs[k].hitSphere; });
+        if (blackCat3d && blackCat3d.hitSphere) targets.push(blackCat3d.hitSphere);
         var hits = raycaster3d.intersectObjects(targets);
         if (hits.length) {
-          show3dAgentInspector(hits[0].object.userData.agentId);
+          var ud = hits[0].object.userData || {};
+          if (ud.catMascot) {
+            show3dCatInspector();
+          } else if (ud.agentId) {
+            show3dAgentInspector(ud.agentId);
+          }
         } else {
           document.getElementById('deskNodeInspector').style.display = 'none';
         }
@@ -3155,107 +3399,194 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var lastAmbientPulseClk = 0;
       var pipeOrder = ['analyst', 'strategist', 'risk', 'execution', 'reviewer', 'lead', 'hunter', 'sentinel'];
       var pipeStep = 0;
+      var zoneKeys = Object.keys(STUDIO_ZONES);
+
       function animate3d() {
         requestAnimationFrame(animate3d);
         if (currentTab !== 'desk') return;
-        clk += prefersReducedMotion ? 0.002 : 0.016;
+        var dt = prefersReducedMotion ? 0.002 : 0.016;
+        clk += dt;
 
-        // Parallaxe ressort douce suivant le pointeur/doigt
         mouseParallaxX += (targetParallaxX - mouseParallaxX) * 0.06;
         mouseParallaxY += (targetParallaxY - mouseParallaxY) * 0.06;
 
-        var sway = prefersReducedMotion ? 0 : Math.sin(clk * 0.18) * 0.09;
+        var sway = prefersReducedMotion ? 0 : Math.sin(clk * 0.14) * 0.08;
         var camAngle = yaw + sway + mouseParallaxX * 0.14;
         var effPitch = Math.max(0.18, Math.min(1.22, pitch + mouseParallaxY * 0.08));
         camera3d.position.x = Math.sin(camAngle) * Math.cos(effPitch) * zoom;
         camera3d.position.y = Math.sin(effPitch) * zoom;
         camera3d.position.z = Math.cos(camAngle) * Math.cos(effPitch) * zoom;
-        camera3d.lookAt(mouseParallaxX * 0.35, 0.3 + mouseParallaxY * -0.2, 0);
+        camera3d.lookAt(mouseParallaxX * 0.35, 0.25 + mouseParallaxY * -0.2, 0);
 
         if (!prefersReducedMotion) {
-          coreMesh3d.rotation.y += 0.014;
-          coreMesh3d.rotation.x += 0.007;
-          coreMesh3d.scale.setScalar(1 + Math.sin(clk * 2.4) * 0.06);
-          if (typeof coreCage3d !== 'undefined') {
-            coreCage3d.rotation.y -= 0.009;
-            coreCage3d.rotation.z += 0.005;
-          }
-          ring1_3d.rotation.x += 0.016;
-          ring1_3d.rotation.y += 0.009;
-          ring2_3d.rotation.y -= 0.013;
-          ring2_3d.rotation.z += 0.008;
-          if (typeof ring3_3d !== 'undefined') {
-            ring3_3d.rotation.z -= 0.011;
-            ring3_3d.rotation.y += 0.006;
-          }
-          pts3d.rotation.y += 0.0016;
-          pts3d.position.y = Math.sin(clk * 0.45) * 0.18;
+          pts3d.rotation.y += 0.0009;
+          pts3d.position.y = Math.sin(clk * 0.45) * 0.12;
 
-          // Expanding floor radar ripples
-          if (typeof radarWaves !== 'undefined') {
-            for (var rwi = 0; rwi < radarWaves.length; rwi++) {
-              var rwObj = radarWaves[rwi];
-              var prog = ((clk * 0.22 + rwObj.userData.phase) % 1);
-              var sc = 1.2 + prog * 10.5;
-              rwObj.scale.set(sc, sc, 1);
-              rwObj.material.opacity = (1 - prog) * 0.32;
-            }
-          }
-
-          // Autonomous ambient telemetry packet stream along pipeline
-          if (clk - lastAmbientPulseClk > 1.35 && pulseArcs.length < 10) {
+          if (clk - lastAmbientPulseClk > 1.65 && pulseArcs.length < 8) {
             lastAmbientPulseClk = clk;
             var fromId = pipeOrder[pipeStep % pipeOrder.length];
-            var toId = pipeOrder[(pipeStep + 1) % pipeOrder.length];
+            var toId = pipeOrder[(pipeStep + 1 + (pipeStep % 3)) % pipeOrder.length];
             pipeStep++;
             var agMeta = AGENTS.find(function (a) { return a.id === fromId; });
             spawn3dPulse(fromId, toId, agMeta ? agMeta.color : '#38bdf8');
           }
         }
 
+        // Autonomous Free-Roaming Movement for all 8 Living Agents + Self-Shaping Habitats
         AGENTS.forEach(function (ag, idx) {
           var rig = agentRigs[ag.id];
           if (!rig) return;
           var act = deskState && deskState.agentActivity && deskState.agentActivity[ag.id];
           var busy = act && act.status && act.status !== 'idle' && act.status !== 'watch';
+
           if (!prefersReducedMotion) {
-            rig.avatar.position.y = 1.15 + Math.sin(clk * (busy ? 3.2 : 1.4) + idx * 0.9) * (busy ? 0.14 : 0.06);
+            if (rig.pauseTimer > 0) {
+              rig.pauseTimer -= dt;
+              rig.avatar.position.y = 0.04 + Math.sin(clk * (busy ? 3.5 : 1.7) + idx) * 0.05;
+            } else {
+              var dx = rig.wanderTarget.x - rig.worldPos.x;
+              var dz = rig.wanderTarget.z - rig.worldPos.z;
+              var dist = Math.sqrt(dx * dx + dz * dz);
+              if (dist < 0.25) {
+                rig.pauseTimer = busy ? 1.2 + Math.random() * 1.5 : 2.2 + Math.random() * 3.0;
+                // 60% roam around own habitat, 40% walk across the open studio floor or visit another agent
+                if (Math.random() < 0.6) {
+                  rig.wanderTarget.set(
+                    Math.max(-10, Math.min(10, rig.homePos.x + (Math.random() - 0.5) * 4.2)),
+                    -1.5,
+                    Math.max(-7.5, Math.min(7.5, rig.homePos.z + (Math.random() - 0.5) * 3.8))
+                  );
+                } else {
+                  var friendKey = zoneKeys[(idx + 1 + Math.floor(Math.random() * 5)) % zoneKeys.length];
+                  var friendRig = agentRigs[friendKey];
+                  var fx = friendRig ? friendRig.homePos.x : 0;
+                  var fz = friendRig ? friendRig.homePos.z : 0;
+                  rig.wanderTarget.set(
+                    Math.max(-9.5, Math.min(9.5, fx + (Math.random() - 0.5) * 3.0)),
+                    -1.5,
+                    Math.max(-7.2, Math.min(7.2, fz + (Math.random() - 0.5) * 3.0))
+                  );
+                }
+              } else {
+                var spd = busy ? 0.036 : 0.021;
+                rig.worldPos.x += (dx / dist) * spd;
+                rig.worldPos.z += (dz / dist) * spd;
+                var targetRot = Math.atan2(dx, dz);
+                rig.avatar.rotation.y += Math.sin(targetRot - rig.avatar.rotation.y) * 0.1;
+                rig.avatar.position.y = 0.05 + Math.abs(Math.sin(clk * (busy ? 7.0 : 4.2) + idx)) * 0.08;
+              }
+            }
+
             if (rig.headGroup) {
-              rig.headGroup.rotation.y += busy ? 0.028 : 0.009;
-              var corePulse = 1 + Math.sin(clk * (busy ? 6.0 : 2.1) + idx) * (busy ? 0.16 : 0.06);
-              rig.headGroup.scale.setScalar(corePulse);
+              rig.headGroup.rotation.y = Math.sin(clk * 1.3 + idx) * 0.28;
             }
             if (rig.armL && rig.armR) {
-              rig.armL.rotation.z += busy ? 0.045 : 0.012;
-              rig.armL.rotation.y += busy ? 0.024 : 0.007;
-              rig.armR.rotation.x -= busy ? 0.036 : 0.010;
-              rig.armR.rotation.z -= busy ? 0.022 : 0.006;
+              rig.armL.rotation.x = Math.sin(clk * (busy ? 6.5 : 2.2) + idx) * (busy ? 0.65 : 0.22);
+              rig.armR.rotation.x = -Math.sin(clk * (busy ? 6.5 : 2.2) + idx) * (busy ? 0.65 : 0.22);
+            }
+            if (rig.holoScreens && rig.holoScreens.length) {
+              rig.holoScreens.forEach(function (hs, si) {
+                if (ag.id === 'strategist' && si === 0) {
+                  hs.rotation.y += 0.015;
+                  hs.rotation.x += 0.008;
+                } else {
+                  hs.position.y += Math.sin(clk * 2.0 + si + idx) * 0.0014;
+                }
+              });
             }
           }
-          rig.padRing.scale.setScalar(busy && !prefersReducedMotion ? 1.18 + Math.sin(clk * 6) * 0.08 : busy ? 1.15 : 1.0);
-          rig.padRing.material.opacity = busy ? 0.95 : 0.45;
-          if (typeof neuralLinks !== 'undefined' && neuralLinks[idx]) {
-            neuralLinks[idx].mat.opacity = busy ? (0.48 + Math.sin(clk * 7 + idx) * 0.22) : 0.18;
-          }
+
+          rig.padRing.scale.setScalar(busy && !prefersReducedMotion ? 1.15 + Math.sin(clk * 5) * 0.08 : 1.0);
+          rig.padRing.material.opacity = busy ? 0.92 : 0.42;
 
           if (rig.sentinelLed && deskState && deskState.sentinel) {
             var st = deskState.sentinel;
             var ledColor = (st.latencyHalted || deskState.halted) ? 0xf43f5e : (st.rollingRttMs >= 100 ? 0xfacc15 : 0x10b981);
             rig.sentinelLed.material.color.setHex(ledColor);
             rig.sentinelLed.material.emissive.setHex(ledColor);
-            var blink = (st.latencyHalted || deskState.halted) ? (0.5 + 1.8 * Math.abs(Math.sin(clk * 8))) : 1.6;
-            rig.sentinelLed.material.emissiveIntensity = blink;
+            rig.sentinelLed.material.emissiveIntensity = (st.latencyHalted || deskState.halted) ? (0.5 + 1.8 * Math.abs(Math.sin(clk * 8))) : 1.6;
           }
 
           if (rig.l2Bars && rig.l2Bars.length && deskState && deskState.liquidityHunter && deskState.liquidityHunter.heatBars) {
             var hb = deskState.liquidityHunter.heatBars;
             for (var li = 0; li < rig.l2Bars.length; li++) {
-              var scaleY = Math.max(0.2, Number(hb[li] || 0.3) * 1.45);
+              var scaleY = Math.max(0.2, Number(hb[li] || 0.35) * 1.45);
               rig.l2Bars[li].scale.y = scaleY;
-              rig.l2Bars[li].position.y = 1.4 + scaleY * 0.25;
+              rig.l2Bars[li].position.y = 0.2 + scaleY * 0.36;
             }
           }
         });
+
+        // Autonomous Free-Roaming Articulated Black Cat Animation
+        if (blackCat3d) {
+          if (!prefersReducedMotion) {
+            if (blackCat3d.pauseTimer > 0) {
+              blackCat3d.pauseTimer -= dt;
+              // Resting / observant cat idle: slight ear twitch & graceful tail swish
+              blackCat3d.head.rotation.y = Math.sin(clk * 1.1) * 0.25;
+              blackCat3d.head.rotation.z = Math.sin(clk * 0.7) * 0.06;
+              blackCat3d.earL.rotation.z = 0.26 + (Math.sin(clk * 7.5) > 0.92 ? 0.14 : 0);
+              blackCat3d.legFL.rotation.x *= 0.85;
+              blackCat3d.legFR.rotation.x *= 0.85;
+              blackCat3d.legBL.rotation.x *= 0.85;
+              blackCat3d.legBR.rotation.x *= 0.85;
+              blackCat3d.tailBase.rotation.z = Math.sin(clk * 2.2) * 0.35;
+              blackCat3d.tailMid.rotation.z = Math.sin(clk * 2.2 - 0.6) * 0.4;
+            } else {
+              var cdx = blackCat3d.target.x - blackCat3d.pos.x;
+              var cdz = blackCat3d.target.z - blackCat3d.pos.z;
+              var cdist = Math.sqrt(cdx * cdx + cdz * cdz);
+              if (cdist < 0.3) {
+                blackCat3d.pauseTimer = 1.8 + Math.random() * 2.8;
+                // Choose next spot: either wander freely or visit an agent's side
+                if (Math.random() < 0.55) {
+                  var vk = zoneKeys[Math.floor(Math.random() * zoneKeys.length)];
+                  var vrig = agentRigs[vk];
+                  if (vrig) {
+                    blackCat3d.target.set(vrig.worldPos.x + (Math.random() - 0.5) * 1.4, -1.5, vrig.worldPos.z + (Math.random() - 0.5) * 1.4);
+                    var vag = AGENTS.find(function (a) { return a.id === vk; });
+                    blackCat3d.mood = 'Rend visite à ' + (vag ? vag.name : vk);
+                  }
+                } else {
+                  blackCat3d.target.set((Math.random() - 0.5) * 17, -1.5, (Math.random() - 0.5) * 12);
+                  blackCat3d.mood = 'Explore librement le studio 3D';
+                }
+              } else {
+                var cSpd = 0.038;
+                blackCat3d.pos.x += (cdx / cdist) * cSpd;
+                blackCat3d.pos.z += (cdz / cdist) * cSpd;
+                blackCat3d.group.position.copy(blackCat3d.pos);
+                var wantRot = Math.atan2(cdx, cdz);
+                blackCat3d.group.rotation.y += Math.sin(wantRot - blackCat3d.group.rotation.y) * 0.14;
+                // 4-leg feline trotting gait
+                var g = clk * 10.5;
+                blackCat3d.legFL.rotation.x = Math.sin(g) * 0.55;
+                blackCat3d.legBR.rotation.x = Math.sin(g) * 0.55;
+                blackCat3d.legFR.rotation.x = -Math.sin(g) * 0.55;
+                blackCat3d.legBL.rotation.x = -Math.sin(g) * 0.55;
+                blackCat3d.group.position.y = -1.5 + Math.abs(Math.sin(g)) * 0.035;
+                blackCat3d.tailBase.rotation.z = Math.sin(clk * 4.5) * 0.25;
+                blackCat3d.tailMid.rotation.z = Math.sin(clk * 4.5 - 0.8) * 0.3;
+              }
+            }
+          }
+        }
+
+        // Profit coin bursts animation
+        for (var pbi = profitBursts3d.length - 1; pbi >= 0; pbi--) {
+          var pb = profitBursts3d[pbi];
+          pb.life -= 0.018;
+          if (pb.life <= 0) {
+            scene3d.remove(pb.mesh);
+            profitBursts3d.splice(pbi, 1);
+          } else {
+            pb.mesh.position.y += pb.vy;
+            pb.mesh.position.x += pb.vx;
+            pb.mesh.position.z += pb.vz;
+            pb.mesh.rotation.y += 0.12;
+            pb.mesh.material.opacity = Math.max(0, pb.life);
+          }
+        }
 
         // Animate inter-agent pulses
         for (var pi = pulseArcs.length - 1; pi >= 0; pi--) {
@@ -3282,11 +3613,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (prefs.bg0 && scene3d.fog) scene3d.fog.color.set(prefs.bg0);
         if (prefs.accent) {
           if (spot3d) spot3d.color.set(prefs.accent);
-          if (floorRing3d) floorRing3d.material.color.set(prefs.accent);
-          if (ring1_3d) ring1_3d.material.color.set(prefs.accent);
           if (pts3d) pts3d.material.color.set(prefs.accent);
         }
-        if (prefs.up && ring2_3d) ring2_3d.material.color.set(prefs.up);
       } catch (e) {}
     }
 
@@ -3305,25 +3633,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         }
       });
 
+      // Emit emerald profit coins from Execution/Strategist when winning trades close
+      var wins = (deskState.tickets || []).filter(function (t) { return t.status === 'closed' && (t.pnl || 0) > 0; });
+      if (lastClosedProfitCount >= 0 && wins.length > lastClosedProfitCount) {
+        var execRig = agentRigs['execution'];
+        var stratRig = agentRigs['strategist'];
+        var lastWin = wins[wins.length - 1];
+        if (execRig) spawnProfitBurst(execRig.worldPos, lastWin ? lastWin.pnl : 50);
+        if (stratRig) spawnProfitBurst(stratRig.worldPos, lastWin ? lastWin.pnl : 50);
+      }
+      lastClosedProfitCount = wins.length;
+
       var pulses = deskState.pulses || [];
       if (pulses.length && pulses[0].id !== lastPulseNonce) {
         lastPulseNonce = pulses[0].id;
-        var fromRig = agentRigs[pulses[0].from];
-        var toRig = agentRigs[pulses[0].to];
-        if (fromRig && toRig) {
-          var mid = fromRig.worldPos.clone().add(toRig.worldPos).multiplyScalar(0.5);
-          mid.y = 3.6;
-          var curve = new THREE.QuadraticBezierCurve3(fromRig.worldPos.clone(), mid, toRig.worldPos.clone());
-          var geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(28));
-          var line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.7 }));
-          var dot = new THREE.Mesh(
-            new THREE.SphereGeometry(0.16, 12, 12),
-            new THREE.MeshBasicMaterial({ color: 0x22d3ee })
-          );
-          scene3d.add(line);
-          scene3d.add(dot);
-          pulseArcs.push({ line: line, dot: dot, curve: curve, t: 0 });
-        }
+        spawn3dPulse(pulses[0].from, pulses[0].to, '#38bdf8');
       }
     }
 
@@ -3335,6 +3659,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       camera3d.aspect = w / h;
       camera3d.updateProjectionMatrix();
       renderer3d.setSize(w, h);
+    }
+
+    function show3dCatInspector() {
+      var el = document.getElementById('deskNodeInspector');
+      if (!el) return;
+      el.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+        '<strong style="color:#f59e0b">Chat Noir · Mascotte du Desk</strong>' +
+        '<span class="mono" style="font-size:10px;color:var(--up)">ACTIF</span></div>' +
+        '<div style="color:var(--fg-1)">' + (blackCat3d && blackCat3d.mood ? blackCat3d.mood : 'Se promène sur le desk') + '</div>';
+      el.style.display = 'block';
     }
 
     function show3dAgentInspector(agentId) {
@@ -3384,12 +3719,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       chks.forEach(function (c) { c.checked = select; });
     }
 
+    function updateToggleAllAssetsLabel() {
+      var btn = document.getElementById('btnToggleAllAssets');
+      if (!btn) return;
+      var chks = Array.from(document.querySelectorAll('.asset-chk'));
+      var allChecked = chks.length > 0 && chks.every(function (c) { return c.checked; });
+      btn.textContent = allChecked ? 'Tout Désactiver' : 'Tout Activer';
+      btn.classList.toggle('active', allChecked);
+    }
+
+    function toggleAllAssetsSelection() {
+      var chks = Array.from(document.querySelectorAll('.asset-chk'));
+      if (!chks.length) return;
+      var allChecked = chks.every(function (c) { return c.checked; });
+      chks.forEach(function (c) { c.checked = !allChecked; });
+      updateToggleAllAssetsLabel();
+    }
+
     function selectAllAssets() {
       document.querySelectorAll('.asset-chk').forEach(function (c) { c.checked = true; });
+      updateToggleAllAssetsLabel();
     }
 
     function deselectAllAssets() {
       document.querySelectorAll('.asset-chk').forEach(function (c) { c.checked = false; });
+      updateToggleAllAssetsLabel();
     }
 
     async function applySelectedAssets() {
@@ -3631,8 +3985,55 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       initChartTab();
     }
 
+    function renderPinnedChartPositions() {
+      var host = document.getElementById('chartPinnedPositionsBar');
+      if (!host) return;
+      var open = deskState && Array.isArray(deskState.tickets)
+        ? deskState.tickets.filter(function (t) { return t.status === 'open'; })
+        : [];
+      if (!open.length) {
+        host.innerHTML = '<span style="font-size:10.5px;color:var(--fg-3);font-weight:600">Positions ouvertes épinglées : Aucune position active</span>';
+        return;
+      }
+      var activeSym = getActiveChartSymbol();
+      var html = '<span style="font-size:10px;color:var(--fg-2);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;white-space:nowrap">Épinglées (' + open.length + ') :</span>';
+      open.forEach(function (t) {
+        var fill = t.fillPrice || t.entry;
+        var mark = t.mt5CurrentPrice || tapePriceOf(t.asset, fill);
+        var sign = t.direction === 'long' ? 1 : -1;
+        var livePnl = t.mt5Profit !== undefined ? t.mt5Profit : ((sign * (mark - fill) * (t.notional || 0)) / Math.max(fill, 1e-9));
+        var isSel = activeSym === t.asset;
+        var pnlCls = livePnl >= 0 ? 'up' : 'down';
+        var beBadge = (t.progressiveStopUsd && t.progressiveStopUsd > 0) ? '<span class="mono up" style="font-size:9px">BE +' + Number(t.progressiveStopUsd).toFixed(0) + '</span>' : '';
+        html +=
+          '<button type="button" class="pinned-pos-btn' + (isSel ? ' active' : '') + '" onclick="selectChartSymbol(&quot;' + t.asset + '&quot;)" title="Ouvrir le graphique de ' + t.asset + '">' +
+          '<strong>' + t.asset + '</strong>' +
+          '<span class="' + (t.direction === 'long' ? 'up' : 'down') + '" style="font-size:9.5px">' + t.direction.toUpperCase() + '</span>' +
+          '<span class="mono ' + pnlCls + '">' + fmtSignedUsd(livePnl, 2) + '</span>' +
+          beBadge +
+          '</button>';
+      });
+      host.innerHTML = html;
+    }
+
+    function selectChartSymbol(sym) {
+      var sel = document.getElementById('chartSymbolSelect');
+      if (sel) {
+        var hasOpt = Array.from(sel.options).some(function (o) { return o.value === sym; });
+        if (!hasOpt) {
+          var opt = document.createElement('option');
+          opt.value = sym;
+          opt.textContent = sym;
+          sel.appendChild(opt);
+        }
+        sel.value = sym;
+      }
+      onChartSymbolChange();
+    }
+
     function onChartSymbolChange() {
       loadDrawingsForSymbol(getActiveChartSymbol());
+      renderPinnedChartPositions();
       refreshChartData();
       if (chartEngine === 'tv') initTradingViewWidget();
     }
@@ -4111,7 +4512,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
 
       var now = Date.now();
-      var cutoff = equityRange === '1D' ? now - 86400000 : equityRange === '1W' ? now - 7 * 86400000 : equityRange === '1M' ? now - 30 * 86400000 : 0;
+      var cutoff =
+        equityRange === '1D' ? now - 86400000
+        : equityRange === '1W' ? now - 7 * 86400000
+        : equityRange === '1M' ? now - 30 * 86400000
+        : equityRange === '2M' ? now - 60 * 86400000
+        : 0;
 
       // Agrégation complète : courbe live + historique intégral des trades fermés + PnL latent ouvert
       var baseEq = Number(deskState.startEquity || 10000);
@@ -4806,6 +5212,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var dailyTpVal = Number(document.getElementById('cfgDailyTpVal')?.value || 500);
       var dailyTpMode = document.getElementById('cfgDailyTpMode')?.value || 'amount';
       var dailyTpTarget = dailyTpMode === 'pct' ? (eq * dailyTpVal) / 100 : dailyTpVal;
+      var progSlOn = Boolean(document.getElementById('cfgProgressiveSlEnabled')?.checked);
 
       box.innerHTML =
         '<div style="font-size:12.5px;font-weight:700;color:var(--fg-0);margin-bottom:4px">' +
@@ -4815,9 +5222,36 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           '• <strong>Stop-Loss (Perte max / trade) :</strong> <strong class="down">-' + Number(riskAmountUsd).toFixed(2) + ' ' + cur + '</strong> (coupure automatique garantie si touché)<br>' +
           '• <strong>Take-Profit (Cible de gain) :</strong> <strong class="up">+' + Number(targetProfitUsd).toFixed(2) + ' ' + cur + '</strong> (clôture automatique dès le montant atteint)<br>' +
           '• <strong>Ratio R/R :</strong> 1 : ' + ratio + ' (Levier ' + lev + 'x · Débloqué sans bridage arbitraire)<br>' +
+          '• <strong>Stop-Loss Progressif (Break-Even 50%) :</strong> ' + (progSlOn ? '<strong class="up">ACTIF</strong> (ex: +100 ' + cur + ' latent -> Break-Even verrouillé à +50 ' + cur + ')' : '<span style="color:var(--fg-2)">INACTIF</span>') + '<br>' +
           '• <strong>Coupe-circuit perte max / jour :</strong> <strong class="down">' + Number(dayLossVal).toFixed(2) + ' ' + cur + '</strong>' +
           (dailyTpOn ? ' · Prise de profit journalière : <strong class="up">+' + Number(dailyTpTarget).toFixed(2) + ' ' + cur + '</strong>' : '') +
         '</div>';
+    }
+
+    function syncProgressiveStopUi(on) {
+      var chk = document.getElementById('cfgProgressiveSlEnabled');
+      if (chk) chk.checked = Boolean(on);
+      var btn = document.getElementById('btnToggleProgressiveStop');
+      var lbl = document.getElementById('lblProgStopState');
+      if (btn) btn.classList.toggle('active', Boolean(on));
+      if (lbl) lbl.textContent = on ? 'ACTIF' : 'INACTIF';
+      updateLiveRiskCalculator();
+    }
+
+    async function toggleProgressiveStop() {
+      var chk = document.getElementById('cfgProgressiveSlEnabled');
+      var nextVal = !(chk && chk.checked);
+      syncProgressiveStopUi(nextVal);
+      if (deskState && deskState.settings) {
+        deskState.settings.progressiveStopEnabled = nextVal;
+      }
+      try {
+        await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ settings: { progressiveStopEnabled: nextVal } })
+        });
+      } catch (e) {}
     }
 
     function populateStrategyForm(settings, force) {
@@ -4927,6 +5361,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (dailyTpValEl) dailyTpValEl.value = String(settings.dailyProfitTargetVal || 500);
       var dailyTpModeSel = document.getElementById('cfgDailyTpMode');
       if (dailyTpModeSel) dailyTpModeSel.value = settings.dailyProfitTargetMode || 'amount';
+      syncProgressiveStopUi(Boolean(settings.progressiveStopEnabled));
 
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
@@ -4964,6 +5399,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var dailyTpEnabled = Boolean(document.getElementById('cfgDailyTpEnabled')?.checked);
       var dailyTpVal = Number(document.getElementById('cfgDailyTpVal')?.value || 500);
       var dailyTpMode = document.getElementById('cfgDailyTpMode')?.value || 'amount';
+      var progressiveStopEnabled = Boolean(document.getElementById('cfgProgressiveSlEnabled')?.checked);
 
       var errors = [];
       if (lev < 1 || lev > 500) errors.push('Le levier doit être compris entre 1 et 500.');
@@ -5002,7 +5438,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         tpVal: tpVal,
         dailyProfitTargetEnabled: dailyTpEnabled,
         dailyProfitTargetMode: dailyTpMode,
-        dailyProfitTargetVal: dailyTpVal
+        dailyProfitTargetVal: dailyTpVal,
+        progressiveStopEnabled: progressiveStopEnabled
       };
 
       var prevLev = Number(deskState?.settings?.defaultLeverage || 5);
@@ -5715,6 +6152,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
 
       update3dAgentSpritesAndPulses();
+      renderPinnedChartPositions();
+      updateToggleAllAssetsLabel();
       renderChat();
       renderJournalView();
       renderRlMetrics();

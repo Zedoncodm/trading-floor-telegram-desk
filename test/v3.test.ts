@@ -418,6 +418,12 @@ test("DASHBOARD_HTML compiles inline JS cleanly and renders 8 agents & all 5 V3 
     "TradingFloorBridge.mq5",
     'max="500"',
     'data-theme="obsidian"',
+    "btnToggleAllAssets",
+    "chartPinnedPositionsBar",
+    'data-range="2M"',
+    "btnToggleProgressiveStop",
+    "buildBlackCatMesh",
+    "spawnProfitBurst",
   ]) {
     assert.ok(DASHBOARD_HTML.includes(needle), `Missing UI element: ${needle}`);
   }
@@ -586,6 +592,130 @@ test("Anti-Death-Loop triggers directional & asset cooldowns on any SL or loss c
 
     assert.ok((desk.state.directionalCooldowns?.["GBPUSD:long"]?.until ?? 0) >= now + 14 * 60_000, "GBPUSD:long ban preserved after short loss");
     assert.ok((desk.state.directionalCooldowns?.["GBPUSD:short"]?.until ?? 0) >= now + 14 * 60_000, "GBPUSD:short also locked 15 min");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Progressive 50% Stop Loss locks half of peak profit, ratchets up, closes without Anti-Death-Loop, and respects toggle", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-progstop-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "rl_policy_memory.json"), join(dir, "reviewer_reports.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+    (desk as unknown as { refreshTape: () => Promise<never[]> }).refreshTape = async () => [];
+
+    const now = Date.now();
+    const baseTicket = {
+      id: "TF-PROG-01",
+      asset: "BTCUSDT",
+      direction: "long" as const,
+      playbook: "breakout" as const,
+      engine: "breakout" as const,
+      thesis: "Test progressive SL 50%",
+      entry: 100,
+      fillPrice: 100,
+      invalidation: 98,
+      target: 110,
+      timeStopHours: 24,
+      notional: 10_000,
+      qty: 100,
+      riskUsd: 200,
+      riskPct: 0.02,
+      exposurePct: 1,
+      binding: "risk" as const,
+      producedBy: ["strategist" as const],
+      backtest: {
+        pass: true,
+        playbook: "breakout" as const,
+        rules: "Prog SL test",
+        source: "unit-test",
+        inSample: { label: "IS", bars: 200, trades: 20, winRate: 0.6, expectancyR: 0.4, profitFactor: 1.8, sharpe: 1.5, var95R: -1.0, maxDrawdownR: 2, deflatedSharpe: 0.8, pass: true },
+        outOfSample: { label: "OOS", bars: 100, trades: 10, winRate: 0.6, expectancyR: 0.4, profitFactor: 1.8, sharpe: 1.4, var95R: -1.0, maxDrawdownR: 1.5, deflatedSharpe: 0.8, pass: true },
+      },
+      status: "open" as const,
+      createdAt: now - 30_000,
+      expiresAt: now + 3_600_000,
+      filledAt: now - 25_000,
+      fees: 0,
+      funding: 0,
+    };
+
+    // 1) Toggle ON: +100 -> locks +50; +200 -> ratchets to +100; pullback to +140 keeps open; pullback to +99 closes cleanly
+    desk.state.settings.progressiveStopEnabled = true;
+    desk.state.settings.regime = "standard";
+    desk.state.tickets.push({ ...baseTicket });
+    desk.state.tape = [
+      { symbol: "BTCUSDT", name: "BTC", px: 101.0, prev: 100, change24h: 0.01, funding: null, oiUsd: null, bookImbalance: null, venue1: "Binance", venue2: "Bybit", verified2ndSource: true, sparkline: [100, 101], updatedAt: now },
+    ];
+
+    await desk.monitorStep();
+    assert.equal(desk.state.tickets[0].peakProfitUsd, 100, "Peak profit tracked at +100");
+    assert.equal(desk.state.tickets[0].progressiveStopUsd, 50, "50% floor locked at +50 when profit hits +100");
+    assert.equal(desk.state.tickets[0].breakEvenActive, true, "breakEvenActive flagged");
+    assert.ok(Math.abs(desk.state.tickets[0].invalidation - 100.5) < 1e-6, "Price invalidation moved to 100.50 (+50 floor)");
+
+    // Rise further to +200 -> ratchet up to +100
+    desk.state.tape[0].px = 102.0;
+    await desk.monitorStep();
+    assert.equal(desk.state.tickets[0].peakProfitUsd, 200);
+    assert.equal(desk.state.tickets[0].progressiveStopUsd, 100, "50% floor ratcheted up to +100 when profit hits +200");
+    assert.ok(Math.abs(desk.state.tickets[0].invalidation - 101.0) < 1e-6);
+
+    // Pullback above floor (+140 > +100) keeps trade open and does NOT reduce progressiveStopUsd
+    desk.state.tape[0].px = 101.4;
+    await desk.monitorStep();
+    assert.equal(desk.state.tickets[0].status, "open", "Should remain open while profit is above +100 locked floor");
+    assert.equal(desk.state.tickets[0].progressiveStopUsd, 100, "Locked floor must remain monotone at +100");
+
+    // Pullback to floor (+99 <= +100) closes cleanly in profit as "target" without Anti-Death-Loop ban
+    desk.state.tape[0].px = 100.99;
+    await desk.monitorStep();
+    assert.equal(desk.state.tickets[0].status, "closed", "Must close when unrealized drops below locked 50% progressive floor");
+    assert.equal(desk.state.tickets[0].closeReason, "target", "Progressive profit close must use target reason");
+    assert.ok((desk.state.tickets[0].pnl ?? 0) > 85, "Realized PnL must preserve secured profit");
+    assert.equal(desk.state.directionalCooldowns?.["BTCUSDT:long"], undefined, "Must NOT trigger Anti-Death-Loop ban on secured profit");
+
+    // 2) Toggle OFF: +100 peak then dip to +40 keeps original stop untouched and stays open
+    desk.state.settings.progressiveStopEnabled = false;
+    desk.state.tickets.push({ ...baseTicket, id: "TF-PROG-OFF", asset: "ETHUSDT", invalidation: 98 });
+    desk.state.tape.push({
+      symbol: "ETHUSDT", name: "ETH", px: 101.0, prev: 100, change24h: 0.01, funding: null, oiUsd: null, bookImbalance: null, venue1: "Binance", venue2: "Bybit", verified2ndSource: true, sparkline: [100, 101], updatedAt: now,
+    });
+    await desk.monitorStep();
+    desk.state.tape[1].px = 100.4;
+    await desk.monitorStep();
+    const offTicket = desk.state.tickets.find((t) => t.id === "TF-PROG-OFF");
+    assert.equal(offTicket?.status, "open", "When progressiveStopEnabled is false, pullback to +40 stays open");
+    assert.equal(offTicket?.invalidation, 98, "Original invalidation remains untouched when disabled");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Equity curve retains 60+ days of history without wiping on recordEquityPoint", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-curve60d-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "rl_policy_memory.json"), join(dir, "reviewer_reports.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+
+    const now = Date.now();
+    // Populate 60 days of 30-min points (~2880 points)
+    desk.state.curve = [];
+    for (let i = 60 * 48; i >= 1; i--) {
+      const t = now - i * 30 * 60_000;
+      desk.state.curve.push({ t, eq: 10_000 + (60 * 48 - i) * 0.5, realized: 0, unrealized: 0, drawdownPct: 0 });
+    }
+    (desk as unknown as { recordEquityPoint: (ts?: number) => void }).recordEquityPoint(now);
+
+    assert.ok(desk.state.curve.length >= 2880, `Expected full 60-day curve retention, got ${desk.state.curve.length}`);
+    const oldestAgeDays = (now - desk.state.curve[0].t) / 86_400_000;
+    assert.ok(oldestAgeDays >= 59.5, `Expected oldest retained point >= 59.5 days old, got ${oldestAgeDays.toFixed(1)}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

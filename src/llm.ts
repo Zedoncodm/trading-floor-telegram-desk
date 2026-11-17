@@ -163,6 +163,7 @@ export function createDefaultSettings(symbols: string[], scanIntervalMin: number
     dailyProfitTargetEnabled: false,
     dailyProfitTargetMode: "amount",
     dailyProfitTargetVal: 500,
+    progressiveStopEnabled: false,
     mt5Enabled: false,
     mt5DefaultLots: 0.01,
     mt5Connected: false,
