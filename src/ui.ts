@@ -3,7 +3,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TRADING FLOOR V3 — Terminal Quantitatif 6 Agents IA</title>
+  <title>TRADING FLOOR V3 — Terminal Quantitatif 8 Agents IA</title>
   <link rel="preload" href="/assets/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
@@ -2518,14 +2518,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     ];
 
     var AGENTS = [
-      { id: 'lead', name: 'Chef de Salle', short: 'CL', color: '#38bdf8' },
-      { id: 'analyst', name: 'Analyste', short: 'AN', color: '#a855f7' },
-      { id: 'strategist', name: 'Stratège', short: 'ST', color: '#f59e0b' },
-      { id: 'risk', name: 'Risques', short: 'RM', color: '#f43f5e' },
-      { id: 'execution', name: 'Exécution', short: 'EX', color: '#10b981' },
-      { id: 'reviewer', name: 'Reviewer', short: 'RV', color: '#60a5fa' },
-      { id: 'sentinel', name: 'The Sentinel', short: 'SN', color: '#14b8a6' },
-      { id: 'hunter', name: 'Liquidity Hunter', short: 'LH', color: '#f97316' }
+      { id: 'lead', name: 'Chef de Salle', short: 'CL', color: '#38bdf8', role: '01 · Orchestration 8 Agents' },
+      { id: 'analyst', name: 'Analyste', short: 'AN', color: '#2dd4bf', role: '02 · Multi-Sources & Market Profile' },
+      { id: 'strategist', name: 'Stratège', short: 'ST', color: '#a78bfa', role: '03 · Market Profile, WFO & GRPO' },
+      { id: 'risk', name: 'Risques', short: 'RM', color: '#f472b6', role: '04 · Kelly, LiqGuard & Frais' },
+      { id: 'execution', name: 'Exécution', short: 'EX', color: '#fbbf24', role: '05 · Hard SL/TP & Break-Even MT5' },
+      { id: 'reviewer', name: 'Reviewer', short: 'RV', color: '#34d399', role: '06 · Post-Mortem 15m & Blotter' },
+      { id: 'sentinel', name: 'The Sentinel', short: 'SN', color: '#14b8a6', role: '07 · SRE Latence & HALT Sécurisé' },
+      { id: 'hunter', name: 'Liquidity Hunter', short: 'LH', color: '#f97316', role: '08 · L2 Réel, Spoofing & Aimants' }
     ];
 
     var THEME_PRESETS = {
@@ -4679,9 +4679,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var afHost = document.getElementById('agentFilterHost');
       if (afHost) {
-        afHost.innerHTML = AGENTS.map(function (a) {
+        var allBtn = '<button class="agent-chip' + (!agentFilter ? ' active' : '') + '" onclick="agentFilter=null;renderChat(true)">Tous (8)</button>';
+        afHost.innerHTML = allBtn + AGENTS.map(function (a) {
           var cls = 'agent-chip' + (agentFilter === a.id ? ' active' : '');
-          return '<button class="' + cls + '" onclick="toggleAgentFilter(&quot;' + a.id + '&quot;)">' + a.name + '</button>';
+          return '<button class="' + cls + '" title="' + (a.role || '') + '" onclick="toggleAgentFilter(&quot;' + a.id + '&quot;)">' + a.name + '</button>';
         }).join('');
       }
 
@@ -4713,7 +4714,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       lastChatRenderSig = sig;
       host.innerHTML = shown.map(function (m) {
         var ag = AGENTS.find(function (a) { return a.id === m.speaker; });
+        var promptCfg = deskState && deskState.agentPrompts && deskState.agentPrompts[m.speaker];
         var name = m.speaker === 'human' ? 'Opérateur Humain' : (ag ? ag.name : m.speaker);
+        var roleTag = m.speaker === 'human' ? '' : ((promptCfg && promptCfg.roleTitle) || (ag && ag.role) || '');
         var short = m.speaker === 'human' ? 'HU' : (ag ? ag.short : 'AI');
         var color = m.speaker === 'human' ? '#38bdf8' : (ag ? ag.color : '#94a3b8');
         var ts = new Date(m.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -4723,8 +4726,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           '<div class="' + cls + '">' +
           '<div class="msg-avatar" style="background:' + color + '22;color:' + color + ';border-color:' + color + '55">' + short + '</div>' +
           '<div style="flex:1;min-width:0">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
-          '<strong style="font-size:12px;color:' + color + '">' + name + '</strong>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+            '<strong style="font-size:12px;color:' + color + '">' + name + '</strong>' +
+            (roleTag ? '<span class="mono" style="font-size:9.5px;color:var(--fg-3);border:1px solid rgba(255,255,255,0.08);padding:1px 6px;border-radius:999px">' + escHtml(roleTag) + '</span>' : '') +
+          '</div>' +
           '<span class="mono" style="font-size:10px;color:var(--fg-3)">' + ts + '</span>' +
           '</div>' +
           '<div style="font-size:12px;line-height:1.48;color:var(--fg-1);word-break:break-word">' + safeTxt + '</div>' +
@@ -4758,6 +4764,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     var chartBarsCache = [];
     var chartProfileCache = {};
     var lastChartExecSig = '';
+    var lastChartLoadedKey = '';
+    var chartLiveTimer = null;
     var favTimeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
     try {
       var savedFavTfs = localStorage.getItem('tf_v3_fav_tfs');
@@ -4843,7 +4851,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     function setChartTimeframe(tf) {
       activeTimeframe = tf;
       renderTimeframeStrip();
-      refreshChartData();
+      ensureChartLiveTimer();
+      refreshChartData({ fit: true });
       if (chartEngine === 'tv') initTradingViewWidget();
     }
 
@@ -4957,14 +4966,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
     }
 
+    function ensureChartLiveTimer() {
+      if (chartLiveTimer) {
+        clearInterval(chartLiveTimer);
+        chartLiveTimer = null;
+      }
+      if (currentTab === 'charts' && chartEngine === 'desk') {
+        chartLiveTimer = setInterval(function () {
+          if (currentTab !== 'charts' || chartEngine !== 'desk') {
+            clearInterval(chartLiveTimer);
+            chartLiveTimer = null;
+            return;
+          }
+          refreshChartData({ fit: false });
+        }, activeTimeframe === '1s' || activeTimeframe === '1m' ? 2500 : 5000);
+      }
+    }
+
     function initChartTab() {
       renderTimeframeStrip();
       loadDrawingsForSymbol(getActiveChartSymbol());
       renderMarketProfilePanel(getActiveChartSymbol());
       resizeDrawCanvas();
+      ensureChartLiveTimer();
       if (chartEngine === 'tv') {
         initTradingViewWidget();
-        refreshChartData();
+        refreshChartData({ fit: true });
+      } else if (lwChart && lwCandleSeries) {
+        refreshChartData({ fit: true });
       } else {
         initOrRefreshLwChart();
       }
@@ -5171,12 +5200,37 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
     }
 
-    async function refreshChartData() {
+    function updateLiveDeskChartCandle(sym) {
+      if (!lwCandleSeries || !chartBarsCache || !chartBarsCache.length || !deskState) return;
+      var openPos = Array.isArray(deskState.tickets)
+        ? deskState.tickets.find(function (t) { return t.status === 'open' && t.asset === sym && t.mt5CurrentPrice > 0; })
+        : null;
+      var livePx = (openPos && openPos.mt5CurrentPrice) || tapePriceOf(sym, 0);
+      if (!livePx || livePx <= 0) return;
+      var lastBar = chartBarsCache[chartBarsCache.length - 1];
+      if (!lastBar) return;
+      var updated = {
+        time: lastBar.time,
+        open: lastBar.open,
+        high: Math.max(lastBar.high, livePx),
+        low: Math.min(lastBar.low, livePx),
+        close: livePx
+      };
+      chartBarsCache[chartBarsCache.length - 1] = updated;
+      try { lwCandleSeries.update(updated); } catch (e) {}
+    }
+
+    async function refreshChartData(opts) {
       var sym = getActiveChartSymbol();
+      var tf = activeTimeframe;
+      var loadKey = sym + '|' + tf;
+      var shouldFit = Boolean(opts && opts.fit) || (loadKey !== lastChartLoadedKey);
       renderMarketProfilePanel(sym);
-      var res = await fetch('/api/candles?symbol=' + encodeURIComponent(sym) + '&interval=' + encodeURIComponent(activeTimeframe) + '&limit=240');
+      var res = await fetch('/api/candles?symbol=' + encodeURIComponent(sym) + '&interval=' + encodeURIComponent(tf) + '&limit=240&_ts=' + Date.now(), { cache: 'no-store' });
       var data = await res.json();
       if (!data.ok || !Array.isArray(data.candles)) return;
+      // Ignore stale responses if the user already switched symbol/TF while request was in flight
+      if (sym !== getActiveChartSymbol() || tf !== activeTimeframe) return;
       if (data.marketProfile) {
         chartProfileCache[sym] = data.marketProfile;
       }
@@ -5187,11 +5241,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         ovEl.innerHTML =
           '<span>VWAP : ' + (data.vwap ? fmtPx(data.vwap.vwap) : '--') + '</span>' +
           '<span>FVG : ' + (data.fvg ? fmtPx(data.fvg.midPrice) : '--') + '</span>' +
-          '<span>TF : ' + activeTimeframe + ' (' + data.candles.length + ')</span>';
+          '<span>TF : ' + tf + ' (' + data.candles.length + ')</span>';
       }
 
       if (!lwCandleSeries || !lwChart) return;
       lastChartExecSig = '';
+      try {
+        lwChart.applyOptions({ timeScale: { timeVisible: true, secondsVisible: tf === '1s' } });
+      } catch (e) {}
 
       var tTheme = getCurrentThemePrefs();
       var seen = {};
@@ -5215,7 +5272,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (cBars.length) {
         lwCandleSeries.setData(cBars);
         lwVolSeries.setData(vBars);
-        lwChart.timeScale().fitContent();
+        if (shouldFit) {
+          lwChart.timeScale().fitContent();
+        }
+        lastChartLoadedKey = loadKey;
       }
 
       syncChartExecutionOverlays();
@@ -7361,6 +7421,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       update3dAgentSpritesAndPulses();
       renderPinnedChartPositions();
       if (currentTab === 'charts') {
+        if (chartEngine === 'desk') {
+          updateLiveDeskChartCandle(getActiveChartSymbol());
+        }
         syncChartExecutionOverlays();
       }
       updateToggleAllAssetsLabel();

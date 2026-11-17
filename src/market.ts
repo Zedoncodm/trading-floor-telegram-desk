@@ -499,9 +499,41 @@ const YAHOO_MAP: Record<string, string> = {
   AMZN: "AMZN",
 };
 
-async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<MarketSnapshot> {
+export function aggregateKlines(bars: Kline[], factor: number): Kline[] {
+  const n = Math.max(1, Math.round(factor));
+  if (n <= 1 || bars.length === 0) return bars;
+  const out: Kline[] = [];
+  for (let i = 0; i < bars.length; i += n) {
+    const chunk = bars.slice(i, i + n);
+    if (!chunk.length) continue;
+    let hi = -Infinity;
+    let lo = Infinity;
+    let vol = 0;
+    for (const b of chunk) {
+      if (b.high > hi) hi = b.high;
+      if (b.low < lo) lo = b.low;
+      vol += b.volume || 0;
+    }
+    out.push({
+      openTime: chunk[0].openTime,
+      open: chunk[0].open,
+      high: hi,
+      low: lo,
+      close: chunk[chunk.length - 1].close,
+      volume: vol,
+      closeTime: chunk[chunk.length - 1].closeTime,
+    });
+  }
+  return out;
+}
+
+export async function fetchYahooKlines(
+  symbol: string,
+  yahooInterval = "1h",
+  yahooRange = "1mo",
+): Promise<Kline[]> {
   const ySym = YAHOO_MAP[symbol] ?? symbol;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=1h&range=1mo`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=${encodeURIComponent(yahooInterval)}&range=${encodeURIComponent(yahooRange)}`;
   const data = await getJson<{
     chart?: {
       result?: Array<{
@@ -523,7 +555,17 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
   const res = data.chart?.result?.[0];
   const ts = res?.timestamp ?? [];
   const q = res?.indicators?.quote?.[0];
-  const bars4h: Kline[] = [];
+  const stepMs =
+    yahooInterval === "1m" ? 60_000
+    : yahooInterval === "2m" ? 120_000
+    : yahooInterval === "5m" ? 300_000
+    : yahooInterval === "15m" ? 900_000
+    : yahooInterval === "30m" ? 1800_000
+    : yahooInterval === "1d" ? 86_400_000
+    : yahooInterval === "1wk" ? 7 * 86_400_000
+    : yahooInterval === "1mo" ? 30 * 86_400_000
+    : 3600_000;
+  const bars: Kline[] = [];
   if (q && ts.length) {
     for (let i = 0; i < ts.length; i++) {
       const o = q.open?.[i];
@@ -531,20 +573,25 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
       const l = q.low?.[i];
       const c = q.close?.[i];
       if (o == null || h == null || l == null || c == null) continue;
-      bars4h.push({
+      bars.push({
         openTime: ts[i] * 1000,
         open: o,
         high: h,
         low: l,
         close: c,
         volume: q.volume?.[i] ?? 0,
-        closeTime: ts[i] * 1000 + 3600_000 - 1,
+        closeTime: ts[i] * 1000 + stepMs - 1,
       });
     }
   }
+  return bars;
+}
 
+async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<MarketSnapshot> {
+  const ySym = YAHOO_MAP[symbol] ?? symbol;
+  const bars4h = await fetchYahooKlines(symbol, "1h", "1mo");
   const lastClose = bars4h[bars4h.length - 1]?.close ?? 0;
-  const price = res?.meta?.regularMarketPrice ?? lastClose;
+  const price = lastClose;
   const prev1h = bars4h[bars4h.length - 2]?.close ?? price;
   const ret1h = prev1h > 0 ? (price - prev1h) / prev1h : 0;
   const bar24h = bars4h[Math.max(0, bars4h.length - 25)]?.close ?? price;

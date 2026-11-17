@@ -6,7 +6,7 @@ import test from "node:test";
 import type { Config } from "../src/config.ts";
 import { DeskLeadAgent, PacingCalculator } from "../src/agents/deskLead.ts";
 import { createDefaultSettings, DEFAULT_AGENT_PROMPTS, PROMPT_SCHEMA_VERSION } from "../src/llm.ts";
-import { verifySecondSource } from "../src/market.ts";
+import { aggregateKlines, verifySecondSource } from "../src/market.ts";
 import { computeLeveragedSizing, SocialSentimentEngine, TradingFloorDesk } from "../src/desk.ts";
 import { GrpoEngine } from "../src/rl/grpo.ts";
 import { DeskStore } from "../src/store.ts";
@@ -1051,7 +1051,7 @@ test("ActiveTradeManager emits async Hard Break-Even OrderModify at 50% TP (+ fe
   }
 });
 
-test("Full System Audit Overhaul: 8 Agent Prompts v2, Store Migration, No Double-Count Pacing, GRPO Normalization & Live Prompts UI", () => {
+test("Full System Audit Overhaul: 8 Agent Prompts v2, Store Migration, No Double-Count Pacing, GRPO Normalization & Live Prompts UI", async () => {
   // 1. Default settings slVal must be sane ATR multiple (1.35, never 100)
   const def = createDefaultSettings(["BTCUSDT"], 15);
   assert.equal(def.slMode, "atr");
@@ -1122,9 +1122,54 @@ test("Full System Audit Overhaul: 8 Agent Prompts v2, Store Migration, No Double
     assert.ok(DASHBOARD_HTML.includes("agentPromptSelect"));
     assert.ok(DASHBOARD_HTML.includes("agentPromptTextarea"));
     assert.ok(DASHBOARD_HTML.includes("saveSelectedAgentPrompt"));
+    assert.ok(DASHBOARD_HTML.includes("updateLiveDeskChartCandle"));
+    assert.ok(DASHBOARD_HTML.includes("8 Agents IA"));
+    assert.ok(!DASHBOARD_HTML.includes("6 Agents IA"));
     const scriptMatch = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
     assert.ok(scriptMatch && scriptMatch[1]);
     assert.doesNotThrow(() => new Function(scriptMatch[1]));
+
+    // 8. aggregateKlines produces distinct aggregated OHLCV bars for custom timeframes (e.g. 1m -> 5m / 4h)
+    const nowTs = Date.now();
+    const bars1m = Array.from({ length: 10 }, (_, i) => ({
+      openTime: nowTs + i * 60_000,
+      open: 100 + i,
+      high: 102 + i,
+      low: 99 + i,
+      close: 101 + i,
+      volume: 10,
+      closeTime: nowTs + (i + 1) * 60_000 - 1,
+    }));
+    const bars5m = aggregateKlines(bars1m, 5);
+    assert.equal(bars5m.length, 2);
+    assert.equal(bars5m[0].open, 100);
+    assert.equal(bars5m[0].close, 105);
+    assert.equal(bars5m[0].high, 106);
+    assert.equal(bars5m[0].low, 99);
+    assert.equal(bars5m[0].volume, 50);
+
+    // 9. Chat v2 roster update replaces stale 6-agent messages and announces all 8 agents
+    const cfg = makeTestCfg(dir);
+    const desk = new TradingFloorDesk(cfg, store, new TelegramFloorRoom(cfg), grpo);
+    desk.state.messages.push({
+      id: "m999",
+      at: nowTs,
+      speaker: "lead",
+      tone: "plain",
+      text: "Salle initialisée. 6 agents autonomes en français.",
+    });
+    await (desk as unknown as { announceV2AgentsRoster: () => Promise<void> }).announceV2AgentsRoster();
+    assert.equal(
+      desk.state.messages.some((m) => m.text.includes("6 agents autonomes")),
+      false,
+      "Stale 6-agent message must be cleaned on upgrade",
+    );
+    for (const spk of ["lead", "analyst", "strategist", "risk", "execution", "reviewer", "sentinel", "hunter"]) {
+      assert.ok(
+        desk.state.messages.some((m) => m.speaker === spk),
+        `Expected v2 chat message from agent ${spk}`,
+      );
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

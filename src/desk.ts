@@ -30,7 +30,17 @@ import {
   generateAgentVoice,
   setRuntimeLlmApiKey,
 } from "./llm.ts";
-import { fetchBinanceKlines, fetchMarketSnapshot, fetchMicrostructureTick, symbolName, verifySecondSource } from "./market.ts";
+import {
+  aggregateKlines,
+  computeSessionVwap,
+  detectLatestFvg,
+  fetchBinanceKlines,
+  fetchMarketSnapshot,
+  fetchMicrostructureTick,
+  fetchYahooKlines,
+  symbolName,
+  verifySecondSource,
+} from "./market.ts";
 import { DeskStore, emitPulse, setAgentActivity } from "./store.ts";
 import { TelegramFloorRoom } from "./telegram.ts";
 import { dayKey, isOvernight, isoWeek, localParts, ticketDay } from "./time.ts";
@@ -663,6 +673,8 @@ export class TradingFloorDesk {
   private latestBarsBySymbol = new Map<string, MarketSnapshot["bars4h"]>();
   private lastKnownEquity = 0;
   private scanCursor = 0;
+  private lastConcurrencySayAt = 0;
+  private lastLatencySayAt = 0;
 
   constructor(cfg: Config, store: DeskStore, tg: TelegramFloorRoom, grpo?: GrpoEngine) {
     this.cfg = cfg;
@@ -1434,55 +1446,152 @@ export class TradingFloorDesk {
   }> {
     const now = Date.now();
     const sym = (symbol || this.state.settings.symbols[0] || "BTCUSDT").toUpperCase();
-    const snap = await fetchMarketSnapshot(sym, now, this.state.settings.fvgMinSizeAtr ?? 0.5);
     const normTf = String(interval || "15m").trim();
-    const tfMap: Record<string, string> = {
-      "1s": "1s",
-      "1m": "1m",
-      "2m": "1m",
-      "3m": "3m",
-      "5m": "5m",
-      "10m": "5m",
-      "15m": "15m",
-      "30m": "30m",
-      "1h": "1h",
-      "2h": "2h",
-      "4h": "4h",
-      "1d": "1d",
-      "1j": "1d",
-      "1w": "1w",
-      "1sem": "1w",
-      "1M": "1M",
-      "1mois": "1M",
-    };
-    const binanceTf = tfMap[normTf] ?? "15m";
-    let candles = snap.bars4h ?? [];
+    const targetCount = Math.min(500, Math.max(30, limit));
+    const tfParsed = /^(\d+)(s|m|h|d|j|w|M|sem|mois)$/.exec(normTf);
+    const qty = tfParsed ? Math.max(1, Number(tfParsed[1])) : 15;
+    const rawUnit = tfParsed ? tfParsed[2] : "m";
+    const unit = rawUnit === "j" ? "d" : rawUnit === "sem" ? "w" : rawUnit === "mois" ? "M" : rawUnit;
+
+    let candles: MarketSnapshot["bars4h"] = [];
     if (sym.endsWith("USDT")) {
-      try {
-        const fetched = await fetchBinanceKlines(sym, binanceTf, Math.min(500, Math.max(60, limit)));
-        if (fetched.length >= 20) {
-          candles = fetched;
+      // Crypto Binance : intervalles natifs ou agrégation exacte pour tout TF custom (2m, 7m, 10m...)
+      const nativeBinanceMap: Record<string, string> = {
+        "1s": "1s",
+        "1m": "1m",
+        "3m": "3m",
+        "5m": "5m",
+        "15m": "15m",
+        "30m": "30m",
+        "1h": "1h",
+        "2h": "2h",
+        "4h": "4h",
+        "6h": "6h",
+        "8h": "8h",
+        "12h": "12h",
+        "1d": "1d",
+        "1w": "1w",
+        "1M": "1M",
+      };
+      const canonical = `${qty}${unit}`;
+      if (nativeBinanceMap[canonical]) {
+        try {
+          candles = await fetchBinanceKlines(sym, nativeBinanceMap[canonical], targetCount);
+        } catch {
+          candles = [];
         }
+      } else {
+        let baseTf = "1m";
+        let factor = qty;
+        if (unit === "s") {
+          baseTf = "1s";
+          factor = Math.min(60, qty);
+        } else if (unit === "m") {
+          if (qty % 15 === 0) {
+            baseTf = "15m";
+            factor = qty / 15;
+          } else if (qty % 5 === 0) {
+            baseTf = "5m";
+            factor = qty / 5;
+          } else {
+            baseTf = "1m";
+            factor = qty;
+          }
+        } else if (unit === "h") {
+          baseTf = "1h";
+          factor = qty;
+        } else if (unit === "d") {
+          baseTf = "1d";
+          factor = qty;
+        }
+        try {
+          const baseBars = await fetchBinanceKlines(sym, baseTf, Math.min(1000, targetCount * Math.max(1, factor)));
+          candles = aggregateKlines(baseBars, factor);
+        } catch {
+          candles = [];
+        }
+      }
+    } else {
+      // Forex, Métaux, Indices, Actions : Yahoo Finance multi-timeframes + agrégation (2h, 4h, 3m, 10m...)
+      let yInt = "15m";
+      let yRange = "1mo";
+      let factor = 1;
+      if (unit === "s" || (unit === "m" && qty < 5)) {
+        yInt = qty === 2 ? "2m" : "1m";
+        yRange = "5d";
+        factor = unit === "m" && qty !== 1 && qty !== 2 ? qty : 1;
+      } else if (unit === "m" && qty < 15) {
+        yInt = "5m";
+        yRange = "1mo";
+        factor = qty === 5 ? 1 : Math.max(1, Math.round(qty / 5));
+      } else if (unit === "m" && qty < 30) {
+        yInt = "15m";
+        yRange = "1mo";
+        factor = Math.max(1, Math.round(qty / 15));
+      } else if (unit === "m" && qty < 60) {
+        yInt = "30m";
+        yRange = "1mo";
+        factor = Math.max(1, Math.round(qty / 30));
+      } else if (unit === "m") {
+        yInt = "1h";
+        yRange = "3mo";
+        factor = Math.max(1, Math.round(qty / 60));
+      } else if (unit === "h") {
+        yInt = "1h";
+        yRange = qty >= 4 ? "6mo" : "3mo";
+        factor = qty;
+      } else if (unit === "d") {
+        yInt = "1d";
+        yRange = "2y";
+        factor = qty;
+      } else if (unit === "w") {
+        yInt = "1wk";
+        yRange = "5y";
+        factor = qty;
+      } else if (unit === "M") {
+        yInt = "1mo";
+        yRange = "10y";
+        factor = qty;
+      }
+      try {
+        const rawYahoo = await fetchYahooKlines(sym, yInt, yRange);
+        candles = aggregateKlines(rawYahoo, factor);
       } catch {
-        // Fallback sur bars4h du snapshot
+        candles = [];
       }
     }
-    const slicedCandles = candles.slice(-Math.min(500, Math.max(30, limit)));
-    const curPx =
-      markPriceOf(this.state, sym, 0) ||
-      snap.primary?.price ||
-      slicedCandles[slicedCandles.length - 1]?.close ||
-      1;
+
+    if (!candles.length) {
+      const snapFallback = await fetchMarketSnapshot(sym, now, this.state.settings.fvgMinSizeAtr ?? 0.5);
+      candles = snapFallback.bars4h ?? [];
+    }
+
+    const slicedCandles = candles.slice(-targetCount);
+    const livePx = markPriceOf(this.state, sym, 0);
+    if (slicedCandles.length > 0 && livePx > 0) {
+      const lastBar = slicedCandles[slicedCandles.length - 1];
+      slicedCandles[slicedCandles.length - 1] = {
+        ...lastBar,
+        high: Math.max(lastBar.high, livePx),
+        low: Math.min(lastBar.low, livePx),
+        close: livePx,
+      };
+    }
+
+    const curPx = livePx || slicedCandles[slicedCandles.length - 1]?.close || 1;
     const marketProfile = MarketProfileAnalyzer.computeSessionProfile(sym, slicedCandles, curPx, now);
     if (!this.state.marketProfiles) this.state.marketProfiles = {};
     this.state.marketProfiles[sym] = marketProfile;
+    const vwap = computeSessionVwap(slicedCandles, now) ?? null;
+    const fvg = detectLatestFvg(slicedCandles, this.state.settings.fvgMinSizeAtr ?? 0.5);
+
     return {
       ok: true,
       symbol: sym,
       interval: normTf,
       candles: slicedCandles,
-      vwap: snap.vwapContext ?? null,
-      fvg: snap.fvgZone ?? null,
+      vwap,
+      fvg,
       marketProfile,
       sentimentScore: this.sentiment.getScore(sym),
     };
@@ -1710,13 +1819,65 @@ export class TradingFloorDesk {
 
     if (this.state.messages.length === 0) {
       await this.seedCleanDeskWithoutFakeTrades();
+    } else if (!this.state.messages.some((m) => m.text.includes("[REFONTE_AGENTS_V2]"))) {
+      await this.announceV2AgentsRoster();
     }
     this.broadcast();
   }
 
+  private async announceV2AgentsRoster(): Promise<void> {
+    // Nettoie l'ancien spam répétitif avant de publier les nouvelles consignes des 8 agents
+    this.state.messages = this.state.messages.filter(
+      (m) =>
+        !m.text.includes("6 agents autonomes") &&
+        !m.text.includes("plafond dynamique de") &&
+        !m.text.includes("EXECUTION_HALTED_LATENCY"),
+    );
+
+    await this.say(
+      "lead",
+      `[REFONTE_AGENTS_V2] Chef de Salle : Orchestration des 8 agents activée (Market Profile + Auto-Réflexion 15m + ActiveTradeManager + Risk). Pacing recalibré sans double-comptage.`,
+      "report",
+    );
+    await this.say(
+      "analyst",
+      "Analyste Recherche v2 : Croisement multi-sources honnête (Binance/Bybit pour Crypto ; Yahoo/MT5 pour Forex, Or & Indices), contexte Market Profile (POC/VAH/VAL) et Volatility Shield.",
+      "report",
+    );
+    await this.say(
+      "strategist",
+      "Stratège Quant v2 : Application stricte du filtre Market Profile (zéro LONG > VAH / zéro SHORT < VAL en range), backtest WFO purgé 90j + OOS 30j, poids GRPO et directive 15m du Reviewer.",
+      "report",
+    );
+    await this.say(
+      "risk",
+      `Directeur des Risques v2 : Sizing Kelly calibré sur la distance réelle du Stop-Loss final (${fmtPct(this.state.settings.maxRiskPct, 1)} / ${this.state.settings.slMode?.toUpperCase() ?? "ATR"}), Liquidation Guard >= 15% et Garde-Fou Frais (<= 30% du risque).`,
+      "report",
+    );
+    await this.say(
+      "execution",
+      "Trader d'Exécution v2 : Envoi systématique Hard SL/TP sur MT5/Paper + ActiveTradeManager (OrderModify asynchrone Break-Even + frais dès 50% du TP atteint).",
+      "report",
+    );
+    await this.say(
+      "reviewer",
+      "Auditeur & Journal v2 : Post-mortem persistant dans trade_post_mortem.json + boucle d'Auto-Réflexion toutes les 15 minutes pour adapter la directive du Stratège.",
+      "report",
+    );
+    await this.say(
+      "sentinel",
+      "The Sentinel SRE v2 : Surveillance RTT API, Rate-Limit Token Bucket et intégrité capital avec mise en HALT sécurisé (zéro crash processus).",
+      "report",
+    );
+    await this.say(
+      "hunter",
+      "Liquidity Hunter v2 : Détection Spoofing (<500ms) sur vrais carnets L2 uniquement, suivi Squeezes Funding/OI et cibles sur zones aimants de liquidité.",
+      "report",
+    );
+  }
+
   /**
    * Démarre le desk SANS AUCUN FAUX TRADE PASSÉ.
-   * Tous les prix, entrées, stops et sorties correspondent à 100% aux vrais prix live de Binance Futures (BINANCE:<SYM>.P sur TradingView).
    */
   private async seedCleanDeskWithoutFakeTrades(): Promise<void> {
     const now = Date.now();
@@ -1729,34 +1890,15 @@ export class TradingFloorDesk {
     ];
 
     const tapeSummary = this.state.tape
+      .slice(0, 6)
       .map((r) => `${r.symbol}: ${fmtPx(r.px)}`)
       .join(" · ");
 
     await this.say(
       "lead",
-      `Salle « Trading Floor » initialisée. 6 agents autonomes en français. Aucun trade fictif n'est pré-chargé : toutes les cotations sont synchronisées en direct sur les vrais prix perpétuels Binance (${tapeSummary}) et vérifiées sur Bybit.`,
+      `Salle « Trading Floor » initialisée (8 agents IA autonomes · ${tapeSummary}).`,
     );
-    await this.say(
-      "analyst",
-      "Flux temps réel branché sur BINANCE (lastPrice exact identique à TradingView) + BYBIT en 2e source obligatoire. Je ne propose jamais de trade : données et contexte uniquement.",
-    );
-    await this.say(
-      "strategist",
-      "Prêt à convertir les anomalies confirmées en niveaux exacts (Entrée au prix live, Stop d'invalidation ATR, Cible) après validation du Backtest 90 jours (sur 540 vraies bougies 4h Binance) et du contrôle Hors-Échantillon 30 jours (180 vraies bougies 4h).",
-    );
-    await this.say(
-      "risk",
-      `Plafonds stricts verrouillés : max ${fmtPct(this.state.settings.maxRiskPct, 1)} de risque par trade, max ${fmtPct(this.state.settings.maxExposurePct, 1)} d'exposition totale, et coupure générale (FLAT) à -${fmtPct(this.state.settings.maxDayLossPct, 1)} sur la journée.`,
-    );
-    await this.say(
-      "execution",
-      "Mode PAPER strictement actif. J'exécute au vrai prix live Binance uniquement les tickets que vous approuvez par leur ID exact, et je refuse toute clé API ayant la permission de retrait.",
-    );
-    await this.say(
-      "reviewer",
-      "Journal de Trading Notion vierge et prêt. Chaque ticket réel que vous approuverez et chaque clôture seront inscrits avec les vrais prix TradingView/Binance, sans suppression possible des pertes.",
-    );
-
+    await this.announceV2AgentsRoster();
     await this.runDeskScan("initial");
   }
 
@@ -1854,11 +1996,14 @@ export class TradingFloorDesk {
     if (!prevHaltedLat && this.sentinel.latencyHalted) {
       setAgentActivity(this.state, "sentinel", "veto", `EXECUTION_HALTED_LATENCY (${this.sentinel.rollingRttMs}ms)`, now);
       emitPulse(this.state, "sentinel", "execution", "veto", "EXECUTION_HALTED_LATENCY", undefined, now);
-      await this.say(
-        "sentinel",
-        `SYS_OPS [EXECUTION_HALTED_LATENCY] : Latence API critique ${this.sentinel.rollingRttMs}ms (>150ms sur 3 ticks). Exécution Market bloquée.`,
-        "veto",
-      );
+      if (now - this.lastLatencySayAt >= 300_000) {
+        this.lastLatencySayAt = now;
+        await this.say(
+          "sentinel",
+          `SYS_OPS [EXECUTION_HALTED_LATENCY] : Latence API ${this.sentinel.rollingRttMs}ms (>150ms sur 3 ticks). Ordres Market HFT suspendus (Mode LIMIT actif).`,
+          "veto",
+        );
+      }
     } else {
       setAgentActivity(
         this.state,
@@ -2349,10 +2494,13 @@ export class TradingFloorDesk {
       );
 
       if (openCount >= maxConcurrent) {
-        await this.say(
-          "lead",
-          `${openCount} positions PAPER ouvertes (plafond dynamique de ${maxConcurrent} atteint). Surveillance des stops et cibles en cours.`,
-        );
+        if (now - this.lastConcurrencySayAt >= 600_000) {
+          this.lastConcurrencySayAt = now;
+          await this.say(
+            "lead",
+            `${openCount} position(s) ouverte(s) (plafond dynamique de ${maxConcurrent} atteint). Surveillance Hard SL/TP et ActiveTradeManager en cours.`,
+          );
+        }
         return;
       }
 

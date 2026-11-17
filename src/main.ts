@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   }, 1000);
 
   console.log("==================================================================");
-  console.log("  TRADING FLOOR · 6-BOT PAPER DESK + 3D LOCAL COMMAND");
+  console.log("  TRADING FLOOR · 8-AGENT QUANT DESK + MT5 LOCAL COMMAND");
   console.log("==================================================================");
   console.log(`  Mode d'exécution : PAPER ONLY (aucun retrait autorisé)`);
   console.log(`  Dashboard 3D Web : ${web.url}`);
