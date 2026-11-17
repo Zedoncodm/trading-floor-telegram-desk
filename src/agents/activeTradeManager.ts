@@ -1,11 +1,20 @@
 import type { Mt5CloudBridge } from "../mt5.ts";
-import type { Ticket } from "../types.ts";
+import type { MarketProfileSummary, Ticket } from "../types.ts";
 
 export type BreakEvenModifyDecision = {
   shouldModify: boolean;
   progressRatio: number;
   newStopLoss: number;
   takeProfit: number;
+  reason?: string;
+};
+
+export type AgentRealtimeExitDecision = {
+  action: "HOLD" | "LOCK_STOP" | "CLOSE_PROFIT" | "CLOSE_STOP";
+  closeReason?: "target" | "invalidation" | "flow_exhaustion" | "adverse_selection";
+  newStopLoss?: number;
+  peakProfitUsd: number;
+  securedFloorUsd?: number;
   reason?: string;
 };
 
@@ -115,5 +124,137 @@ export class ActiveTradeManager {
           });
         }
       });
+  }
+
+  /**
+   * Cerveau de Sortie Temps Réel Multi-Agents (Focus HFT) :
+   * Les agents décident seconde par seconde quand déplacer le SL au Break-Even ou
+   * clôturer au marché afin de sécuriser un maximum de bénéfices :
+   * 1) Break-Even ultra-rapide couvrant les frais dès les premiers ticks verts
+   * 2) Ratchet dynamique multi-paliers (55% -> 72% -> 85% du pic de profit)
+   * 3) Récolte immédiate sur retournement micro-tick ou rejet Market Profile (VAH/VAL)
+   */
+  static evaluateAgentRealtimeProfitExit(
+    ticket: Ticket,
+    currentPrice: number,
+    netPnlUsd: number,
+    ctx?: {
+      tickDeltaPct?: number;
+      marketProfile?: MarketProfileSummary;
+    },
+  ): AgentRealtimeExitDecision {
+    const entry = ticket.fillPrice ?? ticket.entry;
+    const isLong = ticket.direction === "long";
+    const fees = Math.max(0.2, Number(ticket.fees || 0));
+    const prevPeak = Number(ticket.peakProfitUsd ?? 0);
+    const peakProfitUsd = Number(Math.max(prevPeak, netPnlUsd).toFixed(2));
+
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0 || !Number.isFinite(entry) || entry <= 0) {
+      return { action: "HOLD", peakProfitUsd };
+    }
+
+    const minGreenUsd = Math.max(1.5, fees * 1.8);
+    const minRatchetPeak = Math.max(4, (ticket.riskUsd || 20) * 0.15, fees * 3);
+
+    // 1. Calcul du palier de sécurisation selon l'amplitude du pic atteint
+    let lockRatio = 0.55;
+    if (peakProfitUsd >= Math.max(25, (ticket.riskUsd || 40) * 1.2)) {
+      lockRatio = 0.85;
+    } else if (peakProfitUsd >= Math.max(10, (ticket.riskUsd || 40) * 0.55)) {
+      lockRatio = 0.72;
+    }
+
+    const prevFloor = Number(ticket.progressiveStopUsd ?? 0);
+    let securedFloorUsd = prevFloor;
+    if (peakProfitUsd >= minRatchetPeak) {
+      const candidateFloor = Number((peakProfitUsd * lockRatio).toFixed(2));
+      if (candidateFloor > securedFloorUsd) {
+        securedFloorUsd = candidateFloor;
+      }
+    }
+
+    // 2. Clôture immédiate si le profit redescend sous le plancher verrouillé par les agents
+    if (securedFloorUsd > 0 && netPnlUsd <= securedFloorUsd && peakProfitUsd >= minRatchetPeak) {
+      return {
+        action: "CLOSE_PROFIT",
+        closeReason: "target",
+        peakProfitUsd,
+        securedFloorUsd,
+        reason: `[AGENTS EXIT · RATCHET ${Math.round(lockRatio * 100)}%] Bénéfice sécurisé ${netPnlUsd.toFixed(2)}€ (pic +${peakProfitUsd.toFixed(2)}€, plancher +${securedFloorUsd.toFixed(2)}€)`,
+      };
+    }
+
+    // 3. Récolte proactive si en profit net clair ET retournement contre la position / niveau VAH-VAL
+    const tickDelta = Number(ctx?.tickDeltaPct ?? 0);
+    const microReversalAgainst = isLong ? tickDelta <= -0.00018 : tickDelta >= 0.00018;
+    const mp = ctx?.marketProfile;
+    const hitMpEdgeInProfit = Boolean(
+      mp &&
+        netPnlUsd >= minGreenUsd &&
+        ((isLong && currentPrice >= mp.vah * 0.9997) || (!isLong && currentPrice <= mp.val * 1.0003)),
+    );
+    const fastGiveback = peakProfitUsd >= minRatchetPeak && netPnlUsd >= minGreenUsd && netPnlUsd <= peakProfitUsd * 0.78 && microReversalAgainst;
+
+    if (hitMpEdgeInProfit) {
+      return {
+        action: "CLOSE_PROFIT",
+        closeReason: "flow_exhaustion",
+        peakProfitUsd,
+        securedFloorUsd,
+        reason: `[AGENTS EXIT · MARKET PROFILE] Prise de profit optimisée sur borne ${isLong ? "VAH" : "VAL"} (+${netPnlUsd.toFixed(2)}€)`,
+      };
+    }
+    if (fastGiveback) {
+      return {
+        action: "CLOSE_PROFIT",
+        closeReason: "flow_exhaustion",
+        peakProfitUsd,
+        securedFloorUsd,
+        reason: `[AGENTS EXIT · RETOURNEMENT] Récolte rapide +${netPnlUsd.toFixed(2)}€ avant inversion micro-flux`,
+      };
+    }
+    if (netPnlUsd >= minGreenUsd * 1.4 && microReversalAgainst) {
+      return {
+        action: "CLOSE_PROFIT",
+        closeReason: "flow_exhaustion",
+        peakProfitUsd,
+        securedFloorUsd,
+        reason: `[AGENTS EXIT · SÉCURISATION TICK] Inversion micro détectée, gain encaissé +${netPnlUsd.toFixed(2)}€`,
+      };
+    }
+
+    // 4. Remontée dynamique du Stop-Loss (Break-Even rapide puis resserrement continu)
+    let nextStop: number | undefined;
+    if (securedFloorUsd > 0 && ticket.notional > 0) {
+      const floorPx = isLong
+        ? entry + (securedFloorUsd * entry) / ticket.notional
+        : entry - (securedFloorUsd * entry) / ticket.notional;
+      const safeDist = entry * 0.00015;
+      const clampedFloor = isLong ? Math.min(floorPx, currentPrice - safeDist) : Math.max(floorPx, currentPrice + safeDist);
+      if ((isLong && clampedFloor > ticket.invalidation) || (!isLong && clampedFloor < ticket.invalidation)) {
+        nextStop = Number(clampedFloor.toFixed(5));
+      }
+    } else if (netPnlUsd >= minGreenUsd) {
+      const beFeePx = isLong ? entry * 1.0006 : entry * 0.9994;
+      const safeDist = entry * 0.00015;
+      const clampedBe = isLong ? Math.min(beFeePx, currentPrice - safeDist) : Math.max(beFeePx, currentPrice + safeDist);
+      if ((isLong && clampedBe > ticket.invalidation) || (!isLong && clampedBe < ticket.invalidation)) {
+        nextStop = Number(clampedBe.toFixed(5));
+      }
+    }
+
+    if (nextStop !== undefined) {
+      return {
+        action: "LOCK_STOP",
+        newStopLoss: nextStop,
+        peakProfitUsd,
+        securedFloorUsd,
+        reason: securedFloorUsd > 0
+          ? `[AGENTS TRAIL] Plancher verrouillé +${securedFloorUsd.toFixed(2)}€ (SL @ ${nextStop})`
+          : `[AGENTS BE RAPIDE] Break-Even + frais sécurisé (SL @ ${nextStop})`,
+      };
+    }
+
+    return { action: "HOLD", peakProfitUsd, securedFloorUsd };
   }
 }

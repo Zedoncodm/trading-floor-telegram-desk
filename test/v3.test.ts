@@ -1379,6 +1379,45 @@ test("Single-pair HFT Focus & Strict Quota execution meets tradesPerMinute acros
     for (const id of ["lead", "analyst", "strategist", "risk", "execution", "reviewer", "sentinel", "hunter"] as const) {
       assert.equal(desk.state.activities[id].asset, "XAUUSD");
     }
+
+    // Verify Agent Real-Time Exit Brain locks fast BE, escalates Ratchet 55%->85%, and harvests profit on pullback
+    const t = recentOpen[0];
+    t.invalidation = t.entry * 0.99;
+    t.peakProfitUsd = 0;
+    t.progressiveStopUsd = 0;
+
+    // Step 1: Small green -> LOCK_STOP fast BE (+fees)
+    const d1 = ActiveTradeManager.evaluateAgentRealtimeProfitExit(t, t.entry * 1.001, 4, { tickDeltaPct: 0.0005 });
+    assert.equal(d1.action, "LOCK_STOP");
+    assert.ok((d1.newStopLoss ?? 0) > t.entry);
+
+    // Step 2: Strong run up -> escalates Ratchet floor cleanly (72% / 85%)
+    t.peakProfitUsd = 35;
+    t.progressiveStopUsd = 29.75; // 85% locked
+    const d2 = ActiveTradeManager.evaluateAgentRealtimeProfitExit(t, t.entry * 1.005, 29.0, { tickDeltaPct: -0.0002 });
+    assert.equal(d2.action, "CLOSE_PROFIT");
+    assert.equal(d2.closeReason, "target");
+
+    // Step 3: Profit pullback / Market Profile VAH touch -> closes to secure max benefit
+    t.peakProfitUsd = 0;
+    t.progressiveStopUsd = 0;
+    const d3 = ActiveTradeManager.evaluateAgentRealtimeProfitExit(t, 3880, 6.5, {
+      marketProfile: {
+        symbol: "XAUUSD",
+        poc: 3868,
+        vah: 3880,
+        val: 3855,
+        sessionHigh: 3882,
+        sessionLow: 3850,
+        totalVolume: 1000,
+        valueAreaPct: 0.7,
+        isRange: true,
+        pricePosition: "inside_va",
+        updatedAt: now,
+      },
+    });
+    assert.equal(d3.action, "CLOSE_PROFIT");
+    assert.equal(d3.closeReason, "flow_exhaustion");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

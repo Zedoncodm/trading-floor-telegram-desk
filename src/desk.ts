@@ -3705,12 +3705,22 @@ export class TradingFloorDesk {
         this.executionTimestampsMs = this.executionTimestampsMs.filter((t) => now - t < 60_000);
         if (this.executionTimestampsMs.length >= tpm) break;
 
-        // Recycler automatiquement le plus vieux scalpe ouvert si la limite de positions HFT simultanées est atteinte
+        // Recycler intelligemment si le plafond de positions HFT simultanées est atteint :
+        // priorité à l'encaissement de la position la plus profitable (> frais), sinon la plus ancienne.
         const openOnFocus = this.state.tickets
-          .filter((t) => t.status === "open" && t.asset.toUpperCase() === focusSym)
-          .sort((a, b2) => (a.filledAt ?? a.createdAt) - (b2.filledAt ?? b2.createdAt));
-        if (openOnFocus.length >= maxSimultaneousOpen && openOnFocus[0]) {
-          await this.closeOpenTicket(openOnFocus[0], livePx, "time", now);
+          .filter((t) => t.status === "open" && t.asset.toUpperCase() === focusSym);
+        if (openOnFocus.length >= maxSimultaneousOpen) {
+          const profitableSorted = openOnFocus
+            .map((t) => ({ t, p: t.mt5Profit ?? ticketPnlAt(t, livePx) }))
+            .sort((a, b2) => b2.p - a.p);
+          const candidateToClose =
+            profitableSorted[0] && profitableSorted[0].p > profitableSorted[0].t.fees
+              ? profitableSorted[0].t
+              : [...openOnFocus].sort((a, b2) => (a.filledAt ?? a.createdAt) - (b2.filledAt ?? b2.createdAt))[0];
+          if (candidateToClose) {
+            const pVal = candidateToClose.mt5Profit ?? ticketPnlAt(candidateToClose, livePx);
+            await this.closeOpenTicket(candidateToClose, livePx, pVal > 0 ? "target" : "time", now);
+          }
         }
 
         // Micro-signal directionnel mono-paire (tick impulse + Market Profile + alternation HFT si marché plat)
@@ -3800,8 +3810,8 @@ export class TradingFloorDesk {
           entry: livePx,
           invalidation: stopPrice,
           target: targetPrice,
-          timeStopHours: 0.05,
-          timeStopMs: Math.max(30_000, Math.round((60_000 / Math.max(1, tpm)) * 15)),
+          timeStopHours: 24,
+          timeStopMs: undefined,
           leverage: targetLev,
           liqPrice: dir === "long" ? livePx * Math.max(0.05, 1 - 1 / targetLev) : livePx * (1 + 1 / targetLev),
           regime: "VOLATILE_BREAKOUT",
@@ -3977,6 +3987,50 @@ export class TradingFloorDesk {
         continue;
       }
 
+      // CERVEAU TEMPS RÉEL FOCUS HFT : ce sont les agents qui pilotent les sorties (Break-Even rapide + Ratchet 55%->85% + récolte retournement)
+      if (ticket.sessionName === "Focus HFT Quota") {
+        const tapeRow = this.state.tape.find((r) => r.symbol === ticket.asset);
+        const tickDeltaPct = tapeRow && tapeRow.prev > 0 ? (mark - tapeRow.prev) / tapeRow.prev : 0;
+        const netPnl = ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit) ? ticket.mt5Profit : curUnrealized;
+        const agentExit = ActiveTradeManager.evaluateAgentRealtimeProfitExit(ticket, mark, netPnl, {
+          tickDeltaPct,
+          marketProfile: this.state.marketProfiles?.[ticket.asset],
+        });
+        ticket.peakProfitUsd = agentExit.peakProfitUsd;
+        if (agentExit.securedFloorUsd !== undefined) {
+          ticket.progressiveStopUsd = agentExit.securedFloorUsd;
+        }
+        if (agentExit.action === "CLOSE_PROFIT") {
+          await this.closeOpenTicket(
+            ticket,
+            mark,
+            agentExit.closeReason ?? "target",
+            now,
+            ticket.mt5Profit !== undefined ? netPnl : undefined,
+          );
+          setAgentActivity(this.state, "execution", "executing", `Gain verrouillé ${ticket.id} (+${netPnl.toFixed(2)}€)`, now, { asset: ticket.asset, targetAgent: "reviewer" });
+          emitPulse(this.state, "execution", "reviewer", "fill", `LOCK +${netPnl.toFixed(2)}`, ticket.asset, now);
+          await this.say("execution", agentExit.reason ?? `[AGENTS EXIT] Bénéfice encaissé sur ${ticket.id} (+${netPnl.toFixed(2)}€).`, "fill", ticket.id);
+          continue;
+        }
+        if (agentExit.action === "LOCK_STOP" && agentExit.newStopLoss !== undefined) {
+          ticket.invalidation = agentExit.newStopLoss;
+          ticket.breakEvenActive = true;
+          ticket.hardSlSyncedAt = now;
+          this.updateExecutionTraderState(now, {
+            ticketId: ticket.id,
+            symbol: ticket.asset,
+            newSl: agentExit.newStopLoss,
+            takeProfit: ticket.target,
+            reason: agentExit.reason ?? "Agents Profit Lock",
+            at: now,
+          });
+          ActiveTradeManager.dispatchAsyncOrderModify(this.mt5, ticket, agentExit.newStopLoss, ticket.target);
+          this.pushLocalMt5BridgePayload(now);
+          setAgentActivity(this.state, "risk", "sizing", agentExit.reason ?? `SL verrouillé ${ticket.id}`, now, { asset: ticket.asset, targetAgent: "execution" });
+        }
+      }
+
       // PHASE 4 — ActiveTradeManager : Hard Break-Even asynchrone à 50% du TP (+ frais)
       const beMod = ActiveTradeManager.evaluateBreakEvenOrderModify(ticket, mark);
       if (beMod.shouldModify) {
@@ -4104,8 +4158,8 @@ export class TradingFloorDesk {
         }
       }
 
-      // Moteur A (HFT_OrderFlow_Imbalance) : Trailing Stop 0.5x ATR(1m), Sélection Adverse, Épuisement & Time-Stop 120s
-      if (engine === "HFT_OrderFlow_Imbalance") {
+      // Moteur A (HFT_OrderFlow_Imbalance) hors Focus HFT : Trailing Stop 0.5x ATR(1m), Sélection Adverse, Épuisement
+      if (engine === "HFT_OrderFlow_Imbalance" && ticket.sessionName !== "Focus HFT Quota") {
         const micro = await fetchMicrostructureTick(ticket.asset);
         if (micro) {
           // Sortie d'urgence (Sélection Adverse)
@@ -4158,10 +4212,10 @@ export class TradingFloorDesk {
         }
       }
 
-      // Time-Stop naturel défini par chaque stratégie (ex: 120s Moteur A, 300s THF Kamikaze si stagnant, 8h Moteur B, 72h Moteur C)
+      // Time-Stop naturel défini par chaque stratégie (hors Focus HFT où les agents pilotent 100% la sortie en temps réel)
       const timeLimitMs = ticket.timeStopMs ?? ticket.timeStopHours * 3600_000;
       const ticketStart = ticket.filledAt || ticket.decidedAt || ticket.createdAt;
-      if (ticketStart && now - ticketStart >= timeLimitMs) {
+      if (ticket.sessionName !== "Focus HFT Quota" && ticketStart && now - ticketStart >= timeLimitMs) {
         await this.closeOpenTicket(ticket, mark, "time", now);
         continue;
       }
@@ -4569,7 +4623,7 @@ export class TradingFloorDesk {
         if (nextFocusSym) {
           await this.say(
             "lead",
-            `[MODE FOCUS HFT ACTIVÉ] Tous les 8 agents sont mobilisés à 100% sur **${nextFocusSym}** (quota strict : ${nextTpm} trade(s)/min · intervalle ${nextScalpSec}s).`,
+            `[MODE FOCUS HFT ACTIVÉ] Tous les 8 agents sont mobilisés à 100% sur **${nextFocusSym}** (quota strict : ${nextTpm} trade(s)/min · intervalle ${nextScalpSec}s). Sorties décidées en temps réel par les agents (Break-Even rapide + Ratchet 55%→85% + récolte sur retournement) pour sécuriser un max de bénéfices.`,
             "wake",
           );
         }

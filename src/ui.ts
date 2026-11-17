@@ -2194,7 +2194,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:6px">
                 <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer">
                   <input id="cfgStrictQuotaChk" type="checkbox" onchange="markStrategyFormDirty()" />
-                  <span>Respecter à tout prix le quota / min (8 agents dédiés à cette paire)</span>
+                  <span>Quota strict / min + Sorties 100% temps réel par les agents (sécurisation max bénéfice)</span>
                 </label>
                 <span id="quotaLiveMeter" class="mono" style="font-size:10.5px;color:var(--fg-2)">Quota 60s : 0 / 4</span>
               </div>
