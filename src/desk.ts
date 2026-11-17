@@ -2807,7 +2807,9 @@ export class TradingFloorDesk {
     ticket.postMortemReport = postMortem;
 
     this.state.realizedPnl += netPnl;
-    this.state.cooldowns[ticket.asset] = now + 5 * 60_000;
+    const isFastScalp = (this.state.settings?.regime === "hft_kamikaze") || (this.state.settings?.tradingStyle === "scalping");
+    const cooldownMs = isFastScalp ? 15_000 : 5 * 60_000;
+    this.state.cooldowns[ticket.asset] = now + cooldownMs;
     this.store.appendBlotter("POSITION_CLOSED", ticket, `Clôture (${reason}) PnL=${netPnl.toFixed(2)}`, now);
 
     const regime: MarketRegime = (ticket.regime as MarketRegime) || "MEAN_REVERTING";
@@ -3157,25 +3159,27 @@ export class TradingFloorDesk {
     if (this.state.halted && this.state.haltKind === "loss") return;
     const s = this.state.settings;
 
-    // 1) Objectif de profit journalier : fermer tout quand le profit du jour atteint X
+    // 1) Objectif de clôture globale : fermer tout quand le PNL actuel des trades ouverts atteint X (ou profit du jour si configuré)
     if (s?.dailyProfitTargetEnabled && Number(s.dailyProfitTargetVal ?? 0) > 0) {
       const targetUsd =
         s.dailyProfitTargetMode === "pct"
           ? this.state.dayStartEquity * (Number(s.dailyProfitTargetVal) / 100)
           : Number(s.dailyProfitTargetVal);
-      if (currentDayPnl(this.state) >= targetUsd) {
-        const openForProfit = this.state.tickets.filter((t) => t.status === "open");
-        if (openForProfit.length > 0) {
-          for (const t of openForProfit) {
-            const px = markPriceOf(this.state, t.asset, t.fillPrice ?? t.entry);
-            await this.closeOpenTicket(t, px, "target", now);
-          }
-          await this.say(
-            "lead",
-            `Objectif de profit journalier (${fmtUsd(targetUsd, 0)}) atteint : toutes les positions ouvertes ont été clôturées pour sécuriser les gains du jour.`,
-            "fill",
-          );
+
+      // Priorité utilisateur : clôturer l'ensemble des positions quand le PnL en cours (flottant) des trades ouverts atteint le seuil
+      const curOpenPnl = unrealizedPnl(this.state);
+      const openForProfit = this.state.tickets.filter((t) => t.status === "open");
+
+      if (openForProfit.length > 0 && curOpenPnl >= targetUsd) {
+        for (const t of openForProfit) {
+          const px = markPriceOf(this.state, t.asset, t.fillPrice ?? t.entry);
+          await this.closeOpenTicket(t, px, "target", now);
         }
+        await this.say(
+          "lead",
+          `Objectif de PnL en cours (${fmtUsd(targetUsd, 0)}) atteint : toutes les positions ouvertes ont été clôturées pour encaisser les gains (+${fmtUsd(curOpenPnl, 2)}).`,
+          "fill",
+        );
       }
     }
 

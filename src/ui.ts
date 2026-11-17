@@ -1864,7 +1864,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--ring-1)">
             <label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer">
               <input id="cfgDailyTpEnabled" type="checkbox" onchange="updateLiveRiskCalculator()" />
-              <span>Fermer tout quand le profit du jour atteint</span>
+              <span>Fermer tout quand le PnL actuel ouvert atteint</span>
             </label>
             <input id="cfgDailyTpVal" type="number" step="25" min="10" max="500000" value="500" class="input-dark mono" style="width:92px" oninput="updateLiveRiskCalculator()" />
             <select id="cfgDailyTpMode" class="input-dark" style="padding:6px 8px" onchange="updateLiveRiskCalculator()">
