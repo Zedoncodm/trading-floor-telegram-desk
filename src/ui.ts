@@ -331,7 +331,194 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       color: var(--amber);
     }
 
-    /* ================= PANIC KILL SWITCH BAR ================= */
+    /* ================= SPATIAL BENTO & MAC OS DOCK ================= */
+    #hudKpiBadge {
+      position: fixed;
+      top: 18px;
+      left: 20px;
+      z-index: 90;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 18px;
+      border-radius: 18px;
+      background: rgba(14, 18, 28, 0.75);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+      pointer-events: auto;
+    }
+    .hud-kpi-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .hud-kpi-lbl {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      font-family: var(--font);
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #94a3b8;
+      margin-bottom: 2px;
+    }
+    .hud-kpi-val {
+      font-size: 14px;
+      font-weight: 800;
+      color: #f8fafc;
+    }
+    .hud-divider {
+      width: 1px;
+      height: 28px;
+      background: rgba(255, 255, 255, 0.12);
+    }
+    #emergencyWidget {
+      position: fixed;
+      top: 18px;
+      right: 20px;
+      z-index: 90;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      pointer-events: auto;
+    }
+    .btn-emergency-act {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(14, 18, 28, 0.8);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      color: #e2e8f0;
+      padding: 8px 14px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+    .btn-emergency-act:hover {
+      transform: translateY(-2px);
+    }
+    .btn-emergency-close {
+      border-color: rgba(244, 63, 94, 0.45);
+      color: #fb7185;
+      background: rgba(225, 29, 72, 0.18);
+    }
+    .btn-emergency-close:hover {
+      background: rgba(225, 29, 72, 0.35);
+      border-color: #f43f5e;
+      color: #fff;
+      box-shadow: 0 0 20px rgba(244, 63, 94, 0.4);
+    }
+    .btn-emergency-halt {
+      border-color: rgba(250, 204, 21, 0.45);
+      color: #fde047;
+      background: rgba(234, 179, 8, 0.18);
+    }
+    .btn-emergency-halt:hover {
+      background: rgba(234, 179, 8, 0.35);
+      border-color: #facc15;
+      color: #fff;
+      box-shadow: 0 0 20px rgba(250, 204, 21, 0.4);
+    }
+    .btn-emergency-mt5 {
+      border-color: rgba(56, 189, 248, 0.45);
+      color: #7dd3fc;
+      background: rgba(14, 165, 233, 0.18);
+    }
+    .btn-emergency-mt5:hover {
+      background: rgba(14, 165, 233, 0.35);
+      border-color: #38bdf8;
+      color: #fff;
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+    }
+    #macDock {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 95;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 26px;
+      background: rgba(11, 15, 24, 0.78);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      pointer-events: auto;
+    }
+    .dock-btn {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 16px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #94a3b8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .dock-btn:hover {
+      transform: scale(1.18) translateY(-6px);
+      color: #ffffff;
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+    }
+    .dock-btn.active {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.15);
+      border-color: rgba(56, 189, 248, 0.35);
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.25);
+    }
+    .dock-btn.active::after {
+      content: "";
+      position: absolute;
+      bottom: 3px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #38bdf8;
+      box-shadow: 0 0 8px #38bdf8;
+    }
+    .dock-tooltip {
+      position: absolute;
+      top: -34px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .dock-btn:hover .dock-tooltip {
+      opacity: 1;
+    }
+    .dock-sep {
+      width: 1px;
+      height: 30px;
+      background: rgba(255, 255, 255, 0.12);
+      margin: 0 4px;
+    }
+
     #panicDock {
       position: fixed;
       right: 16px;
@@ -1342,7 +1529,70 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <body class="stealth-desk">
   <div id="stealthHoverZone"><div id="stealthHintPill" aria-hidden="true"></div></div>
 
-  <!-- STEALTH / TOP NAVIGATION -->
+  <!-- HUD PERMANENT KPI TOP-LEFT (TOUJOURS VISIBLE) -->
+  <div id="hudKpiBadge">
+    <div class="hud-kpi-item">
+      <span class="hud-kpi-lbl">Total Equity (MT5)</span>
+      <span class="hud-kpi-val mono" id="hudTotalEquityVal">$10,000.00</span>
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-kpi-item">
+      <span class="hud-kpi-lbl">Session PnL</span>
+      <span class="hud-kpi-val mono up" id="hudSessionPnlVal">+$0.00</span>
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-kpi-item">
+      <span class="hud-kpi-lbl">Active Risk</span>
+      <span class="hud-kpi-val mono" id="hudActiveRiskVal" style="color:#38bdf8">0.00% ($0)</span>
+    </div>
+  </div>
+
+  <!-- FLOATING EMERGENCY WIDGET TOP-RIGHT -->
+  <div id="emergencyWidget">
+    <button class="btn-emergency-act btn-emergency-close" onclick="openPanicModal()" title="Liquider toutes les positions immédiatement">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span>CLOSE ALL</span>
+    </button>
+    <button id="btnEmergencyHalt" class="btn-emergency-act btn-emergency-halt" onclick="toggleManualHalt()" title="Mettre le desk en pause immédiate">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      <span id="emergencyHaltLabel">HALT DESK</span>
+    </button>
+    <button class="btn-emergency-act btn-emergency-mt5" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Nouveau profil MT5 / Réinitialiser">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
+      <span>NEW MT5 PROFILE</span>
+    </button>
+  </div>
+
+  <!-- FLOATING MAC OS DOCK BOTTOM -->
+  <nav id="macDock" aria-label="Mac Navigation Dock">
+    <button class="dock-btn active" data-tab="desk" onclick="switchTab(&quot;desk&quot;)" title="Spatial Desk">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      <div class="dock-tooltip">Spatial Desk</div>
+    </button>
+    <button class="dock-btn" data-tab="charts" onclick="switchTab(&quot;charts&quot;)" title="Charts &amp; TradingView">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <div class="dock-tooltip">Charts</div>
+    </button>
+    <button class="dock-btn" data-tab="journal" onclick="switchTab(&quot;journal&quot;)" title="Ledger &amp; Notion">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <div class="dock-tooltip">Ledger</div>
+    </button>
+    <button class="dock-btn" data-tab="strategy" onclick="switchTab(&quot;strategy&quot;)" title="RL Training &amp; Stratégie">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      <div class="dock-tooltip">RL Training</div>
+    </button>
+    <div class="dock-sep"></div>
+    <button class="dock-btn" data-tab="chat" onclick="switchTab(&quot;chat&quot;)" title="Salon &amp; Chat Agents">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <div class="dock-tooltip">Salon &amp; Télémétrie</div>
+    </button>
+    <button class="dock-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" title="Thèmes &amp; Préférences">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      <div class="dock-tooltip">Thèmes</div>
+    </button>
+  </nav>
+
+  <!-- STEALTH / TOP NAVIGATION (CONSERVES POUR CONTROLES SECONDAIRES & TESTS) -->
   <header id="topNav">
     <div class="brand">
       <span class="brand-dot" id="liveHealthDot"></span>
@@ -2675,6 +2925,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     function switchTab(tab) {
       currentTab = tab;
       document.querySelectorAll('.tab-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-tab') === tab);
+      });
+      document.querySelectorAll('.dock-btn').forEach(function (b) {
         b.classList.toggle('active', b.getAttribute('data-tab') === tab);
       });
       document.querySelectorAll('.view-panel').forEach(function (v) {
@@ -5464,6 +5717,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         haltBtn.textContent = isHalted ? 'REPRENDRE' : 'ALERTE · HALT DESK';
         haltBtn.classList.toggle('resuming', isHalted);
       }
+      var emerHaltLbl = document.getElementById('emergencyHaltLabel');
+      if (emerHaltLbl) emerHaltLbl.textContent = isHalted ? 'RESUME' : 'HALT DESK';
 
       var lev = (deskState && deskState.settings && deskState.settings.defaultLeverage) || s.defaultLeverage || 5;
       var navLevEl = document.getElementById('navLevBadge');
@@ -5476,6 +5731,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var hasMt5Live = Boolean(deskState.mt5Live && deskState.mt5Live.connected);
       var eq = hasMt5Live ? deskState.mt5Live.equity : (lastPt.eq || deskState.startEquity || 10000);
       var dayPnl = hasMt5Live ? deskState.mt5Live.profit : (eq - (deskState.dayStartEquity || deskState.startEquity || eq));
+
+      // Synchronisation HUD Permanent KPI Top-Left
+      var hudEq = document.getElementById('hudTotalEquityVal');
+      if (hudEq) hudEq.textContent = fmtUsd(eq, 2);
+      var hudPnl = document.getElementById('hudSessionPnlVal');
+      if (hudPnl) {
+        hudPnl.textContent = fmtSignedUsd(dayPnl, 2);
+        hudPnl.className = 'hud-kpi-val mono ' + (dayPnl >= 0 ? 'up' : 'down');
+      }
+      var hudRisk = document.getElementById('hudActiveRiskVal');
+      if (hudRisk) {
+        var totalRiskUsd = open.reduce(function (sum, t) {
+          var slDist = Math.abs(t.entry - t.invalidation) / Math.max(t.entry, 1e-9);
+          return sum + (t.notional * slDist);
+        }, 0);
+        var riskPct = eq > 0 ? (totalRiskUsd / eq) * 100 : 0;
+        hudRisk.textContent = riskPct.toFixed(2) + '% ($' + Math.round(totalRiskUsd).toLocaleString() + ')';
+        hudRisk.style.color = riskPct > 3 ? '#fbbf24' : '#38bdf8';
+      }
 
       var mt5Chip = document.getElementById('deskMt5LiveChip');
       if (mt5Chip) {
