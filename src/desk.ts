@@ -1098,12 +1098,130 @@ export class TradingFloorDesk {
         structuralChange = true;
       }
 
-      // Mise à jour propre de la courbe d'équité sans écraser l'historique
+      // Réconciliation complète avec l'historique MT5 fermé (closedDeals) :
+      // récupère les trades ouverts/clôturés directement sur MT5 ou manqués lors d'un redémarrage (ex: -400€ Gold)
+      for (const deal of mt5State.closedDeals ?? []) {
+        if (!deal || !deal.positionId || !deal.symbol) continue;
+        const posIdStr = String(deal.positionId);
+        const dealComment = String(deal.id || "").trim();
+        const existing = this.state.tickets.find(
+          (x) =>
+            x.mt5PositionId === posIdStr ||
+            (dealComment && x.id === dealComment && (x.status === "closed" || x.status === "open")) ||
+            x.id === `MT5-DEAL-${posIdStr}`,
+        );
+        if (existing) {
+          if (existing.status === "open") {
+            const closeReason: CloseReason = deal.profit >= 0 ? "target" : "invalidation";
+            await this.closeOpenTicket(existing, deal.exit || existing.fillPrice || existing.entry, closeReason, deal.closedAt || now, deal.profit);
+            structuralChange = true;
+          } else if (
+            existing.status === "closed" &&
+            existing.pnl !== undefined &&
+            Math.abs(existing.pnl - deal.profit) > 0.5 &&
+            existing.mt5PositionId === posIdStr
+          ) {
+            existing.pnl = Number(deal.profit.toFixed(2));
+            existing.mt5Profit = Number(deal.profit.toFixed(2));
+            existing.exitPrice = deal.exit || existing.exitPrice;
+            structuralChange = true;
+          }
+          continue;
+        }
+
+        // Deal fermé présent sur MT5 mais absent du Ledger Desk -> importation propre en Position Fermée
+        const deskSym = Mt5CloudBridge.mapMt5SymbolToDesk(deal.symbol);
+        const dir: Direction = deal.side === "SELL" ? "short" : "long";
+        const entryPx = deal.entry > 0 ? deal.entry : deal.exit;
+        const exitPx = deal.exit > 0 ? deal.exit : entryPx;
+        const notional = Math.max(100, entryPx * Math.max(0.01, deal.lots) * (/XAU|GOLD/i.test(deskSym) ? 100 : /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}/.test(deskSym) ? 100_000 : 1));
+        const closedAtTs = deal.closedAt > 0 ? deal.closedAt : now;
+        const uniqId =
+          dealComment && !this.state.tickets.some((x) => x.id === dealComment)
+            ? dealComment
+            : `MT5-DEAL-${posIdStr}`;
+        const stopEst = dir === "long" ? entryPx * 0.992 : entryPx * 1.008;
+        const riskEst = Math.max(25, Math.abs(deal.profit));
+        const btMt5 = {
+          label: "MT5 Direct Deal",
+          bars: 100,
+          trades: 1,
+          winRate: deal.profit >= 0 ? 1 : 0,
+          expectancyR: deal.profit >= 0 ? 1 : -1,
+          profitFactor: deal.profit >= 0 ? 2 : 0.5,
+          sharpe: deal.profit >= 0 ? 1 : -1,
+          deflatedSharpe: 0.5,
+          maxDrawdownR: 1,
+          var95R: -1,
+          pass: true,
+        };
+        const importedClosed: Ticket = {
+          id: uniqId,
+          asset: deskSym,
+          direction: dir,
+          playbook: "breakout",
+          engine: "breakout",
+          thesis: `Trade MT5 synchronisé depuis l'historique réel (${deal.lots.toFixed(2)} lot · Pos #${posIdStr}).`,
+          entry: entryPx,
+          invalidation: stopEst,
+          target: dir === "long" ? entryPx * 1.016 : entryPx * 0.984,
+          timeStopHours: 24,
+          notional: Number(notional.toFixed(2)),
+          qty: Number((notional / Math.max(entryPx, 1e-9)).toFixed(6)),
+          riskUsd: Number(riskEst.toFixed(2)),
+          riskPct: Number((riskEst / Math.max(mt5State.balance || 10_000, 1)).toFixed(4)),
+          exposurePct: Number((notional / Math.max(mt5State.balance || 10_000, 1)).toFixed(4)),
+          binding: "risk",
+          producedBy: ["execution", "reviewer"],
+          backtest: {
+            playbook: "breakout",
+            rules: "MT5 Broker Closed Deal",
+            source: mt5State.server || "MT5",
+            inSample: btMt5,
+            outOfSample: btMt5,
+            pass: true,
+          },
+          status: "closed",
+          createdAt: closedAtTs - 60_000,
+          expiresAt: closedAtTs,
+          decidedAt: closedAtTs - 60_000,
+          filledAt: closedAtTs - 60_000,
+          fillPrice: entryPx,
+          exitPrice: exitPx,
+          closedAt: closedAtTs,
+          closeReason: deal.profit >= 0 ? "target" : "invalidation",
+          pnl: Number(deal.profit.toFixed(2)),
+          mt5Profit: Number(deal.profit.toFixed(2)),
+          mt5PositionId: posIdStr,
+          mt5Lots: deal.lots,
+          rMultiple: Number((deal.profit / Math.max(riskEst, 1)).toFixed(2)),
+          fees: 0,
+          funding: 0,
+          leverage: Math.max(1, mt5State.leverage || 20),
+          sessionName: "MT5 Live Sync",
+          setupGrade: deal.profit >= 0 ? "A" : "B",
+        };
+        this.state.tickets = [importedClosed, ...this.state.tickets];
+        this.store.appendBlotter(
+          "POSITION_CLOSED",
+          importedClosed,
+          `Clôture MT5 importée (#${posIdStr}) PnL=${deal.profit.toFixed(2)}`,
+          closedAtTs,
+        );
+        this.appendTradePostMortem(importedClosed, importedClosed.closeReason ?? "invalidation", exitPx, importedClosed.pnl ?? 0, closedAtTs);
+        structuralChange = true;
+      }
+
+      // Mise à jour propre de la courbe d'équité sans écraser l'historique ni injecter de pic aberrant
       const lastCurve = this.state.curve[this.state.curve.length - 1];
       const liveEq = currentEquity(this.state);
       if (!lastCurve || now - lastCurve.t >= 15_000) {
         this.recordEquityPoint(now);
-      } else if (lastCurve.eq !== liveEq) {
+      } else if (
+        lastCurve.eq !== liveEq &&
+        liveEq > 0 &&
+        Math.abs(liveEq - lastCurve.eq) / Math.max(lastCurve.eq, 1) < 0.25
+      ) {
         lastCurve.eq = liveEq;
         lastCurve.unrealized = unrealizedPnl(this.state);
         lastCurve.realized = this.state.realizedPnl;
@@ -1878,10 +1996,15 @@ export class TradingFloorDesk {
         recentPoints.push(pt);
       }
     }
-    const merged = [...archivedBuckets.values(), ...recentPoints];
+    const merged = DeskStore.sanitizeEquityCurve([...archivedBuckets.values(), ...recentPoints]);
     const peak = merged.reduce((m, p) => Math.max(m, p.eq), this.state.startEquity);
     const drawdownPct = peak > 0 ? Math.max(0, (peak - eq) / peak) : 0;
     const last = merged[merged.length - 1];
+    if (!Number.isFinite(eq) || eq <= 0) return;
+    // Bloque tout artefact isolé (+30% / -30% en < 60s) comme le bug 174 838€
+    if (last && now - last.t < 60_000 && Math.abs(eq - last.eq) / Math.max(last.eq, 1) > 0.30) {
+      return;
+    }
     // Enregistre sur variation d'équité (>= 5s) ou au minimum toutes les 5 min à plat
     if (last && (now - last.t < 5_000 || (Math.abs(last.eq - eq) < 0.01 && now - last.t < 300_000))) {
       return;
@@ -2022,10 +2145,54 @@ export class TradingFloorDesk {
     }
     const nextTape: LiveTapeRow[] = snaps.map((snap) => {
       const prevRow = this.state.tape.find((r) => r.symbol === snap.symbol);
-      const mt5Px = mt5PriceMap.get(snap.symbol.toUpperCase());
-      if (mt5Px && snap.primary && snap.secondary) {
+      const cachedMt5Px =
+        prevRow && prevRow.venue2 && prevRow.px > 0 && now - prevRow.updatedAt < 10_000 && mt5PriceMap.size === 0
+          ? prevRow.px
+          : undefined;
+      const mt5Px = mt5PriceMap.get(snap.symbol.toUpperCase()) ?? cachedMt5Px;
+      // Recaler les niveaux Yahoo/Future (ex: GC=F vs XAUUSD Spot -5.42$) sur le Spot réel MT5
+      if (mt5Px && snap.primary && snap.primary.price > 0) {
+        const basis = mt5Px - snap.primary.price;
+        if (Math.abs(basis) > 0 && Math.abs(basis) / mt5Px < 0.025) {
+          snap.bars4h = snap.bars4h.map((b) => ({
+            ...b,
+            open: b.open + basis,
+            high: b.high + basis,
+            low: b.low + basis,
+            close: b.close + basis,
+          }));
+          if (snap.bars15m) {
+            snap.bars15m = snap.bars15m.map((b) => ({
+              ...b,
+              open: b.open + basis,
+              high: b.high + basis,
+              low: b.low + basis,
+              close: b.close + basis,
+            }));
+          }
+          if (snap.channelHi !== null) snap.channelHi += basis;
+          if (snap.channelLo !== null) snap.channelLo += basis;
+          if (snap.vwapContext) {
+            snap.vwapContext.vwap += basis;
+            snap.vwapContext.sd1Upper += basis;
+            snap.vwapContext.sd1Lower += basis;
+            snap.vwapContext.sd2Upper += basis;
+            snap.vwapContext.sd2Lower += basis;
+            snap.vwapContext.sd25Upper += basis;
+            snap.vwapContext.sd25Lower += basis;
+            snap.vwapContext.ibHigh += basis;
+            snap.vwapContext.ibLow += basis;
+          }
+          if (snap.fvgZone) {
+            snap.fvgZone.top += basis;
+            snap.fvgZone.bottom += basis;
+            snap.fvgZone.midPrice += basis;
+            snap.fvgZone.stopLevel += basis;
+          }
+        }
         snap.primary.price = mt5Px;
-        snap.secondary.price = mt5Px;
+        snap.primary.venue = "MT5";
+        if (snap.secondary) snap.secondary.price = mt5Px;
       }
       const px =
         mt5Px ??
@@ -2233,6 +2400,9 @@ export class TradingFloorDesk {
     const directiveForcesMeanRev =
       directiveLower.includes("mean-reversion") ||
       directiveLower.includes("mean reversion") ||
+      directiveLower.includes("équilibre") ||
+      directiveLower.includes("equilibre") ||
+      directiveLower.includes("value area") ||
       directiveLower.includes("range") ||
       directiveLower.includes("breakouts échouent");
     const isRangeMarket = mp.isRange || regime === "MEAN_REVERTING" || directiveForcesMeanRev;
@@ -2486,14 +2656,15 @@ export class TradingFloorDesk {
         thesis: "Contre-tendance des shorts encombrés : funding négatif payant les acheteurs et soutien du carnet.",
       });
     }
-    if (snap.channelHi && px >= snap.channelHi * 0.995) {
+    // Vraie cassure de canal : pas de seuil fantôme -0.5% (~20$ sous le haut sur l'Or) et flux 1h aligné !
+    if (snap.channelHi && px >= snap.channelHi * 0.9995 && ret1h >= 0.0005 && !isRangeMarket) {
       return withConfluence({
         dir: "long",
         playbook: "breakout",
         thesis: "Cassure haussière du canal 4h soutenue par le flux 1h et la 2e source.",
       });
     }
-    if (snap.channelLo && px <= snap.channelLo * 1.005) {
+    if (snap.channelLo && px <= snap.channelLo * 1.0005 && ret1h <= -0.0005 && !isRangeMarket) {
       return withConfluence({
         dir: "short",
         playbook: "breakout",

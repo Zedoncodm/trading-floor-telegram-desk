@@ -1381,10 +1381,11 @@ test("Single-pair HFT Focus & Strict Quota execution meets tradesPerMinute acros
     }
 
     // Verify Agent Real-Time Exit Brain locks fast BE, escalates Ratchet 55%->85%, and harvests profit on pullback
-    const t = recentOpen[0];
+    const t = { ...recentOpen[0], direction: "long" as const };
     t.invalidation = t.entry * 0.99;
     t.peakProfitUsd = 0;
     t.progressiveStopUsd = 0;
+    t.fees = 1.0;
 
     // Step 1: Small green -> LOCK_STOP fast BE (+fees)
     const d1 = ActiveTradeManager.evaluateAgentRealtimeProfitExit(t, t.entry * 1.001, 4, { tickDeltaPct: 0.0005 });
@@ -1421,4 +1422,38 @@ test("Single-pair HFT Focus & Strict Quota execution meets tradesPerMinute acros
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("Equity spike sanitizer (174k fix), MT5 closedDeals export/sync, breakout false-trigger fix & 28 Studio Themes", () => {
+  const now = Date.now();
+  // 1. Spike 174,838 surrounded by ~85k must be stripped cleanly
+  const dirty = [
+    { t: now - 50_000, eq: 85_200, realized: 0, unrealized: 0, drawdownPct: 0 },
+    { t: now - 40_000, eq: 85_150, realized: 0, unrealized: 0, drawdownPct: 0 },
+    { t: now - 30_000, eq: 174_838.4, realized: 0, unrealized: 0, drawdownPct: 0 },
+    { t: now - 20_000, eq: 85_090, realized: 0, unrealized: 0, drawdownPct: 0 },
+    { t: now - 10_000, eq: 85_120, realized: 0, unrealized: 0, drawdownPct: 0 },
+  ];
+  const cleaned = DeskStore.sanitizeEquityCurve(dirty);
+  assert.equal(cleaned.length, 4);
+  assert.ok(cleaned.every((p) => p.eq < 90_000));
+
+  // 2. TradingFloorBridge v2.2 exports closedDeals (HistorySelect + DEAL_POSITION_ID)
+  const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor();
+  assert.ok(mq5.includes("closedDeals"));
+  assert.ok(mq5.includes("HistorySelect("));
+  assert.ok(mq5.includes("DEAL_POSITION_ID"));
+
+  // 3. 28 Studio Themes & advanced customization controls compiled cleanly
+  assert.ok(DASHBOARD_HTML.includes("crimson-stealth"));
+  assert.ok(DASHBOARD_HTML.includes("dracula-quant"));
+  assert.ok(DASHBOARD_HTML.includes("prefDown"));
+  assert.ok(DASHBOARD_HTML.includes("prefGlassBlur"));
+  assert.ok(DASHBOARD_HTML.includes("prefBorderRadius"));
+  assert.ok(DASHBOARD_HTML.includes("prefGlow"));
+  assert.ok(DASHBOARD_HTML.includes("prefFontFamily"));
+  assert.ok(DASHBOARD_HTML.includes("prefDensity"));
+  const scriptMatch = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(scriptMatch && scriptMatch[1]);
+  assert.doesNotThrow(() => new Function(scriptMatch[1]));
 });

@@ -171,6 +171,31 @@ export class DeskStore {
     return merged;
   }
 
+  static sanitizeEquityCurve(points: DeskState["curve"]): DeskState["curve"] {
+    if (!Array.isArray(points) || points.length <= 2) return points ?? [];
+    const sortedVals = points.map((p) => p.eq).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+    const globalMedian = sortedVals[Math.floor(sortedVals.length / 2)] ?? 0;
+    const out: DeskState["curve"] = [];
+    for (let i = 0; i < points.length; i++) {
+      const pt = points[i];
+      if (!pt || !Number.isFinite(pt.t) || !Number.isFinite(pt.eq) || pt.eq <= 0) continue;
+      // Fenêtre locale [i-3..i+3] pour rejeter les pics isolés (ex: artefact sync +100% à 174 838 €)
+      const win: number[] = [];
+      for (let j = Math.max(0, i - 3); j <= Math.min(points.length - 1, i + 3); j++) {
+        if (j !== i && points[j] && Number.isFinite(points[j].eq) && points[j].eq > 0) {
+          win.push(points[j].eq);
+        }
+      }
+      win.sort((a, b) => a - b);
+      const localRef = win.length ? win[Math.floor(win.length / 2)] : globalMedian;
+      if (localRef > 0 && (pt.eq > localRef * 1.30 || pt.eq < localRef * 0.70)) {
+        continue;
+      }
+      out.push(pt);
+    }
+    return out;
+  }
+
   private mergeFullHistoryIntoState(state: DeskState): void {
     const archive = this.readHistoryArchive();
     const blotterClosed = this.reconstructTicketsFromBlotter();
@@ -199,16 +224,17 @@ export class DeskStore {
       .sort((a, b) => (b.closedAt ?? b.createdAt ?? 0) - (a.closedAt ?? a.createdAt ?? 0))
       .slice(0, 1500);
 
-    // Fusion de la courbe d'équité (chronologique, dédupliquée par timestamp)
+    // Fusion de la courbe d'équité (chronologique, dédupliquée par timestamp + purge des pics aberrants)
     const curveMap = new Map<number, DeskState["curve"][number]>();
     for (const pt of archive?.curve ?? []) {
-      if (pt && Number.isFinite(pt.t)) curveMap.set(pt.t, pt);
+      if (pt && Number.isFinite(pt.t) && Number.isFinite(pt.eq) && pt.eq > 0) curveMap.set(pt.t, pt);
     }
     for (const pt of state.curve ?? []) {
-      if (pt && Number.isFinite(pt.t)) curveMap.set(pt.t, pt);
+      if (pt && Number.isFinite(pt.t) && Number.isFinite(pt.eq) && pt.eq > 0) curveMap.set(pt.t, pt);
     }
     if (curveMap.size > 0) {
-      state.curve = [...curveMap.values()].sort((a, b) => a.t - b.t).slice(-20_000);
+      const sorted = [...curveMap.values()].sort((a, b) => a.t - b.t);
+      state.curve = DeskStore.sanitizeEquityCurve(sorted).slice(-20_000);
     }
 
     // Fusion des Reviews 15 min

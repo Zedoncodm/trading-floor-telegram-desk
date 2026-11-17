@@ -40,8 +40,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       --fs-2xs: 10px; --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 15px; --fs-xl: 18px; --fs-2xl: 24px;
       /* Espacements (grille de 4 px) */
       --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
-      /* Rayons */
+      /* Rayons & Surface personnalisables */
       --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-pill: 999px;
+      --glass-blur: 24px;
+      --card-pad: 18px;
+      --accent-glow: 0 0 0 rgba(56, 189, 248, 0);
       /* Mouvement (ressort fluide & réponse rapide) */
       --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
       --spring-fluid: cubic-bezier(0.16, 1, 0.3, 1);
@@ -740,12 +743,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* ================= GLASS CARD ================= */
     .glass-card {
       background: linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.01) 100%), var(--surface-glass);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      border-radius: 16px;
+      backdrop-filter: blur(var(--glass-blur, 24px));
+      -webkit-backdrop-filter: blur(var(--glass-blur, 24px));
+      border-radius: var(--r-lg, 16px);
       border: 1px solid var(--ring-1);
-      box-shadow: var(--shadow-glass);
-      padding: 18px;
+      box-shadow: var(--shadow-glass), var(--accent-glow, 0 0 0 transparent);
+      padding: var(--card-pad, 18px);
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
     .glass-card:hover { border-color: var(--ring-2); }
@@ -2313,34 +2316,76 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- ==================== GLOBAL THEME SETTINGS DRAWER (20 THÈMES) ==================== -->
+  <!-- ==================== GLOBAL THEME SETTINGS DRAWER (28 THÈMES & STUDIO) ==================== -->
   <aside id="themeDrawer" class="drawer">
     <div class="card-hdr">
-      <span class="card-title">Thèmes Studio (20 Palettes AA)</span>
+      <span class="card-title">Thèmes &amp; Personnalisation (28 Palettes AA)</span>
       <button class="pill-btn" onclick="closeDrawer(&quot;themeDrawer&quot;)">X</button>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:14px;font-size:12px">
       <div>
-        <label class="field-lbl">Sélection Instantanée (Sombres, Clairs, Terminal, Luxe, Néon)</label>
+        <label class="field-lbl">Sélection Instantanée (Sombres, Quant, Clairs, Terminal, Luxe, Néon)</label>
         <div id="themePresetsGrid" class="theme-grid"></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        <div>
+          <label class="field-lbl">Accent</label>
+          <input id="prefAccent" type="color" value="#38bdf8" style="width:100%;height:34px;background:transparent;border:none;cursor:pointer" onchange="updateThemeColor(&quot;accent&quot;, this.value)" />
+        </div>
+        <div>
+          <label class="field-lbl">Profit (UP)</label>
+          <input id="prefUp" type="color" value="#10b981" style="width:100%;height:34px;background:transparent;border:none;cursor:pointer" onchange="updateThemeColor(&quot;up&quot;, this.value)" />
+        </div>
+        <div>
+          <label class="field-lbl">Perte (DOWN)</label>
+          <input id="prefDown" type="color" value="#f43f5e" style="width:100%;height:34px;background:transparent;border:none;cursor:pointer" onchange="updateThemeColor(&quot;down&quot;, this.value)" />
+        </div>
       </div>
 
       <div class="form-grid">
         <div>
-          <label class="field-lbl">Couleur Accent</label>
-          <input id="prefAccent" type="color" value="#38bdf8" style="width:100%;height:36px;background:transparent;border:none;cursor:pointer" onchange="updateThemeColor(&quot;accent&quot;, this.value)" />
+          <label class="field-lbl">Transparence Verre (<span id="glassValLbl">80</span>%)</label>
+          <input id="prefGlassAlpha" type="range" min="35" max="98" value="80" style="width:100%" oninput="updateThemePref(&quot;alpha&quot;, Number(this.value))" />
         </div>
         <div>
-          <label class="field-lbl">Couleur Profit (UP)</label>
-          <input id="prefUp" type="color" value="#10b981" style="width:100%;height:36px;background:transparent;border:none;cursor:pointer" onchange="updateThemeColor(&quot;up&quot;, this.value)" />
+          <label class="field-lbl">Flou Glass (<span id="blurValLbl">24</span>px)</label>
+          <input id="prefGlassBlur" type="range" min="0" max="36" value="24" style="width:100%" oninput="updateThemePref(&quot;blur&quot;, Number(this.value))" />
         </div>
       </div>
 
-      <div>
-        <label class="field-lbl">Transparence Verre (<span id="glassValLbl">80</span>%)</label>
-        <input id="prefGlassAlpha" type="range" min="35" max="98" value="80" style="width:100%" oninput="updateGlassAlpha(this.value)" />
+      <div class="form-grid">
+        <div>
+          <label class="field-lbl">Arrondi Cartes (<span id="radiusValLbl">16</span>px)</label>
+          <input id="prefBorderRadius" type="range" min="2" max="24" value="16" style="width:100%" oninput="updateThemePref(&quot;radius&quot;, Number(this.value))" />
+        </div>
+        <div>
+          <label class="field-lbl">Lueur Néon (<span id="glowValLbl">0</span>%)</label>
+          <input id="prefGlow" type="range" min="0" max="100" value="0" style="width:100%" oninput="updateThemePref(&quot;glow&quot;, Number(this.value))" />
+        </div>
       </div>
+
+      <div class="form-grid">
+        <div>
+          <label class="field-lbl">Typographie Interface</label>
+          <select id="prefFontFamily" class="input-dark" onchange="updateThemePref(&quot;fontMode&quot;, this.value)">
+            <option value="inter">Inter Studio (Défaut)</option>
+            <option value="mono">Terminal Quant Mono</option>
+            <option value="system">Système Ultra-Nette</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-lbl">Densité d'affichage</label>
+          <select id="prefDensity" class="input-dark" onchange="updateThemePref(&quot;density&quot;, this.value)">
+            <option value="normal">Confortable (18px)</option>
+            <option value="compact">Compact Desk (11px)</option>
+            <option value="spacious">Aérée (24px)</option>
+          </select>
+        </div>
+      </div>
+
+      <button type="button" class="pill-btn" style="justify-content:center" onclick="resetThemeStudioPrefs()">Réinitialiser la personnalisation</button>
 
       <div style="border-top:1px solid var(--ring-1);padding-top:12px;display:flex;flex-direction:column;gap:8px">
         <label class="field-lbl">Passerelle LLM Agents</label>
@@ -2593,7 +2638,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       'zen-mono':     { theme: 'zen-mono',       label: 'Minimal Mono',      cat: 'Minimal',  isLight: false, bg0: '#0d0d0d', bg1: '#161616', bg2: '#202020', bg3: '#2c2c2c', fg0: '#f5f5f5', fg1: '#d4d4d4', fg2: '#9a9a9a', fg3: '#737373', accent: '#e5e5e5', up: '#4ade80', down: '#f87171', amber: '#fbbf24', glassRgb: '24, 24, 24',   elevRgb: '30, 30, 30',   inRgb: '14, 14, 14',   grad: 'linear-gradient(180deg, #161616 0%, #0a0a0a 100%)', alpha: 88 },
       'swiss-light':  { theme: 'swiss-light',    label: 'Swiss Ivory',       cat: 'Clair AA', isLight: true,  bg0: '#f3f5f8', bg1: '#ffffff', bg2: '#e9edf3', bg3: '#dce3ec', fg0: '#0f172a', fg1: '#1e293b', fg2: '#475569', fg3: '#64748b', accent: '#0369a1', up: '#047857', down: '#be123c', amber: '#b45309', glassRgb: '255, 255, 255',elevRgb: '255, 255, 255',inRgb: '241, 245, 249',grad: 'radial-gradient(circle at 20% 0%, #e0e8f4 0%, #f3f5f8 60%, #eaeef4 100%)', alpha: 88 },
       'paper-journal':{ theme: 'paper-journal',  label: 'Financial Paper',   cat: 'Clair AA', isLight: true,  bg0: '#f6f1e7', bg1: '#fdfaf3', bg2: '#ede5d5', bg3: '#dfd5c0', fg0: '#1c1917', fg1: '#292524', fg2: '#57534e', fg3: '#78716c', accent: '#9a3412', up: '#15803d', down: '#b91c1c', amber: '#a16207', glassRgb: '253, 250, 243',elevRgb: '253, 250, 243',inRgb: '245, 239, 227',grad: 'radial-gradient(circle at 50% 0%, #efe7d6 0%, #f6f1e7 65%, #ebe2cf 100%)', alpha: 90 },
-      'alabaster-pro':{ theme: 'alabaster-pro',  label: 'Alabaster Studio',  cat: 'Clair AA', isLight: true,  bg0: '#eef2f6', bg1: '#f8fafc', bg2: '#e2e8f0', bg3: '#cbd5e1', fg0: '#090d16', fg1: '#1e293b', fg2: '#475569', fg3: '#5b6b80', accent: '#4f46e5', up: '#059669', down: '#e11d48', amber: '#b45309', glassRgb: '248, 250, 252',elevRgb: '255, 255, 255',inRgb: '236, 241, 247',grad: 'radial-gradient(circle at 75% 0%, #dbeafe 0%, #eef2f6 60%, #e2e8f0 100%)', alpha: 88 }
+      'alabaster-pro':{ theme: 'alabaster-pro',  label: 'Alabaster Studio',  cat: 'Clair AA', isLight: true,  bg0: '#eef2f6', bg1: '#f8fafc', bg2: '#e2e8f0', bg3: '#cbd5e1', fg0: '#090d16', fg1: '#1e293b', fg2: '#475569', fg3: '#5b6b80', accent: '#4f46e5', up: '#059669', down: '#e11d48', amber: '#b45309', glassRgb: '248, 250, 252',elevRgb: '255, 255, 255',inRgb: '236, 241, 247',grad: 'radial-gradient(circle at 75% 0%, #dbeafe 0%, #eef2f6 60%, #e2e8f0 100%)', alpha: 88 },
+      'crimson-stealth':{ theme: 'crimson-stealth', label: 'Stealth Crimson', cat: 'Quant', isLight: false, bg0: '#0a0406', bg1: '#14080c', bg2: '#210d14', bg3: '#31131e', fg0: '#fff1f2', fg1: '#ffe4e6', fg2: '#fca5a5', fg3: '#b97b82', accent: '#f43f5e', up: '#34d399', down: '#fb7185', amber: '#fbbf24', glassRgb: '20, 8, 12', elevRgb: '28, 11, 17', inRgb: '10, 4, 6', grad: 'radial-gradient(circle at 25% 0%, #3b0d1b 0%, #0d0407 58%, #050203 100%)', alpha: 84 },
+      'dracula-quant':  { theme: 'dracula-quant',   label: 'Dracula Violet',  cat: 'Quant', isLight: false, bg0: '#13111c', bg1: '#1c192b', bg2: '#27233b', bg3: '#342f4f', fg0: '#f8f8f2', fg1: '#e2e0f5', fg2: '#bd93f9', fg3: '#8c83b3', accent: '#ff79c6', up: '#50fa7b', down: '#ff5555', amber: '#f1fa8c', glassRgb: '28, 25, 43', elevRgb: '36, 32, 56', inRgb: '19, 17, 28', grad: 'radial-gradient(circle at 70% 10%, #3b2663 0%, #191626 55%, #0d0b14 100%)', alpha: 82 },
+      'tokyo-sakura':   { theme: 'tokyo-sakura',    label: 'Tokyo Sakura',    cat: 'Néon',  isLight: false, bg0: '#0c0814', bg1: '#160f24', bg2: '#231838', bg3: '#332252', fg0: '#fdf4ff', fg1: '#fae8ff', fg2: '#d8b4fe', fg3: '#9e7bb8', accent: '#f472b6', up: '#2dd4bf', down: '#fb7185', amber: '#fde047', glassRgb: '22, 15, 36', elevRgb: '31, 21, 50', inRgb: '12, 8, 20', grad: 'radial-gradient(circle at 80% 0%, #581c59 0%, #140d21 55%, #08050f 100%)', alpha: 80 },
+      'emerald-obsidian':{ theme: 'emerald-obsidian', label: 'Quant Emerald Pro', cat: 'Terminal', isLight: false, bg0: '#020908', bg1: '#051412', bg2: '#09211d', bg3: '#0f302b', fg0: '#f0fdf9', fg1: '#ccfbf1', fg2: '#7dd3c8', fg3: '#4f9c92', accent: '#10b981', up: '#34d399', down: '#f43f5e', amber: '#f59e0b', glassRgb: '5, 20, 18', elevRgb: '8, 30, 27', inRgb: '2, 9, 8', grad: 'radial-gradient(circle at 15% 0%, #093b32 0%, #041210 55%, #010605 100%)', alpha: 84 },
+      'titanium-slate': { theme: 'titanium-slate',  label: 'Citadel Slate',   cat: 'Sombre', isLight: false, bg0: '#0b0e14', bg1: '#121722', bg2: '#1b2232', bg3: '#263045', fg0: '#f8fafc', fg1: '#e2e8f0', fg2: '#94a3b8', fg3: '#64748b', accent: '#818cf8', up: '#22c55e', down: '#ef4444', amber: '#eab308', glassRgb: '18, 23, 34', elevRgb: '25, 32, 48', inRgb: '11, 14, 20', grad: 'radial-gradient(circle at 50% 0%, #1e293b 0%, #0e131d 55%, #070a0f 100%)', alpha: 85 },
+      'copper-luxury':  { theme: 'copper-luxury',   label: 'Mayfair Copper',  cat: 'Luxe',   isLight: false, bg0: '#0a0706', bg1: '#150f0c', bg2: '#221712', bg3: '#32221b', fg0: '#fff7ed', fg1: '#fed7aa', fg2: '#cfa082', fg3: '#966d54', accent: '#fb923c', up: '#4ade80', down: '#f43f5e', amber: '#fbbf24', glassRgb: '21, 15, 12', elevRgb: '30, 21, 17', inRgb: '10, 7, 6', grad: 'radial-gradient(circle at 35% 0%, #432211 0%, #120c09 55%, #070403 100%)', alpha: 84 },
+      'arctic-mint':    { theme: 'arctic-mint',     label: 'Arctic Daylight', cat: 'Clair AA', isLight: true, bg0: '#eff7f6', bg1: '#ffffff', bg2: '#e1efed', bg3: '#cde2df', fg0: '#0b1d1c', fg1: '#13302e', fg2: '#3d5e5b', fg3: '#5a7d7a', accent: '#0d9488', up: '#059669', down: '#e11d48', amber: '#d97706', glassRgb: '255, 255, 255', elevRgb: '255, 255, 255', inRgb: '239, 247, 246', grad: 'radial-gradient(circle at 20% 0%, #ccfbf1 0%, #eff7f6 65%, #e2efed 100%)', alpha: 88 },
+      'solarized-cream':{ theme: 'solarized-cream', label: 'Solarized Cream', cat: 'Clair AA', isLight: true, bg0: '#fdf6e3', bg1: '#fffdf7', bg2: '#eee8d5', bg3: '#dfd8c3', fg0: '#073642', fg1: '#1c4652', fg2: '#586e75', fg3: '#74888e', accent: '#268bd2', up: '#2aa198', down: '#dc322f', amber: '#b58900', glassRgb: '255, 253, 247', elevRgb: '255, 253, 247', inRgb: '238, 232, 213', grad: 'radial-gradient(circle at 60% 0%, #f5ebd1 0%, #fdf6e3 65%, #eee8d5 100%)', alpha: 90 }
     };
 
     var STRATEGY_LABELS = {
@@ -2755,14 +2808,50 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var a = Number(t.alpha || 80) / 100;
       r.setProperty('--surface-glass', 'rgba(' + (t.glassRgb || '11, 17, 30') + ', ' + a.toFixed(2) + ')');
+      var blurPx = t.blur !== undefined ? Number(t.blur) : 24;
+      r.setProperty('--glass-blur', blurPx + 'px');
+      var radPx = t.radius !== undefined ? Number(t.radius) : 16;
+      r.setProperty('--r-lg', radPx + 'px');
+      r.setProperty('--r-md', Math.max(2, radPx - 4) + 'px');
+      var glowPct = Number(t.glow || 0);
+      r.setProperty('--accent-glow', glowPct > 0 ? ('0 0 ' + Math.round(glowPct * 0.28) + 'px ' + hexToRgba(t.accent, (glowPct / 100) * 0.35)) : '0 0 0 transparent');
+      var fontMode = t.fontMode || 'inter';
+      r.setProperty('--font',
+        fontMode === 'mono'
+          ? 'ui-monospace, "Cascadia Code", "Fira Code", Consolas, monospace'
+          : fontMode === 'system'
+            ? 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
+            : '"Inter Variable", "Inter Fallback", system-ui, -apple-system, "Segoe UI", sans-serif'
+      );
+      var dens = t.density || 'normal';
+      r.setProperty('--card-pad', dens === 'compact' ? '11px' : dens === 'spacious' ? '24px' : '18px');
+
       var lbl = document.getElementById('glassValLbl');
       if (lbl) lbl.textContent = String(t.alpha || 80);
       var sl = document.getElementById('prefGlassAlpha');
       if (sl) sl.value = String(t.alpha || 80);
+      var bLbl = document.getElementById('blurValLbl');
+      if (bLbl) bLbl.textContent = String(blurPx);
+      var bSl = document.getElementById('prefGlassBlur');
+      if (bSl) bSl.value = String(blurPx);
+      var rLbl = document.getElementById('radiusValLbl');
+      if (rLbl) rLbl.textContent = String(radPx);
+      var rSl = document.getElementById('prefBorderRadius');
+      if (rSl) rSl.value = String(radPx);
+      var gLbl = document.getElementById('glowValLbl');
+      if (gLbl) gLbl.textContent = String(glowPct);
+      var gSl = document.getElementById('prefGlow');
+      if (gSl) gSl.value = String(glowPct);
       var ac = document.getElementById('prefAccent');
       if (ac && t.accent) ac.value = t.accent;
       var upEl = document.getElementById('prefUp');
       if (upEl && t.up) upEl.value = t.up;
+      var dnEl = document.getElementById('prefDown');
+      if (dnEl && t.down) dnEl.value = t.down;
+      var fSel = document.getElementById('prefFontFamily');
+      if (fSel) fSel.value = fontMode;
+      var dSel = document.getElementById('prefDensity');
+      if (dSel) dSel.value = dens;
       var thChip = document.getElementById('deskThemeChip');
       if (thChip) thChip.textContent = 'THÈME : ' + String(t.label || name).toUpperCase();
 
@@ -2833,9 +2922,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     function updateGlassAlpha(val) {
+      updateThemePref('alpha', Number(val));
+    }
+
+    function updateThemePref(key, val) {
       var cur = getCurrentThemePrefs();
-      cur.alpha = Number(val);
+      cur[key] = val;
       applyThemeValues(cur, true);
+    }
+
+    function resetThemeStudioPrefs() {
+      applyThemePreset('obsidian');
     }
 
     // ==================== NAVIGATION, HUD CLEARANCE & RACCOURCIS ====================
@@ -5683,9 +5780,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         : 0;
 
       var hasMt5 = Boolean(deskState.mt5Live && deskState.mt5Live.connected);
-      var baseCurve = (deskState.curve || []).filter(function (pt) {
+      var rawBase = (deskState.curve || []).filter(function (pt) {
         return pt && Number.isFinite(Number(pt.t)) && Number.isFinite(Number(pt.eq)) && Number(pt.eq) > 0;
       });
+      // Purge client-side tout pic aberrant isolé (ex: artefact +100% à 174 838€)
+      var baseCurve = [];
+      for (var bi = 0; bi < rawBase.length; bi++) {
+        var bPt = rawBase[bi];
+        var win = [];
+        for (var bj = Math.max(0, bi - 3); bj <= Math.min(rawBase.length - 1, bi + 3); bj++) {
+          if (bj !== bi) win.push(Number(rawBase[bj].eq));
+        }
+        win.sort(function (a, b) { return a - b; });
+        var locMed = win.length ? win[Math.floor(win.length / 2)] : Number(bPt.eq);
+        if (locMed > 0 && (Number(bPt.eq) > locMed * 1.30 || Number(bPt.eq) < locMed * 0.70)) {
+          continue;
+        }
+        baseCurve.push(bPt);
+      }
       var lastMeasured = baseCurve.length ? baseCurve[baseCurve.length - 1] : null;
       var liveEq = hasMt5
         ? Number(deskState.mt5Live.equity || 0)

@@ -29,6 +29,19 @@ export type LocalMt5RejectedOrder = {
   reason: string;
 };
 
+export type LocalMt5ClosedDeal = {
+  deal: number;
+  positionId: number;
+  id: string;
+  symbol: string;
+  side: "BUY" | "SELL";
+  lots: number;
+  entry: number;
+  exit: number;
+  profit: number;
+  closedAt: number;
+};
+
 export type LocalMt5State = {
   connected: boolean;
   timestamp: number;
@@ -47,6 +60,7 @@ export type LocalMt5State = {
   cryptoSupported?: boolean;
   availableCryptos?: string[];
   rejectedOrders?: LocalMt5RejectedOrder[];
+  closedDeals?: LocalMt5ClosedDeal[];
 };
 
 const US_EQUITY_SYMBOLS = new Set(["NVDA", "AAPL", "TSLA", "MSFT", "AMZN"]);
@@ -1039,6 +1053,63 @@ void WriteMt5StateToFile() {
       json += "\\"symbol\\":\\"" + JsonEscape(gRejSyms[r]) + "\\",";
       json += "\\"reason\\":\\"" + JsonEscape(gRejReasons[r]) + "\\"";
       json += "}";
+   }
+   json += "],";
+
+   // Historique des deals clôturés MT5 (14 derniers jours, max 60) pour synchroniser 100% le Ledger
+   json += "\\"closedDeals\\":[";
+   datetime histFrom = TimeCurrent() - 14 * 86400;
+   datetime histTo = TimeCurrent() + 3600;
+   long tzOffsetSec = (long)TimeGMT() - (long)TimeCurrent();
+   if(HistorySelect(histFrom, histTo)) {
+      int totalDeals = HistoryDealsTotal();
+      int emittedDeals = 0;
+      for(int d = totalDeals - 1; d >= 0 && emittedDeals < 60; d--) {
+         ulong dealTicket = HistoryDealGetTicket(d);
+         if(dealTicket == 0) continue;
+         long dEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+         if(dEntry != DEAL_ENTRY_OUT && dEntry != DEAL_ENTRY_INOUT) continue;
+         long dType = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+         if(dType != DEAL_TYPE_BUY && dType != DEAL_TYPE_SELL) continue;
+         string dSym = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+         if(dSym == "") continue;
+         long dPosId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+         double dLots = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+         double dExitPx = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+         double dNet = HistoryDealGetDouble(dealTicket, DEAL_PROFIT) + HistoryDealGetDouble(dealTicket, DEAL_SWAP) + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+         long dTimeSec = (long)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+         string dCmt = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+         double dEntryPx = dExitPx;
+         for(int k = d - 1; k >= 0; k--) {
+            ulong inTicket = HistoryDealGetTicket(k);
+            if(inTicket == 0) continue;
+            if(HistoryDealGetInteger(inTicket, DEAL_POSITION_ID) == dPosId &&
+               HistoryDealGetInteger(inTicket, DEAL_ENTRY) == DEAL_ENTRY_IN) {
+               double pxIn = HistoryDealGetDouble(inTicket, DEAL_PRICE);
+               if(pxIn > 0.0) dEntryPx = pxIn;
+               string inCmt = HistoryDealGetString(inTicket, DEAL_COMMENT);
+               if(inCmt != "" && dCmt == "") dCmt = inCmt;
+               break;
+            }
+         }
+         string origSide = (dType == DEAL_TYPE_SELL) ? "BUY" : "SELL";
+         int dDigits = (int)SymbolInfoInteger(dSym, SYMBOL_DIGITS);
+         if(dDigits < 2 || dDigits > 8) dDigits = 5;
+         if(emittedDeals > 0) json += ",";
+         emittedDeals++;
+         json += "{";
+         json += "\\"deal\\":" + IntegerToString((long)dealTicket) + ",";
+         json += "\\"positionId\\":" + IntegerToString(dPosId) + ",";
+         json += "\\"id\\":\\"" + JsonEscape(dCmt) + "\\",";
+         json += "\\"symbol\\":\\"" + JsonEscape(dSym) + "\\",";
+         json += "\\"side\\":\\"" + origSide + "\\",";
+         json += "\\"lots\\":" + DoubleToString(dLots, 2) + ",";
+         json += "\\"entry\\":" + DoubleToString(dEntryPx, dDigits) + ",";
+         json += "\\"exit\\":" + DoubleToString(dExitPx, dDigits) + ",";
+         json += "\\"profit\\":" + DoubleToString(dNet, 2) + ",";
+         json += "\\"closedAt\\":" + IntegerToString((dTimeSec + tzOffsetSec) * 1000);
+         json += "}";
+      }
    }
    json += "]";
    json += "}";
