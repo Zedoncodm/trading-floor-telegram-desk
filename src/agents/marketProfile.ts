@@ -1,4 +1,4 @@
-import type { Direction, Kline, MarketProfileSummary } from "../types.ts";
+import type { Direction, Kline, MarketProfileBin, MarketProfileSummary } from "../types.ts";
 
 /**
  * Analyseur Market Profile temps réel (POC, VAH, VAL & détection de régime Range).
@@ -111,6 +111,16 @@ export class MarketProfileAnalyzer {
     const pricePosition: MarketProfileSummary["pricePosition"] =
       px > vah ? "above_vah" : px < val ? "below_val" : "inside_va";
 
+    const profileBins: MarketProfileBin[] = [];
+    for (let i = 0; i < bins; i++) {
+      profileBins.push({
+        price: Number((sessionLow + (i + 0.5) * step).toFixed(5)),
+        volume: Number(hist[i].toFixed(2)),
+        inValueArea: i >= lowIdx && i <= highIdx,
+        isPoc: i === pocIdx,
+      });
+    }
+
     return {
       symbol,
       poc,
@@ -122,6 +132,7 @@ export class MarketProfileAnalyzer {
       valueAreaPct: 0.7,
       isRange,
       pricePosition,
+      bins: profileBins,
       updatedAt: now,
     };
   }

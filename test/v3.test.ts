@@ -8,6 +8,7 @@ import { computeLeveragedSizing, SocialSentimentEngine, TradingFloorDesk } from 
 import { GrpoEngine } from "../src/rl/grpo.ts";
 import { DeskStore } from "../src/store.ts";
 import { TelegramFloorRoom } from "../src/telegram.ts";
+import { ActiveTradeManager } from "../src/agents/activeTradeManager.ts";
 import { LiquidityHunterAgent } from "../src/agents/liquidityHunter.ts";
 import { MarketProfileAnalyzer } from "../src/agents/marketProfile.ts";
 import { SentinelAgent, TokenBucketRateLimiter } from "../src/agents/sentinel.ts";
@@ -797,6 +798,7 @@ test("MarketProfileAnalyzer computes POC/VAH/VAL and strictly forbids LONG above
     const grpo = new GrpoEngine(join(dir, "grpo-memory.json"));
     const desk = new TradingFloorDesk(cfg, store, tg, grpo);
     desk.state = state;
+    (desk as unknown as { refreshTape: () => Promise<never[]> }).refreshTape = async () => [];
 
     const highPx = profile.vah + 2.0;
     const snapAboveVah: MarketSnapshot = {
@@ -849,6 +851,7 @@ test("Agentic Self-Reflection persists trade_post_mortem.json on close and dynam
     const grpo = new GrpoEngine(join(dir, "grpo-memory.json"));
     const desk = new TradingFloorDesk(cfg, store, tg, grpo);
     desk.state = state;
+    (desk as unknown as { refreshTape: () => Promise<never[]> }).refreshTape = async () => [];
 
     const now = Date.now();
     const mkBreakoutTicket = (id: string, offsetMs: number): Ticket => ({
@@ -942,6 +945,104 @@ test("Agentic Self-Reflection persists trade_post_mortem.json on close and dynam
       "Expected Strategist systemPrompt to be dynamically updated with 15m Reviewer directive",
     );
     assert.ok(desk.state.agentPrompts.strategist.systemPrompt.includes(directive));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Charts architecture separates 75/25 Market Profile sidebar & syncs ExecutionTrader dashed SL/TP/Open + markers", () => {
+  for (const needle of [
+    "chartMarketProfilePanel",
+    "Market Profile & Volume Node",
+    "mpPocVal",
+    "mpVahVal",
+    "mpValVal",
+    "mpStatusBadge",
+    "mpVolumeHistogram",
+    "renderMarketProfilePanel",
+    "syncChartExecutionOverlays",
+    "HARD SL",
+    "HARD TP",
+    "setMarkers",
+  ]) {
+    assert.ok(DASHBOARD_HTML.includes(needle), `Expected Chart UI element: ${needle}`);
+  }
+  assert.ok(!DASHBOARD_HTML.includes("title: 'POC'"), "POC line must NOT overlay lightweight-charts candles");
+  assert.ok(!DASHBOARD_HTML.includes("title: 'VAH'"), "VAH line must NOT overlay lightweight-charts candles");
+  assert.ok(!DASHBOARD_HTML.includes("title: 'VAL'"), "VAL line must NOT overlay lightweight-charts candles");
+});
+
+test("ActiveTradeManager emits async Hard Break-Even OrderModify at 50% TP (+ fees) and updates ExecutionTrader chart state", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-atm-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const state = store.loadOrCreate(10_000, cfg.timeZone, ["BTCUSDT"], 15);
+    state.settings.regime = "standard";
+    state.settings.progressiveStopEnabled = false;
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "grpo-memory.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+    desk.state = state;
+    (desk as unknown as { refreshTape: () => Promise<never[]> }).refreshTape = async () => [];
+
+    const now = Date.now();
+    const ticket: Ticket = {
+      id: "ATM-1",
+      asset: "BTCUSDT",
+      direction: "long",
+      playbook: "breakout",
+      engine: "breakout",
+      thesis: "Test ActiveTradeManager Hard BE",
+      entry: 100,
+      fillPrice: 100,
+      invalidation: 98,
+      target: 110,
+      timeStopHours: 12,
+      notional: 5000,
+      qty: 50,
+      riskUsd: 100,
+      riskPct: 0.01,
+      exposurePct: 0.5,
+      binding: "risk",
+      producedBy: ["strategist", "execution"],
+      backtest: {
+        playbook: "breakout",
+        rules: "atm",
+        source: "unit-test",
+        inSample: { label: "IS", bars: 100, trades: 10, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.6, sharpe: 1.2, var95R: -1, maxDrawdownR: 2, deflatedSharpe: 0.8, pass: true },
+        outOfSample: { label: "OOS", bars: 50, trades: 6, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.6, sharpe: 1.1, var95R: -1, maxDrawdownR: 1.5, deflatedSharpe: 0.8, pass: true },
+        pass: true,
+      },
+      status: "open",
+      createdAt: now - 60_000,
+      filledAt: now - 50_000,
+      expiresAt: now + 3_600_000,
+      fees: 2.0,
+      funding: 0,
+    };
+
+    // Before 50% path to TP (104 < 105 midpoint), should NOT trigger OrderModify
+    const preEval = ActiveTradeManager.evaluateBreakEvenOrderModify(ticket, 104);
+    assert.equal(preEval.shouldModify, false);
+
+    // At 50% path to TP (105 of 100 -> 110), MUST trigger Hard BE SL (+fee buffer) without closing locally
+    desk.state.tickets.push(ticket);
+    desk.state.tape = [
+      { symbol: "BTCUSDT", name: "BTC", px: 105.0, prev: 100, change24h: 0.05, funding: null, oiUsd: null, bookImbalance: null, venue1: "Binance", venue2: "Bybit", verified2ndSource: true, sparkline: [100, 105], updatedAt: now },
+    ];
+
+    await desk.monitorStep();
+
+    assert.equal(ticket.status, "open", "Ticket must remain open when Hard BE OrderModify triggers");
+    assert.equal(ticket.breakEvenActive, true, "breakEvenActive must flip to true");
+    assert.ok(ticket.invalidation > 100 && ticket.invalidation <= 100.1, `Expected fee-covered Hard BE SL (~100.08), got ${ticket.invalidation}`);
+    assert.equal(desk.state.executionTraderState?.lastOrderModify?.ticketId, "ATM-1");
+    assert.equal(desk.state.executionTraderState?.lastOrderModify?.newSl, ticket.invalidation);
+
+    const eaSource = Mt5CloudBridge.generateMql5ExpertAdvisor();
+    assert.ok(eaSource.includes("SyncOpenPositionStops"), "MQL5 bridge must sync Hard SL/TP via PositionModify on open positions");
+    assert.ok(eaSource.includes("trade.PositionModify"), "MQL5 bridge must invoke PositionModify");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

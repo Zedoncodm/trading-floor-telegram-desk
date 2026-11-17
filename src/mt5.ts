@@ -341,6 +341,49 @@ export class Mt5CloudBridge {
     }
   }
 
+  async modifyPosition(params: {
+    positionId?: string;
+    symbol?: string;
+    commentId?: string;
+    stopLoss: number;
+    takeProfit: number;
+  }): Promise<{ ok: boolean; message: string }> {
+    const sl = Number(params.stopLoss.toFixed(5));
+    const tp = Number(params.takeProfit.toFixed(5));
+    if (!this.isConfigured() || !params.positionId) {
+      return {
+        ok: true,
+        message: `OrderModify synchronisé via pont local (${params.commentId ?? params.symbol ?? "ticket"} · SL=${sl} · TP=${tp}).`,
+      };
+    }
+    try {
+      const res = await fetch(
+        `${MT5_CLIENT_BASE}/users/current/accounts/${encodeURIComponent(this.creds.accountId)}/trade`,
+        {
+          method: "POST",
+          headers: {
+            "auth-token": this.creds.metaApiToken,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            actionType: "POSITION_MODIFY",
+            positionId: params.positionId,
+            stopLoss: sl,
+            takeProfit: tp,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      const data = (await res.json()) as { stringCode?: string; message?: string };
+      if (!res.ok || (data.stringCode && data.stringCode !== "TRADE_RETCODE_DONE")) {
+        return { ok: false, message: `OrderModify MT5 refusé : ${data.message ?? data.stringCode ?? res.statusText}` };
+      }
+      return { ok: true, message: `OrderModify MT5 (#${params.positionId}) appliqué : SL=${sl} · TP=${tp}.` };
+    } catch (e) {
+      return { ok: false, message: `Erreur OrderModify MT5 : ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+
   static mapMt5SymbolToDesk(symbol: string): string {
     const raw = (symbol || "").trim().toUpperCase();
     const stripped = raw.replace(/(?:\.R|\.PRO|\.A|\.C|MICRO|RAW|_I|[M+])$/i, "");
@@ -718,6 +761,27 @@ bool ModifyPositionByComment(const string id, const string realSym, double slPx,
    return trade.PositionModify(realSym, slPx, tpPx);
 }
 
+bool SyncOpenPositionStops(const string id, double targetSl, double targetTp) {
+   for(int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic || PositionGetString(POSITION_COMMENT) != id) continue;
+      string pSym = PositionGetString(POSITION_SYMBOL);
+      int digits = (int)SymbolInfoInteger(pSym, SYMBOL_DIGITS);
+      double point = SymbolInfoDouble(pSym, SYMBOL_POINT);
+      double curSl = PositionGetDouble(POSITION_SL);
+      double curTp = PositionGetDouble(POSITION_TP);
+      double nextSl = (targetSl > 0.0) ? NormalizeDouble(targetSl, digits) : curSl;
+      double nextTp = (targetTp > 0.0) ? NormalizeDouble(targetTp, digits) : curTp;
+      double tol = MathMax(point * 5.0, 1e-6);
+      if(MathAbs(nextSl - curSl) > tol || MathAbs(nextTp - curTp) > tol) {
+         return trade.PositionModify(ticket, nextSl, nextTp);
+      }
+      return false;
+   }
+   return false;
+}
+
 void WriteMt5StateToFile() {
    long login    = AccountInfoInteger(ACCOUNT_LOGIN);
    string server = AccountInfoString(ACCOUNT_SERVER);
@@ -894,7 +958,10 @@ void OnTimer() {
       if(id == "" || symRaw == "") continue;
       activeIds += id + "|";
 
-      if(HasOpenPositionForId(id)) continue;
+      if(HasOpenPositionForId(id)) {
+         if(SyncOpenPositionStops(id, sl, tp)) stateDirty = true;
+         continue;
+      }
       if(StringFind(id, "MT5-") == 0) continue;
       if(StringFind(gFailedIds, "|" + id + "|") >= 0) continue;
 

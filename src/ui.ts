@@ -1431,7 +1431,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .draw-tool-btn:hover { color: var(--fg-0); background: rgba(128, 128, 128, 0.12); }
     .draw-tool-btn.active { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
     .chart-stage {
-      flex: 1;
+      flex: 1 1 75%;
       position: relative;
       border-radius: 12px;
       overflow: hidden;
@@ -1440,6 +1440,53 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       min-width: 0;
       min-height: 0;
     }
+    .chart-profile-panel {
+      flex: 0 0 25%;
+      min-width: 245px;
+      max-width: 340px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+    .mp-stat-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 11.5px;
+    }
+    .mp-bars-list {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      flex: 1;
+      min-height: 120px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .mp-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+    }
+    .mp-bar-track {
+      flex: 1;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+    .mp-bar-fill { height: 100%; border-radius: 999px; }
     #lwChartContainer, #tvWidgetContainer {
       position: absolute;
       inset: 0;
@@ -1448,6 +1495,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       min-height: 0;
     }
     #tvWidgetContainer { display: none; }
+    #lwChartContainer { display: block; }
     #chartDrawCanvas {
       position: absolute;
       inset: 0;
@@ -1471,6 +1519,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       .form-grid { grid-template-columns: 1fr; }
       .theme-grid { grid-template-columns: 1fr; }
       .chart-workspace { flex-direction: column; }
+      .chart-profile-panel { flex: none; max-width: none; width: 100%; max-height: 240px; }
       .draw-toolbar { flex-direction: row; width: 100%; height: auto; overflow-x: auto; }
     }
   </style>
@@ -1692,9 +1741,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="glass-card chart-shell">
       <div class="chart-toolbar">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <div class="seg-group" id="chartEngineGroup" title="Basculer entre le widget TradingView officiel et le graphique connecté aux positions live du Desk">
-            <button class="seg-btn active" data-engine="tv" onclick="setChartEngine(&quot;tv&quot;)">TradingView</button>
-            <button class="seg-btn" data-engine="desk" onclick="setChartEngine(&quot;desk&quot;)">Graphique Desk</button>
+          <div class="seg-group" id="chartEngineGroup" title="Basculer entre le graphique Desk connecté aux exécutions MT5 et TradingView">
+            <button class="seg-btn active" data-engine="desk" onclick="setChartEngine(&quot;desk&quot;)">Graphique Desk</button>
+            <button class="seg-btn" data-engine="tv" onclick="setChartEngine(&quot;tv&quot;)">TradingView</button>
           </div>
           <select id="chartSymbolSelect" class="input-dark mono" onchange="onChartSymbolChange()"></select>
           <button id="btnFavTfStar" class="pill-btn" onclick="toggleCurrentTfFavorite()" title="Ajouter ou retirer cette unité de temps des favoris">FAV</button>
@@ -1754,6 +1803,36 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <div id="lwChartContainer"></div>
           <canvas id="chartDrawCanvas"></canvas>
         </div>
+
+        <aside id="chartMarketProfilePanel" class="chart-profile-panel" aria-label="Market Profile & Volume Node">
+          <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:6px">
+            <strong style="font-size:11.5px;letter-spacing:0.05em;text-transform:uppercase;color:var(--fg-1)">Market Profile & Volume Node</strong>
+            <span id="mpSymbolBadge" class="mono" style="font-size:11px;color:var(--fg-2)">--</span>
+          </div>
+          <div id="mpStatusBadge" class="mono" style="font-size:11px;font-weight:700;padding:6px 9px;border-radius:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)">
+            STATUS: EN ATTENTE
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px" class="mono">
+            <div class="mp-stat-card" style="border-color:rgba(250,204,21,0.35)">
+              <span style="color:var(--fg-2)">POC (Point of Control)</span>
+              <strong id="mpPocVal" style="color:#facc15">--</strong>
+            </div>
+            <div class="mp-stat-card" style="border-color:rgba(56,189,248,0.35)">
+              <span style="color:var(--fg-2)">VAH (Value Area High)</span>
+              <strong id="mpVahVal" style="color:#38bdf8">--</strong>
+            </div>
+            <div class="mp-stat-card" style="border-color:rgba(56,189,248,0.35)">
+              <span style="color:var(--fg-2)">VAL (Value Area Low)</span>
+              <strong id="mpValVal" style="color:#38bdf8">--</strong>
+            </div>
+          </div>
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.06em;color:var(--fg-2);font-weight:700">
+            Volume par Prix (Histogramme)
+          </div>
+          <div id="mpVolumeHistogram" class="mp-bars-list mono">
+            <span style="font-size:11px;color:var(--fg-3)">En attente des données de session...</span>
+          </div>
+        </aside>
       </div>
     </div>
   </section>
@@ -4653,8 +4732,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       { id: '1w', lbl: '1sem', tv: 'W' },
       { id: '1M', lbl: '1mois', tv: 'M' }
     ];
-    var chartEngine = 'tv';
+    var chartEngine = 'desk';
     var activeTimeframe = '15m';
+    var chartBarsCache = [];
+    var lastChartExecSig = '';
     var favTimeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
     try {
       var savedFavTfs = localStorage.getItem('tf_v3_fav_tfs');
@@ -4857,6 +4938,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     function initChartTab() {
       renderTimeframeStrip();
       loadDrawingsForSymbol(getActiveChartSymbol());
+      renderMarketProfilePanel(getActiveChartSymbol());
       resizeDrawCanvas();
       if (chartEngine === 'tv') {
         initTradingViewWidget();
@@ -4919,8 +5001,153 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       await refreshChartData();
     }
 
+    function renderMarketProfilePanel(sym) {
+      var symEl = document.getElementById('mpSymbolBadge');
+      var stEl = document.getElementById('mpStatusBadge');
+      var pocEl = document.getElementById('mpPocVal');
+      var vahEl = document.getElementById('mpVahVal');
+      var valEl = document.getElementById('mpValVal');
+      var histEl = document.getElementById('mpVolumeHistogram');
+      if (symEl) symEl.textContent = sym || '--';
+      var mp = deskState && deskState.marketProfiles && deskState.marketProfiles[sym];
+      if (!mp) {
+        if (stEl) {
+          stEl.textContent = 'STATUS: EN ATTENTE';
+          stEl.style.color = 'var(--fg-2)';
+          stEl.style.borderColor = 'rgba(255,255,255,0.1)';
+        }
+        if (pocEl) pocEl.textContent = '--';
+        if (vahEl) vahEl.textContent = '--';
+        if (valEl) valEl.textContent = '--';
+        if (histEl) histEl.innerHTML = '<span style="font-size:11px;color:var(--fg-3)">En attente des données de session...</span>';
+        return;
+      }
+      if (pocEl) pocEl.textContent = fmtPx(mp.poc);
+      if (vahEl) vahEl.textContent = fmtPx(mp.vah);
+      if (valEl) valEl.textContent = fmtPx(mp.val);
+      if (stEl) {
+        var inRange = Boolean(mp.isRange);
+        stEl.textContent = inRange ? 'STATUS: IN RANGE' : 'STATUS: IMBALANCE/TRENDING';
+        stEl.style.color = inRange ? '#38bdf8' : '#facc15';
+        stEl.style.borderColor = inRange ? 'rgba(56,189,248,0.4)' : 'rgba(250,204,21,0.4)';
+      }
+      if (histEl) {
+        var bins = Array.isArray(mp.bins) ? mp.bins.slice().sort(function (a, b) { return b.price - a.price; }) : [];
+        if (!bins.length) {
+          histEl.innerHTML = '<span style="font-size:11px;color:var(--fg-3)">Histogramme indisponible</span>';
+        } else {
+          var maxVol = bins.reduce(function (m, b) { return Math.max(m, Number(b.volume || 0)); }, 1e-9);
+          histEl.innerHTML = bins.map(function (b) {
+            var wPct = Math.max(4, Math.round((Number(b.volume || 0) / maxVol) * 100));
+            var barColor = b.isPoc ? '#facc15' : b.inValueArea ? '#38bdf8' : 'rgba(148,163,184,0.45)';
+            var txtColor = b.isPoc ? '#facc15' : b.inValueArea ? '#7dd3fc' : 'var(--fg-3)';
+            return (
+              '<div class="mp-bar-row" title="Prix ' + fmtPx(b.price) + ' · Vol ' + Number(b.volume || 0).toFixed(1) + '">' +
+                '<span style="width:62px;text-align:right;color:' + txtColor + ';font-weight:' + (b.isPoc ? '700' : '500') + '">' + fmtPx(b.price) + '</span>' +
+                '<div class="mp-bar-track"><div class="mp-bar-fill" style="width:' + wPct + '%;background:' + barColor + '"></div></div>' +
+              '</div>'
+            );
+          }).join('');
+        }
+      }
+    }
+
+    function snapTsToBarTime(tsMs, bars) {
+      if (!bars || !bars.length || !tsMs) return null;
+      var targetSec = Math.floor(Number(tsMs) / 1000);
+      if (targetSec < bars[0].time || targetSec > bars[bars.length - 1].time + 3600) {
+        return bars[bars.length - 1].time;
+      }
+      var best = bars[0].time;
+      for (var i = 0; i < bars.length; i++) {
+        if (bars[i].time <= targetSec) best = bars[i].time;
+        else break;
+      }
+      return best;
+    }
+
+    function syncChartExecutionOverlays() {
+      var sym = getActiveChartSymbol();
+      renderMarketProfilePanel(sym);
+      if (!lwCandleSeries || !lwChart || !deskState) return;
+      var tickets = Array.isArray(deskState.tickets) ? deskState.tickets : [];
+      var openTk = tickets.filter(function (tk) { return tk.status === 'open' && tk.asset === sym; });
+      var closedTk = tickets.filter(function (tk) { return tk.status === 'closed' && tk.asset === sym; }).slice(-20);
+      var execTs = (deskState.executionTraderState && deskState.executionTraderState.updatedAt) || 0;
+      var sig = sym + '|' + execTs + '|' + openTk.map(function (t) {
+        return t.id + ':' + (t.fillPrice || t.entry) + ':' + t.invalidation + ':' + t.target + ':' + (t.breakEvenActive ? 1 : 0);
+      }).join(',') + '|C:' + closedTk.map(function (t) { return t.id + ':' + (t.closedAt || 0); }).join(',');
+
+      if (sig === lastChartExecSig) return;
+      lastChartExecSig = sig;
+
+      lwPriceLines.forEach(function (pl) { try { lwCandleSeries.removePriceLine(pl); } catch (e) {} });
+      lwPriceLines = [];
+
+      openTk.forEach(function (tk) {
+        var entryPx = tk.fillPrice || tk.entry;
+        lwPriceLines.push(lwCandleSeries.createPriceLine({
+          price: entryPx,
+          color: '#38bdf8',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: tk.id + ' OPEN (' + tk.direction.toUpperCase() + ')'
+        }));
+        lwPriceLines.push(lwCandleSeries.createPriceLine({
+          price: tk.invalidation,
+          color: '#f43f5e',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'HARD SL' + (tk.breakEvenActive ? ' [BE]' : '')
+        }));
+        lwPriceLines.push(lwCandleSeries.createPriceLine({
+          price: tk.target,
+          color: '#10b981',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'HARD TP'
+        }));
+      });
+
+      if (typeof lwCandleSeries.setMarkers === 'function' && chartBarsCache.length) {
+        var markers = [];
+        closedTk.forEach(function (tk) {
+          var closeTs = tk.closedAt || tk.createdAt;
+          var snapped = snapTsToBarTime(closeTs, chartBarsCache);
+          if (!snapped) return;
+          var pnl = Number(tk.pnl || 0);
+          var win = pnl >= 0;
+          markers.push({
+            time: snapped,
+            position: win ? 'aboveBar' : 'belowBar',
+            color: win ? '#10b981' : '#f43f5e',
+            shape: win ? 'arrowDown' : 'arrowUp',
+            text: (win ? 'TP ' : 'SL ') + (pnl >= 0 ? '+' : '') + pnl.toFixed(1)
+          });
+        });
+        openTk.forEach(function (tk) {
+          var fillTs = tk.filledAt || tk.createdAt;
+          var snappedOpen = snapTsToBarTime(fillTs, chartBarsCache);
+          if (!snappedOpen) return;
+          markers.push({
+            time: snappedOpen,
+            position: tk.direction === 'long' ? 'belowBar' : 'aboveBar',
+            color: '#38bdf8',
+            shape: tk.direction === 'long' ? 'arrowUp' : 'arrowDown',
+            text: tk.direction.toUpperCase() + ' ' + tk.id
+          });
+        });
+        markers.sort(function (a, b) { return a.time - b.time; });
+        try { lwCandleSeries.setMarkers(markers); } catch (e) {}
+      }
+    }
+
     async function refreshChartData() {
       var sym = getActiveChartSymbol();
+      renderMarketProfilePanel(sym);
       var res = await fetch('/api/candles?symbol=' + encodeURIComponent(sym) + '&interval=' + encodeURIComponent(activeTimeframe) + '&limit=240');
       var data = await res.json();
       if (!data.ok || !Array.isArray(data.candles)) return;
@@ -4934,8 +5161,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
 
       if (!lwCandleSeries || !lwChart) return;
-      lwPriceLines.forEach(function (pl) { try { lwCandleSeries.removePriceLine(pl); } catch (e) {} });
-      lwPriceLines = [];
+      lastChartExecSig = '';
 
       var tTheme = getCurrentThemePrefs();
       var seen = {};
@@ -4955,31 +5181,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
       cBars.sort(function (a, b) { return a.time - b.time; });
       vBars.sort(function (a, b) { return a.time - b.time; });
+      chartBarsCache = cBars;
       if (cBars.length) {
         lwCandleSeries.setData(cBars);
         lwVolSeries.setData(vBars);
         lwChart.timeScale().fitContent();
       }
 
-      if (data.vwap && data.vwap.vwap) {
-        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: data.vwap.vwap, color: tTheme.accent || '#38bdf8', lineWidth: 1, title: 'VWAP' }));
-      }
-      if (data.fvg && data.fvg.midPrice) {
-        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: data.fvg.midPrice, color: tTheme.amber || '#f59e0b', lineWidth: 1, title: 'FVG 50%' }));
-      }
-      var mp = deskState && deskState.marketProfiles && deskState.marketProfiles[sym];
-      if (mp && mp.poc > 0) {
-        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: mp.poc, color: '#eab308', lineWidth: 2, lineStyle: 0, title: 'POC' }));
-        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: mp.vah, color: '#a855f7', lineWidth: 1, lineStyle: 2, title: 'VAH' }));
-        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: mp.val, color: '#a855f7', lineWidth: 1, lineStyle: 2, title: 'VAL' }));
-      }
-      if (deskState && deskState.tickets) {
-        deskState.tickets.filter(function (tk) { return tk.status === 'open' && tk.asset === sym; }).forEach(function (tk) {
-          lwPriceLines.push(lwCandleSeries.createPriceLine({ price: tk.fillPrice || tk.entry, color: '#22d3ee', lineWidth: 2, title: tk.id + ' ENTRY' }));
-          lwPriceLines.push(lwCandleSeries.createPriceLine({ price: tk.invalidation, color: tTheme.down || '#f43f5e', lineWidth: 1, title: 'SL' }));
-          lwPriceLines.push(lwCandleSeries.createPriceLine({ price: tk.target, color: tTheme.up || '#10b981', lineWidth: 1, title: 'TP' }));
-        });
-      }
+      syncChartExecutionOverlays();
     }
 
     // ---- CALQUE DE DESSIN TACTILE & SOURIS + SAUVEGARDE PAR SYMBOLE ----
@@ -7026,6 +7235,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       update3dAgentSpritesAndPulses();
       renderPinnedChartPositions();
+      if (currentTab === 'charts') {
+        syncChartExecutionOverlays();
+      }
       updateToggleAllAssetsLabel();
       renderChat();
       renderJournalView();

@@ -284,6 +284,13 @@ export type FvgZone = {
   candleTime: number;
 };
 
+export type MarketProfileBin = {
+  price: number;
+  volume: number;
+  inValueArea: boolean;
+  isPoc: boolean;
+};
+
 export type MarketProfileSummary = {
   symbol: string;
   poc: number;
@@ -295,6 +302,7 @@ export type MarketProfileSummary = {
   valueAreaPct: number;
   isRange: boolean;
   pricePosition: "above_vah" | "inside_va" | "below_val";
+  bins?: MarketProfileBin[];
   updatedAt: number;
 };
 
@@ -447,6 +455,7 @@ export type Ticket = {
   partialTpDone?: boolean;
   partialTpPrice?: number;
   breakEvenActive?: boolean;
+  hardSlSyncedAt?: number;
   peakProfitUsd?: number;
   progressiveStopUsd?: number;
   timeStopMs?: number;
@@ -558,6 +567,19 @@ export type DeskState = {
   marketProfiles?: Record<string, MarketProfileSummary>;
   current_market_regime_directive?: string;
   lastSelfReflectionAt?: number;
+  executionTraderState?: {
+    updatedAt: number;
+    openCount: number;
+    closedCount: number;
+    lastOrderModify?: {
+      ticketId: string;
+      symbol: string;
+      newSl: number;
+      takeProfit: number;
+      reason: string;
+      at: number;
+    };
+  };
   mt5Live?: {
     connected: boolean;
     updatedAt: number;

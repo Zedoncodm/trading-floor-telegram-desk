@@ -11,6 +11,7 @@ import { StrategistAgent } from "./agents/strategist.ts";
 import { MarketAnalystAgent } from "./agents/analyst.ts";
 import { ReviewerAgent } from "./agents/reviewer.ts";
 import { MarketProfileAnalyzer } from "./agents/marketProfile.ts";
+import { ActiveTradeManager } from "./agents/activeTradeManager.ts";
 import { Mt5CloudBridge, type LocalMt5Position, type LocalMt5State } from "./mt5.ts";
 import { GrpoEngine, type GrpoCandidateOutcome, type MarketRegime } from "./rl/grpo.ts";
 import {
@@ -752,6 +753,20 @@ export class TradingFloorDesk {
     Mt5CloudBridge.writeLocalBridgePayload(payload);
   }
 
+  private updateExecutionTraderState(
+    now = Date.now(),
+    lastOrderModify?: NonNullable<DeskState["executionTraderState"]>["lastOrderModify"],
+  ): void {
+    const openCount = this.state.tickets.filter((t) => t.status === "open").length;
+    const closedCount = this.state.tickets.filter((t) => t.status === "closed").length;
+    this.state.executionTraderState = {
+      updatedAt: now,
+      openCount,
+      closedCount,
+      lastOrderModify: lastOrderModify ?? this.state.executionTraderState?.lastOrderModify,
+    };
+  }
+
   private buildImportedMt5Ticket(pos: LocalMt5Position, now: number): Ticket {
     const asset = Mt5CloudBridge.mapMt5SymbolToDesk(pos.symbol);
     const direction: Direction = pos.side === "BUY" ? "long" : "short";
@@ -956,7 +971,10 @@ export class TradingFloorDesk {
           t.mt5PositionId = ticketStr;
           t.fillPrice = pos.entry;
           t.entry = pos.entry;
-          if (pos.sl > 0) t.invalidation = pos.sl;
+          const keepStricterBeSl =
+            Boolean(t.hardSlSyncedAt && now - t.hardSlSyncedAt < 15_000) ||
+            Boolean(t.breakEvenActive && pos.sl > 0 && (t.direction === "long" ? pos.sl < t.invalidation : pos.sl > t.invalidation));
+          if (pos.sl > 0 && !keepStricterBeSl) t.invalidation = pos.sl;
           if (pos.tp > 0) t.target = pos.tp;
           t.mt5CurrentPrice = pos.current;
           t.mt5Profit = pos.profit;
@@ -2843,6 +2861,7 @@ export class TradingFloorDesk {
     ticket.filledAt = now;
     ticket.fillPrice = fillPrice;
     ticket.fees = feeUsd;
+    const hardBounds = ActiveTradeManager.ensureHardStopAndTarget(ticket);
 
     let mt5Note = "";
     if (this.state.settings.mt5Enabled && this.mt5.isConfigured()) {
@@ -2853,8 +2872,8 @@ export class TradingFloorDesk {
         symbol: ticket.asset,
         direction: ticket.direction,
         lots: lotsToSend,
-        stopLoss: ticket.invalidation,
-        takeProfit: ticket.target,
+        stopLoss: hardBounds.stopLoss,
+        takeProfit: hardBounds.takeProfit,
         comment: ticket.id,
       });
       if (mt5Res.ok && mt5Res.positionId) {
@@ -2862,6 +2881,7 @@ export class TradingFloorDesk {
       }
       mt5Note = ` | 📱 ${mt5Res.message}`;
     }
+    this.updateExecutionTraderState(now);
 
     setAgentActivity(this.state, "execution", "executing", `Exécution ${ticket.id}${ticket.mt5PositionId ? " + MT5" : ""}`, now, {
       targetAgent: "reviewer",
@@ -2943,6 +2963,7 @@ export class TradingFloorDesk {
     ticket.closedAt = now;
     ticket.closeReason = reason;
     ticket.pnl = netPnl;
+    this.updateExecutionTraderState(now);
     ticket.rMultiple = rMult;
     ticket.fees += exitFee;
 
@@ -3350,6 +3371,36 @@ export class TradingFloorDesk {
           ticket.id,
         );
         continue;
+      }
+
+      // PHASE 4 — ActiveTradeManager : Hard Break-Even asynchrone à 50% du TP (+ frais)
+      const beMod = ActiveTradeManager.evaluateBreakEvenOrderModify(ticket, mark);
+      if (beMod.shouldModify) {
+        ticket.invalidation = beMod.newStopLoss;
+        ticket.breakEvenActive = true;
+        ticket.hardSlSyncedAt = now;
+        this.updateExecutionTraderState(now, {
+          ticketId: ticket.id,
+          symbol: ticket.asset,
+          newSl: beMod.newStopLoss,
+          takeProfit: beMod.takeProfit,
+          reason: beMod.reason ?? "Hard Break-Even 50% TP",
+          at: now,
+        });
+        ActiveTradeManager.dispatchAsyncOrderModify(
+          this.mt5,
+          ticket,
+          beMod.newStopLoss,
+          beMod.takeProfit,
+        );
+        this.pushLocalMt5BridgePayload(now);
+        this.say(
+          "execution",
+          `[ACTIVE TRADE MANAGER] ${beMod.reason} pour ${ticket.id} (${ticket.asset}).`,
+          "plain",
+          ticket.id,
+        ).catch(() => {});
+        this.broadcast();
       }
 
       // STOP-LOSS PROGRESSIF (Break-Even 50% dynamique du pic de gain)
