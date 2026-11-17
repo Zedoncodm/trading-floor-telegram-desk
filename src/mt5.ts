@@ -23,6 +23,12 @@ export type LocalMt5Quote = {
   tradeMode?: number;
 };
 
+export type LocalMt5RejectedOrder = {
+  id: string;
+  symbol: string;
+  reason: string;
+};
+
 export type LocalMt5State = {
   connected: boolean;
   timestamp: number;
@@ -38,6 +44,9 @@ export type LocalMt5State = {
   tradeAllowed: boolean;
   positions: LocalMt5Position[];
   quotes: LocalMt5Quote[];
+  cryptoSupported?: boolean;
+  availableCryptos?: string[];
+  rejectedOrders?: LocalMt5RejectedOrder[];
 };
 
 const US_EQUITY_SYMBOLS = new Set(["NVDA", "AAPL", "TSLA", "MSFT", "AMZN"]);
@@ -386,17 +395,35 @@ export class Mt5CloudBridge {
 
   static mapMt5SymbolToDesk(symbol: string): string {
     const raw = (symbol || "").trim().toUpperCase();
-    const stripped = raw.replace(/(?:\.R|\.PRO|\.A|\.C|MICRO|RAW|_I|[M+])$/i, "");
+    const stripped = raw
+      .replace(/(?:\.R|\.PRO|\.A|\.C|\.E|MICRO|RAW|_I|[M+])$/i, "")
+      .replace(/[\/\-_#]/g, "");
     const rev: Record<string, string> = {
       BTCUSD: "BTCUSDT",
+      XBTUSD: "BTCUSDT",
       BITCOIN: "BTCUSDT",
       ETHUSD: "ETHUSDT",
+      ETHEREUM: "ETHUSDT",
       SOLUSD: "SOLUSDT",
+      SOLANA: "SOLUSDT",
       BNBUSD: "BNBUSDT",
       XRPUSD: "XRPUSDT",
+      RIPPLE: "XRPUSDT",
       AVAXUSD: "AVAXUSDT",
       DOGEUSD: "DOGEUSDT",
+      DOGECOIN: "DOGEUSDT",
       LINKUSD: "LINKUSDT",
+      CHAINLINK: "LINKUSDT",
+      ADAUSD: "ADAUSDT",
+      CARDANO: "ADAUSDT",
+      LTCUSD: "LTCUSDT",
+      LITECOIN: "LTCUSDT",
+      DOTUSD: "DOTUSDT",
+      SUIUSD: "SUIUSDT",
+      NEARUSD: "NEARUSDT",
+      TONUSD: "TONUSDT",
+      SHIBUSD: "1000SHIBUSDT",
+      PEPEUSD: "1000PEPEUSDT",
       USTEC: "NQ1!",
       NAS100: "NQ1!",
       US500: "ES1!",
@@ -544,6 +571,7 @@ export class Mt5CloudBridge {
       symbol: string;
       side: "BUY" | "SELL";
       lots: number;
+      notional: number;
       entry: number;
       sl: number;
       tp: number;
@@ -573,6 +601,7 @@ export class Mt5CloudBridge {
           symbol: Mt5CloudBridge.mapSymbolToMt5(t.asset),
           side: (t.direction === "long" ? "BUY" : "SELL") as "BUY" | "SELL",
           lots,
+          notional: Number(((t.notional && t.notional > 0) ? t.notional : 0).toFixed(2)),
           entry: Number(((t.fillPrice ?? t.entry) || 0).toFixed(5)),
           sl: Number(t.invalidation.toFixed(5)),
           tp: Number(t.target.toFixed(5)),
@@ -597,10 +626,10 @@ export class Mt5CloudBridge {
   static generateMql5ExpertAdvisor(baseUrl = "http://127.0.0.1:4080"): string {
     return `//+------------------------------------------------------------------+
 //|                                           TradingFloorBridge.mq5 |
-//|     Passerelle Bidirectionnelle v2.0 Trading Floor <-> MT5       |
+//|     Passerelle Bidirectionnelle v2.1 Trading Floor <-> MT5       |
 //+------------------------------------------------------------------+
 #property copyright "Trading Floor V3"
-#property version   "2.00"
+#property version   "2.10"
 #include <Trade\\Trade.mqh>
 
 input string InpServerUrl   = "${baseUrl}";
@@ -614,6 +643,36 @@ double gMyMasterId = 0.0;
 string gFailedIds  = "|";
 datetime gLastFailReset = 0;
 
+string gRejIds[12];
+string gRejSyms[12];
+string gRejReasons[12];
+int    gRejCount = 0;
+
+void RecordRejectedOrder(const string id, const string sym, const string reason) {
+   for(int i = 0; i < gRejCount; i++) {
+      if(gRejIds[i] == id) {
+         gRejSyms[i] = sym;
+         gRejReasons[i] = reason;
+         return;
+      }
+   }
+   if(gRejCount < 12) {
+      gRejIds[gRejCount] = id;
+      gRejSyms[gRejCount] = sym;
+      gRejReasons[gRejCount] = reason;
+      gRejCount++;
+   } else {
+      for(int j = 0; j < 11; j++) {
+         gRejIds[j] = gRejIds[j + 1];
+         gRejSyms[j] = gRejSyms[j + 1];
+         gRejReasons[j] = gRejReasons[j + 1];
+      }
+      gRejIds[11] = id;
+      gRejSyms[11] = sym;
+      gRejReasons[11] = reason;
+   }
+}
+
 string JsonEscape(const string s) {
    string out = s;
    StringReplace(out, "\\\\", "\\\\\\\\");
@@ -621,6 +680,43 @@ string JsonEscape(const string s) {
    StringReplace(out, "\\r", " ");
    StringReplace(out, "\\n", " ");
    return out;
+}
+
+string NormalizeSymKey(const string s) {
+   string k = s;
+   StringToUpper(k);
+   StringReplace(k, "/", "");
+   StringReplace(k, "-", "");
+   StringReplace(k, "_", "");
+   StringReplace(k, ".", "");
+   StringReplace(k, "#", "");
+   StringReplace(k, " ", "");
+   return k;
+}
+
+bool IsUsEquityTicker(const string sym) {
+   string u = sym;
+   StringToUpper(u);
+   return (u == "NVDA" || u == "AAPL" || u == "TSLA" || u == "MSFT" || u == "AMZN");
+}
+
+bool IsStockMismatch(const string brokerSym, const string requestedBase) {
+   if(IsUsEquityTicker(requestedBase)) return false;
+   string p = SymbolInfoString(brokerSym, SYMBOL_PATH);
+   StringToUpper(p);
+   return (StringFind(p, "\\\\STOCK\\\\") >= 0 || StringFind(p, "NASDAQ\\\\") >= 0 || StringFind(p, "NYSE\\\\") >= 0);
+}
+
+bool IsCryptoSymbolCandidate(const string name, const string path) {
+   string uName = NormalizeSymKey(name);
+   string uPath = path;
+   StringToUpper(uPath);
+   if(StringFind(uPath, "CRYPTO") >= 0 || StringFind(uPath, "BITCOIN") >= 0 || StringFind(uPath, "DIGITAL") >= 0) return true;
+   string cToks[] = { "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "LTC", "AVAX", "LINK", "DOT", "SUI", "TON", "BITCOIN", "ETHEREUM", "RIPPLE", "SOLANA", "XBTUSD" };
+   for(int i = 0; i < ArraySize(cToks); i++) {
+      if(StringFind(uName, cToks[i]) == 0) return true;
+   }
+   return false;
 }
 
 bool EnsureMaster() {
@@ -658,69 +754,99 @@ double ExtractNum(const string src, const string key, int startPos) {
    return StringToDouble(StringSubstr(src, p, e - p));
 }
 
-string TryAliasMatch(const string cand) {
+string TryAliasMatch(const string cand, const string requestedBase = "") {
    if(cand == "") return "";
-   if(SymbolSelect(cand, true)) {
+   if(SymbolSelect(cand, true) && !IsStockMismatch(cand, requestedBase)) {
       if(SymbolInfoDouble(cand, SYMBOL_BID) > 0.0) return cand;
    }
-   string sfx[] = { "m", ".r", ".pro", "raw", "+", "_i", "micro", ".a", ".c", "#" };
+   string sfx[] = { "m", ".r", ".pro", "raw", "+", "_i", "micro", ".a", ".c", "#", ".e", "c", ".std", "-USD" };
    for(int i = 0; i < ArraySize(sfx); i++) {
       string test = cand + sfx[i];
-      if(SymbolSelect(test, true) && SymbolInfoDouble(test, SYMBOL_BID) > 0.0) return test;
+      if(SymbolSelect(test, true) && !IsStockMismatch(test, requestedBase) && SymbolInfoDouble(test, SYMBOL_BID) > 0.0) return test;
    }
+   string candKey = NormalizeSymKey(cand);
    int total = SymbolsTotal(false);
    for(int i = 0; i < total; i++) {
       string name = SymbolName(i, false);
-      if(StringFind(name, cand) == 0 && SymbolSelect(name, true)) {
-         if(SymbolInfoDouble(name, SYMBOL_BID) > 0.0) return name;
+      if(IsStockMismatch(name, requestedBase)) continue;
+      string nameKey = NormalizeSymKey(name);
+      if(nameKey == candKey || StringFind(nameKey, candKey) == 0) {
+         if(SymbolSelect(name, true) && SymbolInfoDouble(name, SYMBOL_BID) > 0.0) return name;
       }
    }
+   return "";
+}
+
+string ResolveCryptoChain(const string sym, const string tokA, const string tokB = "", const string tokC = "") {
+   string r = "";
+   r = TryAliasMatch(tokA + "USD", sym);   if(r != "") return r;
+   r = TryAliasMatch(tokA + "/USD", sym);  if(r != "") return r;
+   r = TryAliasMatch(tokA + "-USD", sym);  if(r != "") return r;
+   r = TryAliasMatch("#" + tokA + "USD", sym); if(r != "") return r;
+   r = TryAliasMatch(tokA + "USDT", sym);  if(r != "") return r;
+   if(tokB != "") { r = TryAliasMatch(tokB, sym); if(r != "") return r; }
+   if(tokC != "") { r = TryAliasMatch(tokC, sym); if(r != "") return r; }
    return "";
 }
 
 string ResolveBrokerSymbol(const string baseSym) {
    string sym = baseSym;
    StringToUpper(sym);
-   string direct = TryAliasMatch(sym);
+   string direct = TryAliasMatch(sym, sym);
    if(direct != "") return direct;
-   if(sym == "BTCUSDT" || sym == "BTCUSD" || sym == "BTC") {
-      string b1 = TryAliasMatch("BTCUSD"); if(b1 != "") return b1;
-      string b2 = TryAliasMatch("BTCUSDT"); if(b2 != "") return b2;
-      return TryAliasMatch("Bitcoin");
+
+   if(sym == "BTCUSDT" || sym == "BTCUSD" || sym == "BTC")       return ResolveCryptoChain(sym, "BTC", "XBTUSD", "Bitcoin");
+   if(sym == "ETHUSDT" || sym == "ETHUSD" || sym == "ETH")       return ResolveCryptoChain(sym, "ETH", "Ethereum");
+   if(sym == "SOLUSDT" || sym == "SOLUSD" || sym == "SOL")       return ResolveCryptoChain(sym, "SOL", "Solana");
+   if(sym == "XRPUSDT" || sym == "XRPUSD" || sym == "XRP")       return ResolveCryptoChain(sym, "XRP", "Ripple");
+   if(sym == "BNBUSDT" || sym == "BNBUSD" || sym == "BNB")       return ResolveCryptoChain(sym, "BNB", "BinanceCoin");
+   if(sym == "ADAUSDT" || sym == "ADAUSD" || sym == "ADA")       return ResolveCryptoChain(sym, "ADA", "Cardano");
+   if(sym == "DOGEUSDT" || sym == "DOGEUSD" || sym == "DOGE")    return ResolveCryptoChain(sym, "DOGE", "Dogecoin");
+   if(sym == "AVAXUSDT" || sym == "AVAXUSD" || sym == "AVAX")    return ResolveCryptoChain(sym, "AVAX", "Avalanche");
+   if(sym == "LINKUSDT" || sym == "LINKUSD" || sym == "LINK")    return ResolveCryptoChain(sym, "LINK", "Chainlink");
+   if(sym == "LTCUSDT" || sym == "LTCUSD" || sym == "LTC")       return ResolveCryptoChain(sym, "LTC", "Litecoin");
+   if(sym == "DOTUSDT" || sym == "DOTUSD" || sym == "DOT")       return ResolveCryptoChain(sym, "DOT", "Polkadot");
+   if(sym == "SUIUSDT" || sym == "SUIUSD" || sym == "SUI")       return ResolveCryptoChain(sym, "SUI");
+   if(sym == "NEARUSDT" || sym == "NEARUSD" || sym == "NEAR")    return ResolveCryptoChain(sym, "NEAR");
+   if(sym == "TONUSDT" || sym == "TONUSD" || sym == "TON")       return ResolveCryptoChain(sym, "TON", "Toncoin");
+   if(StringFind(sym, "USDT") > 0) {
+      string coin = StringSubstr(sym, 0, StringLen(sym) - 4);
+      string cRes = ResolveCryptoChain(sym, coin);
+      if(cRes != "") return cRes;
    }
-   if(sym == "ETHUSDT" || sym == "ETHUSD" || sym == "ETH") {
-      string e1 = TryAliasMatch("ETHUSD"); if(e1 != "") return e1;
-      return TryAliasMatch("ETHUSDT");
+   if(StringFind(sym, "USD") > 3 && StringLen(sym) >= 6) {
+      string prefix = StringSubstr(sym, 0, StringLen(sym) - 3);
+      string pRes = TryAliasMatch(prefix + "/USD", sym);
+      if(pRes != "") return pRes;
    }
-   if(sym == "SOLUSDT" || sym == "SOLUSD") {
-      string s1 = TryAliasMatch("SOLUSD"); if(s1 != "") return s1;
-      return TryAliasMatch("SOLUSDT");
-   }
+
    if(sym == "USTEC" || sym == "NQ1!") {
-      string a1 = TryAliasMatch("USTEC"); if(a1 != "") return a1;
-      string a2 = TryAliasMatch("NAS100"); if(a2 != "") return a2;
-      return TryAliasMatch("NDX");
+      string a1 = TryAliasMatch("USTEC", sym); if(a1 != "") return a1;
+      string a2 = TryAliasMatch("NAS100", sym); if(a2 != "") return a2;
+      return TryAliasMatch("NDX", sym);
    }
    if(sym == "US30" || sym == "YM1!") {
-      string d1 = TryAliasMatch("US30"); if(d1 != "") return d1;
-      string d2 = TryAliasMatch("DJ30"); if(d2 != "") return d2;
-      return TryAliasMatch("WS30");
+      string d1 = TryAliasMatch("US30", sym); if(d1 != "") return d1;
+      string d2 = TryAliasMatch("DJ30", sym); if(d2 != "") return d2;
+      return TryAliasMatch("WS30", sym);
    }
    if(sym == "US500" || sym == "ES1!") {
-      string sp1 = TryAliasMatch("US500"); if(sp1 != "") return sp1;
-      return TryAliasMatch("SPX500");
+      string sp1 = TryAliasMatch("US500", sym); if(sp1 != "") return sp1;
+      return TryAliasMatch("SPX500", sym);
    }
    if(sym == "DE40" || sym == "FDAX1!") {
-      string de1 = TryAliasMatch("DE40"); if(de1 != "") return de1;
-      return TryAliasMatch("GER40");
+      string de1 = TryAliasMatch("DE40", sym); if(de1 != "") return de1;
+      return TryAliasMatch("GER40", sym);
    }
-   if(sym == "USOIL") {
-      string o1 = TryAliasMatch("USOIL"); if(o1 != "") return o1;
-      return TryAliasMatch("WTI");
+   if(sym == "USOIL" || sym == "WTI") {
+      string o1 = TryAliasMatch("USOIL", sym); if(o1 != "") return o1;
+      string o2 = TryAliasMatch("XTIUSD", sym); if(o2 != "") return o2;
+      string o3 = TryAliasMatch("WTICOUSD", sym); if(o3 != "") return o3;
+      return TryAliasMatch("UKOIL", sym);
    }
    if(sym == "XAUUSD") {
-      string x1 = TryAliasMatch("XAUUSD"); if(x1 != "") return x1;
-      return TryAliasMatch("GOLD");
+      string x1 = TryAliasMatch("XAUUSD", sym); if(x1 != "") return x1;
+      return TryAliasMatch("GOLD", sym);
    }
    return "";
 }
@@ -735,6 +861,23 @@ double NormalizeLots(const string sym, const double rawLots) {
    double clamped = MathMax(vmin, MathMin(vmax, rawLots));
    double stepped = MathFloor(clamped / vstep + 1e-6) * vstep;
    return NormalizeDouble(MathMax(vmin, stepped), 2);
+}
+
+double ComputeBrokerSafeLots(const string sym, const double reqLots, const double notionalUsd, const ENUM_ORDER_TYPE oType, const double px) {
+   double candidate = reqLots > 0.0 ? reqLots : 0.01;
+   double cSize = SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE);
+   if(notionalUsd > 0.0 && px > 0.0 && cSize > 0.0) {
+      double exactLots = notionalUsd / (px * cSize);
+      if(exactLots > 0.0) candidate = exactLots;
+   }
+   double lots = NormalizeLots(sym, candidate);
+   double freeM = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+   double marginNeed = 0.0;
+   if(freeM > 0.0 && px > 0.0 && OrderCalcMargin(oType, sym, lots, px, marginNeed) && marginNeed > freeM * 0.75 && marginNeed > 0.0) {
+      double scaled = lots * ((freeM * 0.70) / marginNeed);
+      lots = NormalizeLots(sym, scaled);
+   }
+   return lots;
 }
 
 bool HasOpenPositionForId(const string id) {
@@ -793,6 +936,21 @@ void WriteMt5StateToFile() {
    long lev      = AccountInfoInteger(ACCOUNT_LEVERAGE);
    bool allowed  = (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) != 0 && MQLInfoInteger(MQL_TRADE_ALLOWED) != 0);
 
+   string availCryptos = "";
+   int cryptoFound = 0;
+   int totalSyms = SymbolsTotal(false);
+   for(int c = 0; c < totalSyms && cryptoFound < 30; c++) {
+      string cName = SymbolName(c, false);
+      string cPath = SymbolInfoString(cName, SYMBOL_PATH);
+      if(IsCryptoSymbolCandidate(cName, cPath)) {
+         if(SymbolSelect(cName, true)) {
+            if(cryptoFound > 0) availCryptos += ",";
+            availCryptos += "\\"" + JsonEscape(cName) + "\\"";
+            cryptoFound++;
+         }
+      }
+   }
+
    string json = "{";
    json += "\\"connected\\":true,";
    json += "\\"timestamp\\":" + IntegerToString((long)TimeGMT() * 1000) + ",";
@@ -806,6 +964,8 @@ void WriteMt5StateToFile() {
    json += "\\"freeMargin\\":" + DoubleToString(freeM, 2) + ",";
    json += "\\"leverage\\":" + IntegerToString(lev) + ",";
    json += "\\"tradeAllowed\\":" + (allowed ? "true" : "false") + ",";
+   json += "\\"cryptoSupported\\":" + (cryptoFound > 0 ? "true" : "false") + ",";
+   json += "\\"availableCryptos\\":[" + availCryptos + "],";
 
    json += "\\"positions\\":[";
    int posCount = PositionsTotal();
@@ -845,7 +1005,7 @@ void WriteMt5StateToFile() {
    }
    json += "],";
 
-   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "XAUUSD", "BTCUSD" };
+   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "XAUUSD", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD" };
    json += "\\"quotes\\":[";
    bool firstQ = true;
    for(int q = 0; q < ArraySize(quoteSyms); q++) {
@@ -867,6 +1027,17 @@ void WriteMt5StateToFile() {
       json += "\\"bid\\":" + DoubleToString(bid, qDigits) + ",";
       json += "\\"ask\\":" + DoubleToString(ask, qDigits) + ",";
       json += "\\"tradeMode\\":" + IntegerToString(tMode);
+      json += "}";
+   }
+   json += "],";
+
+   json += "\\"rejectedOrders\\":[";
+   for(int r = 0; r < gRejCount; r++) {
+      if(r > 0) json += ",";
+      json += "{";
+      json += "\\"id\\":\\"" + JsonEscape(gRejIds[r]) + "\\",";
+      json += "\\"symbol\\":\\"" + JsonEscape(gRejSyms[r]) + "\\",";
+      json += "\\"reason\\":\\"" + JsonEscape(gRejReasons[r]) + "\\"";
       json += "}";
    }
    json += "]";
@@ -945,13 +1116,14 @@ void OnTimer() {
       int idPos = StringFind(body, "\\"id\\":\\"", cursor);
       if(idPos < 0) break;
 
-      string id     = ExtractStr(body, "id", idPos);
-      string symRaw = ExtractStr(body, "symbol", idPos);
-      string side   = ExtractStr(body, "side", idPos);
-      double lots   = ExtractNum(body, "lots", idPos);
-      double entry  = ExtractNum(body, "entry", idPos);
-      double sl     = ExtractNum(body, "sl", idPos);
-      double tp     = ExtractNum(body, "tp", idPos);
+      string id       = ExtractStr(body, "id", idPos);
+      string symRaw   = ExtractStr(body, "symbol", idPos);
+      string side     = ExtractStr(body, "side", idPos);
+      double lots     = ExtractNum(body, "lots", idPos);
+      double notional = ExtractNum(body, "notional", idPos);
+      double entry    = ExtractNum(body, "entry", idPos);
+      double sl       = ExtractNum(body, "sl", idPos);
+      double tp       = ExtractNum(body, "tp", idPos);
 
       int objEnd = StringFind(body, "}", idPos);
       cursor = (objEnd > idPos) ? objEnd : (idPos + StringLen(id) + 15);
@@ -966,13 +1138,20 @@ void OnTimer() {
       if(StringFind(gFailedIds, "|" + id + "|") >= 0) continue;
 
       string realSym = ResolveBrokerSymbol(symRaw);
-      if(realSym == "" || SymbolInfoInteger(realSym, SYMBOL_TRADE_MODE) == SYMBOL_TRADE_MODE_DISABLED) {
+      if(realSym == "") {
+         RecordRejectedOrder(id, symRaw, "SYMBOL_NOT_FOUND:" + symRaw);
          gFailedIds += id + "|";
+         stateDirty = true;
+         continue;
+      }
+      if(SymbolInfoInteger(realSym, SYMBOL_TRADE_MODE) == SYMBOL_TRADE_MODE_DISABLED) {
+         RecordRejectedOrder(id, realSym, "TRADE_DISABLED:" + realSym);
+         gFailedIds += id + "|";
+         stateDirty = true;
          continue;
       }
 
       trade.SetTypeFillingBySymbol(realSym);
-      double normLots = NormalizeLots(realSym, lots > 0.0 ? lots : 0.01);
       double ask = SymbolInfoDouble(realSym, SYMBOL_ASK);
       double bid = SymbolInfoDouble(realSym, SYMBOL_BID);
       int digits = (int)SymbolInfoInteger(realSym, SYMBOL_DIGITS);
@@ -984,6 +1163,7 @@ void OnTimer() {
       double tpDistRel = (entry > 0.0 && tp > 0.0) ? MathAbs(tp - entry) / entry : 0.0;
 
       if(side == "BUY" && ask > 0.0) {
+         double normLots = ComputeBrokerSafeLots(realSym, lots, notional, ORDER_TYPE_BUY, ask);
          double slPx = (slDistRel > 0.0) ? NormalizeDouble(ask - MathMax(minDist, ask * slDistRel), digits) : 0.0;
          double tpPx = (tpDistRel > 0.0) ? NormalizeDouble(ask + MathMax(minDist, ask * tpDistRel), digits) : 0.0;
          if(trade.Buy(normLots, realSym, ask, slPx, tpPx, id)) {
@@ -995,13 +1175,20 @@ void OnTimer() {
                   ModifyPositionByComment(id, realSym, slPx, tpPx);
                   stateDirty = true;
                } else {
+                  RecordRejectedOrder(id, realSym, "RETCODE_" + IntegerToString(trade.ResultRetcode()) + ":" + trade.ResultRetcodeDescription());
+                  gFailedIds += id + "|";
+                  stateDirty = true;
+               }
+            } else {
+               RecordRejectedOrder(id, realSym, "RETCODE_" + IntegerToString(ret) + ":" + trade.ResultRetcodeDescription());
+               if(ret != TRADE_RETCODE_CLIENT_DISABLES_AT && ret != TRADE_RETCODE_SERVER_DISABLES_AT && ret != TRADE_RETCODE_CONNECTION) {
                   gFailedIds += id + "|";
                }
-            } else if(ret != TRADE_RETCODE_CLIENT_DISABLES_AT && ret != TRADE_RETCODE_SERVER_DISABLES_AT && ret != TRADE_RETCODE_CONNECTION) {
-               gFailedIds += id + "|";
+               stateDirty = true;
             }
          }
       } else if(side == "SELL" && bid > 0.0) {
+         double normLots = ComputeBrokerSafeLots(realSym, lots, notional, ORDER_TYPE_SELL, bid);
          double slPx = (slDistRel > 0.0) ? NormalizeDouble(bid + MathMax(minDist, bid * slDistRel), digits) : 0.0;
          double tpPx = (tpDistRel > 0.0) ? NormalizeDouble(bid - MathMax(minDist, bid * tpDistRel), digits) : 0.0;
          if(trade.Sell(normLots, realSym, bid, slPx, tpPx, id)) {
@@ -1013,10 +1200,16 @@ void OnTimer() {
                   ModifyPositionByComment(id, realSym, slPx, tpPx);
                   stateDirty = true;
                } else {
+                  RecordRejectedOrder(id, realSym, "RETCODE_" + IntegerToString(trade.ResultRetcode()) + ":" + trade.ResultRetcodeDescription());
+                  gFailedIds += id + "|";
+                  stateDirty = true;
+               }
+            } else {
+               RecordRejectedOrder(id, realSym, "RETCODE_" + IntegerToString(ret) + ":" + trade.ResultRetcodeDescription());
+               if(ret != TRADE_RETCODE_CLIENT_DISABLES_AT && ret != TRADE_RETCODE_SERVER_DISABLES_AT && ret != TRADE_RETCODE_CONNECTION) {
                   gFailedIds += id + "|";
                }
-            } else if(ret != TRADE_RETCODE_CLIENT_DISABLES_AT && ret != TRADE_RETCODE_SERVER_DISABLES_AT && ret != TRADE_RETCODE_CONNECTION) {
-               gFailedIds += id + "|";
+               stateDirty = true;
             }
          }
       }

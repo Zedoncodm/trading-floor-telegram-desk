@@ -1266,3 +1266,33 @@ test("Persistent full_history.json, blotter reconstruction, Chat escHtml & visib
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("MT5 Crypto Bridge v2.1: alias mapping, contract-size safe payload & EA diagnostics", () => {
+  assert.equal(Mt5CloudBridge.mapMt5SymbolToDesk("BTC/USD"), "BTCUSDT");
+  assert.equal(Mt5CloudBridge.mapMt5SymbolToDesk("#BTCUSD"), "BTCUSDT");
+  assert.equal(Mt5CloudBridge.mapMt5SymbolToDesk("XBTUSD"), "BTCUSDT");
+  assert.equal(Mt5CloudBridge.mapMt5SymbolToDesk("XRP-USD"), "XRPUSDT");
+
+  const payload = Mt5CloudBridge.buildLocalBridgePayload([
+    {
+      id: "TF-CR-1",
+      asset: "XRPUSDT",
+      direction: "short",
+      status: "open",
+      entry: 0.96,
+      invalidation: 0.97,
+      target: 0.94,
+      notional: 1500,
+    },
+  ]);
+  assert.equal(payload.openOrders.length, 1);
+  assert.equal(payload.openOrders[0].symbol, "XRPUSD");
+  assert.equal(payload.openOrders[0].notional, 1500);
+
+  const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor();
+  assert.ok(mq5.includes("ResolveCryptoChain"));
+  assert.ok(mq5.includes("ComputeBrokerSafeLots"));
+  assert.ok(mq5.includes("RecordRejectedOrder"));
+  assert.ok(mq5.includes("availableCryptos"));
+  assert.ok(mq5.includes("cryptoSupported"));
+});

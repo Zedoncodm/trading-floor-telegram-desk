@@ -676,6 +676,9 @@ export class TradingFloorDesk {
   private scanCursor = 0;
   private lastConcurrencySayAt = 0;
   private lastLatencySayAt = 0;
+  private mt5UnsupportedSymbols = new Map<string, { server: string; reason: string; at: number }>();
+  private lastMt5ServerKey = "";
+  private lastCryptoNoticeServer = "";
 
   constructor(cfg: Config, store: DeskStore, tg: TelegramFloorRoom, grpo?: GrpoEngine) {
     this.cfg = cfg;
@@ -873,13 +876,20 @@ export class TradingFloorDesk {
       let telemetryChange = false;
 
       const prevMt5 = this.state.mt5Live;
+      const serverKey = `${mt5State.login}@${mt5State.server}`;
+      if (this.lastMt5ServerKey && this.lastMt5ServerKey !== serverKey) {
+        this.mt5UnsupportedSymbols.clear();
+      }
+      this.lastMt5ServerKey = serverKey;
+
       if (
         !prevMt5 ||
         !prevMt5.connected ||
         prevMt5.equity !== mt5State.equity ||
         prevMt5.balance !== mt5State.balance ||
         prevMt5.positionsCount !== mt5State.positions.length ||
-        prevMt5.profit !== mt5State.profit
+        prevMt5.profit !== mt5State.profit ||
+        prevMt5.cryptoSupported !== mt5State.cryptoSupported
       ) {
         telemetryChange = true;
       }
@@ -897,11 +907,29 @@ export class TradingFloorDesk {
         leverage: mt5State.leverage,
         tradeAllowed: mt5State.tradeAllowed,
         positionsCount: mt5State.positions.length,
+        cryptoSupported: mt5State.cryptoSupported,
+        availableCryptos: mt5State.availableCryptos,
+        rejectedOrders: mt5State.rejectedOrders,
       };
       this.state.settings.mt5Connected = true;
       this.state.settings.mt5Login = String(mt5State.login);
       this.state.settings.mt5Server = mt5State.server;
-      this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${mt5State.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s))`;
+      const cryptoTag =
+        mt5State.cryptoSupported === false
+          ? ` · Crypto: indisponible sur ${mt5State.server}`
+          : mt5State.availableCryptos?.length
+            ? ` · ${mt5State.availableCryptos.length} crypto(s) MT5`
+            : "";
+      this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${mt5State.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s)${cryptoTag})`;
+
+      if (mt5State.cryptoSupported === false && this.lastCryptoNoticeServer !== serverKey) {
+        this.lastCryptoNoticeServer = serverKey;
+        await this.say(
+          "execution",
+          `[MT5 BROKER] Le serveur connecté (${mt5State.server}) ne propose aucun symbole Crypto. Les paires USDT non cotées par ce broker sont filtrées pour éviter les ordres fantômes ; connectez un compte MT5 Crypto (Exness, ICMarkets, Vantage, Eightcap ou FTMO) pour exécuter BTC/ETH/SOL/XRP sur MT5.`,
+          "veto",
+        );
+      }
 
       // 1. Synchronisation stricte du Capital avec le compte MT5 réel (sans jamais effacer l'historique multi-mois)
       if (Number.isFinite(mt5State.balance) && mt5State.balance > 0) {
@@ -1008,9 +1036,39 @@ export class TradingFloorDesk {
           );
           structuralChange = true;
         } else if (mt5State.tradeAllowed) {
+          const rej = (mt5State.rejectedOrders ?? []).find((r) => r.id === t.id);
           const ageMs = now - (t.filledAt ?? t.createdAt);
-          if (ageMs > 10_000) {
-            phantomIdsToRemove.add(t.id);
+          if (rej) {
+            const symKey = t.asset.toUpperCase();
+            if (rej.reason.startsWith("SYMBOL_NOT_FOUND") || rej.reason.startsWith("TRADE_DISABLED")) {
+              const firstNotice = !this.mt5UnsupportedSymbols.has(symKey);
+              this.mt5UnsupportedSymbols.set(symKey, { server: mt5State.server, reason: rej.reason, at: now });
+              if (firstNotice) {
+                await this.say(
+                  "execution",
+                  `[MT5 REFUS] ${t.asset} non exécutable sur ${mt5State.server} (${rej.reason}). Actif écarté du routage MT5 sur ce broker.`,
+                  "veto",
+                  t.id,
+                );
+              }
+            } else {
+              await this.say(
+                "execution",
+                `[MT5 ERREUR ORDRE] ${t.id} (${t.asset}) refusé par MT5 : ${rej.reason}`,
+                "veto",
+                t.id,
+              );
+            }
+            t.status = "rejected";
+            t.vetoReason = rej.reason;
+            t.closedAt = now;
+            this.store.appendBlotter("TICKET_REJECTED", t, `Refus MT5 : ${rej.reason}`, now);
+            structuralChange = true;
+          } else if (ageMs > 15_000) {
+            t.status = "rejected";
+            t.vetoReason = "MT5_BRIDGE_NO_FILL_TIMEOUT";
+            t.closedAt = now;
+            this.store.appendBlotter("TICKET_REJECTED", t, "Non exécuté sur MT5 sous 15s (symbole absent ou marché fermé)", now);
             structuralChange = true;
           }
         }
@@ -2542,7 +2600,26 @@ export class TradingFloorDesk {
       const notCooledDown = (sym: string) => (this.state.cooldowns?.[sym] ?? 0) <= now;
       const hasActiveTicket = (sym: string) =>
         this.state.tickets.some((t) => t.asset === sym && (t.status === "open" || t.status === "pending"));
-      const pool = snaps.filter((s) => notCooledDown(s.symbol) && !hasActiveTicket(s.symbol));
+      const mt5AllowsSymbol = (sym: string) => {
+        const mt5Live = this.state.mt5Live;
+        if (!mt5Live?.connected) return true;
+        const symUpper = sym.toUpperCase();
+        const unsup = this.mt5UnsupportedSymbols.get(symUpper);
+        if (unsup && now - unsup.at < 600_000) return false;
+        if (symUpper.endsWith("USDT")) {
+          if (mt5Live.cryptoSupported === false) return false;
+          if (mt5Live.cryptoSupported === true && mt5Live.availableCryptos && mt5Live.availableCryptos.length > 0) {
+            const base = symUpper.replace(/USDT$/, "").replace(/^1000/, "");
+            const aliases = base === "BTC" ? ["BTC", "XBT", "BITCOIN"] : [base];
+            return mt5Live.availableCryptos.some((c) => {
+              const cu = c.toUpperCase().replace(/[^A-Z0-9]/g, "");
+              return aliases.some((a) => cu.includes(a));
+            });
+          }
+        }
+        return true;
+      };
+      const pool = snaps.filter((s) => notCooledDown(s.symbol) && !hasActiveTicket(s.symbol) && mt5AllowsSymbol(s.symbol));
       if (!pool.length) {
         await this.say("analyst", "Tous les actifs sont en période de cooldown ou déjà en position.");
         return;

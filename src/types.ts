@@ -609,6 +609,9 @@ export type DeskState = {
     leverage: number;
     tradeAllowed: boolean;
     positionsCount: number;
+    cryptoSupported?: boolean;
+    availableCryptos?: string[];
+    rejectedOrders?: Array<{ id: string; symbol: string; reason: string }>;
   };
 };
 
