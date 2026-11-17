@@ -2811,27 +2811,196 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     // ==================== 3D WEBGL COMMAND CENTER ====================
+    var AGENT_PERSONAS = {
+      analyst: {
+        nick: 'Léo',
+        hobby: 'Astronome amateur & buveur de matcha',
+        lines: [
+          'Mon matcha est encore chaud ?',
+          'Les constellations brillent ce soir.',
+          'Lecture sci-fi après la séance !',
+          'Regarde la symétrie de ce ciel.',
+          'Qui a vu mes lunettes holo ?'
+        ]
+      },
+      strategist: {
+        nick: 'Marc',
+        hobby: 'Joueur d échecs & collectionneur de jazz',
+        lines: [
+          'Une partie d échecs après la clôture ?',
+          'Ce vinyle de Miles Davis est magique.',
+          'Cavalier en F6... joli coup !',
+          'Toujours trois coups d avance, même au calme.',
+          'Pause musique dans le salon !'
+        ]
+      },
+      lead: {
+        nick: 'Aria',
+        hobby: 'Barista zen & mentor d équipe',
+        lines: [
+          'Un espresso fraîchement moulu ?',
+          'Belle cohésion dans le studio ce soir !',
+          'Prenez le temps de respirer la team.',
+          'Minou veille sur nous tous.',
+          'Pause thé ou café pour qui veut ?'
+        ]
+      },
+      execution: {
+        nick: 'Kira',
+        hobby: 'Sprinter hover-skate & fan de ramen',
+        lines: [
+          'Turbo ramen épicés ce soir !',
+          'Je bats mon record de tour de salle !',
+          'Vitesse lumière sur la piste !',
+          'Ma playlist synthwave donne des ailes.',
+          'Attention, j arrive à toute allure !'
+        ]
+      },
+      risk: {
+        nick: 'Titan',
+        hobby: 'Cuisinier stoïque & protecteur de Minou',
+        lines: [
+          'Marche doucement près du chat noir !',
+          'Un bon mijoté nous attend ce soir.',
+          'Bouclier levé, zéro stress par ici.',
+          'La patience est la meilleure armure.',
+          'Tout le monde est en sécurité ?'
+        ]
+      },
+      reviewer: {
+        nick: 'Sora',
+        hobby: 'Photographe argentique & archiviste',
+        lines: [
+          'Clic ! Superbe photo de groupe !',
+          'Ce studio ferait une belle toile.',
+          'J annote nos plus beaux souvenirs.',
+          'La lumière bleue rend Minou photogénique !',
+          'Cinéma vintage ce week-end ?'
+        ]
+      },
+      hunter: {
+        nick: 'Vex',
+        hobby: 'DJ lo-fi & chasseur de curiosités',
+        lines: [
+          'Nouveau beat lo-fi dans le casque !',
+          'Viens attraper le pointeur laser, Minou !',
+          'Le groove du soir est parfait.',
+          'J ai repéré un vinyle ultra rare.',
+          'Mix nocturne en préparation !'
+        ]
+      },
+      sentinel: {
+        nick: 'Nova',
+        hobby: 'Droïde jardinier de bonsaïs',
+        lines: [
+          'Mon bonsaï a une nouvelle pousse !',
+          'Ambiance du studio : 100 % zen.',
+          'J arrose mes petites plantes holo.',
+          'Biorythme de l équipe au top.',
+          'Bip-boop : temps idéal pour souffler.'
+        ]
+      }
+    };
+
+    var STUDIO_DIALOGUES = [
+      { a: 'lead', tA: 'Pause café ou matcha la team ?', b: 'analyst', tB: 'Matcha pour moi Aria, merci !' },
+      { a: 'hunter', tA: 'Tu veux jouer Minou ?', b: 'cat', tB: 'Miaou ! (*court autour*)' },
+      { a: 'execution', tA: 'Kira prête pour le sprint !', b: 'risk', tB: 'Doucement, attention aux câbles !' },
+      { a: 'sentinel', tA: 'Mon bonsaï fleurit ce soir !', b: 'reviewer', tB: 'Attends, je le prends en photo !' },
+      { a: 'strategist', tA: 'Revanche aux échecs ce soir ?', b: 'lead', tB: 'Avec plaisir, prépare l échiquier !' },
+      { a: 'risk', tA: 'Ramen ou plat mijoté ce soir ?', b: 'execution', tB: 'Ramen épicés sans hésiter !' },
+      { a: 'reviewer', tA: 'Sourire ! Photo souvenir !', b: 'hunter', tB: 'Attends, je mets mes écouteurs !' },
+      { a: 'analyst', tA: 'Minou cherche des câlins...', b: 'cat', tB: 'Ronron... (*frotte la patte*)' }
+    ];
+
+    var CAT_THOUGHTS = [
+      'Miaou ! (*fait le gros dos*)',
+      'Ronron... gratouilles SVP !',
+      'Explore le studio librement',
+      'Chasse un reflet lumineux',
+      'Fait un câlin à la team',
+      'Cherche du lait chaud'
+    ];
+
     function makeNameplateTexture(title, statusText, accentHex) {
       var canvas = document.createElement('canvas');
       canvas.width = 512;
-      canvas.height = 160;
+      canvas.height = 148;
       var ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'rgba(7, 12, 24, 0.88)';
+      ctx.fillStyle = 'rgba(7, 12, 24, 0.86)';
       ctx.strokeStyle = accentHex;
       ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.roundRect(10, 10, 492, 140, 22);
+      ctx.roundRect(10, 10, 492, 128, 22);
       ctx.fill();
       ctx.stroke();
 
       ctx.fillStyle = accentHex;
-      ctx.font = "700 34px 'Inter Variable', 'Inter Fallback', sans-serif";
+      ctx.font = "700 32px 'Inter Variable', 'Inter Fallback', sans-serif";
       ctx.textAlign = 'center';
-      ctx.fillText(title, 256, 66);
+      ctx.fillText(title, 256, 62);
 
       ctx.fillStyle = '#e2e8f0';
-      ctx.font = "600 26px 'Inter Variable', 'Inter Fallback', sans-serif";
-      ctx.fillText(statusText, 256, 114);
+      ctx.font = "600 24px 'Inter Variable', 'Inter Fallback', sans-serif";
+      ctx.fillText(statusText, 256, 108);
+
+      var tex = new THREE.CanvasTexture(canvas);
+      tex.needsUpdate = true;
+      return tex;
+    }
+
+    function makeSpeechBubbleTexture(speakerName, messageText, accentHex) {
+      var canvas = document.createElement('canvas');
+      canvas.width = 560;
+      canvas.height = 176;
+      var ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 560, 176);
+
+      // Sleek frosted dark bubble + pointer triangle
+      ctx.fillStyle = 'rgba(10, 16, 32, 0.96)';
+      ctx.strokeStyle = accentHex || '#38bdf8';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.roundRect(14, 10, 532, 134, 28);
+      ctx.fill();
+      ctx.stroke();
+
+      // Pointer tail
+      ctx.beginPath();
+      ctx.moveTo(260, 142);
+      ctx.lineTo(280, 170);
+      ctx.lineTo(300, 142);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(10, 16, 32, 0.96)';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(259, 143);
+      ctx.lineTo(280, 170);
+      ctx.lineTo(301, 143);
+      ctx.strokeStyle = accentHex || '#38bdf8';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      ctx.fillStyle = accentHex || '#38bdf8';
+      ctx.font = "800 22px 'Inter Variable', 'Inter Fallback', sans-serif";
+      ctx.textAlign = 'left';
+      ctx.fillText(speakerName, 36, 44);
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = "600 24px 'Inter Variable', 'Inter Fallback', sans-serif";
+      var words = String(messageText || '').split(' ');
+      var line1 = '';
+      var line2 = '';
+      for (var wi = 0; wi < words.length; wi++) {
+        var cand = line1 ? (line1 + ' ' + words[wi]) : words[wi];
+        if (ctx.measureText(cand).width <= 488 && !line2) {
+          line1 = cand;
+        } else {
+          line2 = line2 ? (line2 + ' ' + words[wi]) : words[wi];
+        }
+      }
+      ctx.fillText(line1, 36, 86);
+      if (line2) ctx.fillText(line2, 36, 120);
 
       var tex = new THREE.CanvasTexture(canvas);
       tex.needsUpdate = true;
@@ -2867,6 +3036,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     var blackCat3d = null;
     var profitBursts3d = [];
     var lastClosedProfitCount = -1;
+
+    function triggerSpeechBubble(rigOrCat, speakerTitle, messageText, accentHex, durationSec) {
+      if (!rigOrCat || !rigOrCat.speechSprite || !scene3d) return;
+      if (rigOrCat.speechSprite.material.map) {
+        try { rigOrCat.speechSprite.material.map.dispose(); } catch (e) {}
+      }
+      rigOrCat.speechSprite.material.map = makeSpeechBubbleTexture(speakerTitle, messageText, accentHex);
+      rigOrCat.speechSprite.material.needsUpdate = true;
+      rigOrCat.speechSprite.material.opacity = 1;
+      rigOrCat.speechSprite.visible = true;
+      rigOrCat.bubbleAge = 0;
+      rigOrCat.bubbleDuration = durationSec || 4.8;
+    }
 
     function spawn3dPulse(fromId, toId, colorHex) {
       if (!scene3d) return;
@@ -2914,6 +3096,298 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           life: 1.0
         });
       }
+    }
+
+    function buildDistinctAgentAvatar(ag, col, neonMat) {
+      var avatar = new THREE.Group();
+      var darkSuit = new THREE.MeshPhysicalMaterial({ color: 0x111827, metalness: 0.45, roughness: 0.28, clearcoat: 0.85 });
+      var secondaryMat = new THREE.MeshPhysicalMaterial({ color: col, metalness: 0.35, roughness: 0.22, clearcoat: 0.9 });
+      var whiteGlow = new THREE.MeshBasicMaterial({ color: 0xf8fafc, transparent: true, opacity: 0.9 });
+      var headGroup = new THREE.Group();
+      var armL = null;
+      var armR = null;
+      var legL = null;
+      var legR = null;
+      var propGroup = null;
+
+      function attachLegs(yBase, spreadX) {
+        var pL = new THREE.Group();
+        pL.position.set(-spreadX, yBase, 0);
+        var mL = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.38, 10), darkSuit);
+        mL.position.y = -0.19;
+        pL.add(mL);
+        var pR = new THREE.Group();
+        pR.position.set(spreadX, yBase, 0);
+        var mR = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.38, 10), darkSuit);
+        mR.position.y = -0.19;
+        pR.add(mR);
+        avatar.add(pL);
+        avatar.add(pR);
+        return [pL, pR];
+      }
+
+      if (ag.id === 'analyst') {
+        // Léo : Chercheur grand et élancé avec manteau flottant, grandes lunettes holo et tablette orbitale
+        var coat = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.34, 0.96, 16), darkSuit);
+        coat.position.y = 0.72;
+        coat.castShadow = true;
+        avatar.add(coat);
+        var scarf = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.055, 10, 20), neonMat);
+        scarf.rotation.x = Math.PI / 2;
+        scarf.position.y = 1.18;
+        avatar.add(scarf);
+        headGroup.position.set(0, 1.42, 0);
+        var hAnal = new THREE.Mesh(new THREE.SphereGeometry(0.22, 22, 22), secondaryMat);
+        headGroup.add(hAnal);
+        // Oversized glowing round glasses
+        var glassL = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.018, 8, 20), whiteGlow);
+        glassL.position.set(-0.08, 0.02, 0.21);
+        var glassR = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.018, 8, 20), whiteGlow);
+        glassR.position.set(0.08, 0.02, 0.21);
+        headGroup.add(glassL);
+        headGroup.add(glassR);
+        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
+        armL.position.set(-0.28, 0.92, 0.05);
+        armL.rotation.z = 0.28;
+        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
+        armR.position.set(0.28, 0.92, 0.10);
+        armR.rotation.z = -0.35;
+        // Orbiting holo-tablet
+        propGroup = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.20, 0.03), neonMat);
+        propGroup.position.set(0.45, 1.05, 0.28);
+        avatar.add(propGroup);
+        var legs = attachLegs(0.36, 0.11);
+        legL = legs[0]; legR = legs[1];
+      } else if (ag.id === 'strategist') {
+        // Marc : Architecte héroïque avec épaulettes géométriques, couronne et pièce d'échecs flottante
+        var chestSt = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.56, 0.28), darkSuit);
+        chestSt.position.y = 0.78;
+        chestSt.castShadow = true;
+        avatar.add(chestSt);
+        var crest = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), neonMat);
+        crest.position.set(0, 0.85, 0.16);
+        avatar.add(crest);
+        headGroup.position.set(0, 1.28, 0);
+        var hStrat = new THREE.Mesh(new THREE.DodecahedronGeometry(0.22, 0), secondaryMat);
+        headGroup.add(hStrat);
+        var crown = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 8, 6), neonMat);
+        crown.rotation.x = Math.PI / 2;
+        crown.position.y = 0.14;
+        headGroup.add(crown);
+        armL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.36, 0.11), secondaryMat);
+        armL.position.set(-0.32, 0.78, 0);
+        armR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.36, 0.11), secondaryMat);
+        armR.position.set(0.32, 0.78, 0);
+        // Floating chess knight/octahedron companion
+        propGroup = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), neonMat);
+        propGroup.position.set(-0.52, 1.32, 0.18);
+        avatar.add(propGroup);
+        var legsSt = attachLegs(0.42, 0.13);
+        legL = legsSt[0]; legR = legsSt[1];
+      } else if (ag.id === 'lead') {
+        // Aria : Capitaine / Barista avec béret incliné, grande cape et tasse d'espresso flottante
+        var dressLead = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.42, 0.88, 20), darkSuit);
+        dressLead.position.y = 0.62;
+        dressLead.castShadow = true;
+        avatar.add(dressLead);
+        headGroup.position.set(0, 1.24, 0);
+        var hLead = new THREE.Mesh(new THREE.SphereGeometry(0.22, 22, 22), secondaryMat);
+        headGroup.add(hLead);
+        var beret = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.21, 0.09, 20), neonMat);
+        beret.position.set(0.05, 0.21, 0);
+        beret.rotation.z = -0.22;
+        headGroup.add(beret);
+        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.34, 10), neonMat);
+        armL.position.set(-0.33, 0.82, 0.04);
+        armL.rotation.z = 0.32;
+        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.34, 10), neonMat);
+        armR.position.set(0.33, 0.82, 0.04);
+        armR.rotation.z = -0.32;
+        // Floating espresso mug
+        propGroup = new THREE.Group();
+        var mug = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.09, 0.16, 14), whiteGlow);
+        var coffeeTop = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.02, 14), neonMat);
+        coffeeTop.position.y = 0.075;
+        propGroup.add(mug);
+        propGroup.add(coffeeTop);
+        propGroup.position.set(0.50, 1.05, 0.20);
+        avatar.add(propGroup);
+        var legsL = attachLegs(0.32, 0.12);
+        legL = legsL[0]; legR = legsL[1];
+      } else if (ag.id === 'execution') {
+        // Kira : Sprinter Cyber-Skate penché en avant, jetpack dorsal double et casque profilé
+        var aeroTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.15, 0.56, 14), secondaryMat);
+        aeroTorso.position.y = 0.72;
+        aeroTorso.rotation.x = 0.22;
+        avatar.add(aeroTorso);
+        // Twin Jetpack cones
+        var jetL = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.34, 12), neonMat);
+        jetL.rotation.x = Math.PI - 0.3;
+        jetL.position.set(-0.14, 0.75, -0.22);
+        var jetR = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.34, 12), neonMat);
+        jetR.rotation.x = Math.PI - 0.3;
+        jetR.position.set(0.14, 0.75, -0.22);
+        avatar.add(jetL);
+        avatar.add(jetR);
+        headGroup.position.set(0, 1.15, 0.08);
+        var hExec = new THREE.Mesh(new THREE.SphereGeometry(0.21, 20, 20), darkSuit);
+        headGroup.add(hExec);
+        var aeroFin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.38), neonMat);
+        aeroFin.position.set(0, 0.18, -0.06);
+        headGroup.add(aeroFin);
+        var speedVisor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.14), neonMat);
+        speedVisor.position.set(0, 0.02, 0.16);
+        headGroup.add(speedVisor);
+        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.32, 10), neonMat);
+        armL.position.set(-0.27, 0.76, 0.06);
+        armL.rotation.x = -0.35;
+        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.32, 10), neonMat);
+        armR.position.set(0.27, 0.76, 0.06);
+        armR.rotation.x = -0.35;
+        var legsEx = attachLegs(0.42, 0.11);
+        legL = legsEx[0]; legR = legsEx[1];
+        // Hover-skates
+        var skL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.05, 0.28), neonMat);
+        skL.position.set(0, -0.37, 0.04);
+        legL.add(skL);
+        var skR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.05, 0.28), neonMat);
+        skR.position.set(0, -0.37, 0.04);
+        legR.add(skR);
+      } else if (ag.id === 'risk') {
+        // Titan : Gardien blindé massif, larges épaulières et bouclier hexagonal lumineux
+        var heavyBody = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.66, 0.38), darkSuit);
+        heavyBody.position.y = 0.78;
+        heavyBody.castShadow = true;
+        avatar.add(heavyBody);
+        var pauldronL = new THREE.Mesh(new THREE.SphereGeometry(0.20, 14, 14), secondaryMat);
+        pauldronL.position.set(-0.38, 1.02, 0);
+        var pauldronR = new THREE.Mesh(new THREE.SphereGeometry(0.20, 14, 14), secondaryMat);
+        pauldronR.position.set(0.38, 1.02, 0);
+        avatar.add(pauldronL);
+        avatar.add(pauldronR);
+        headGroup.position.set(0, 1.28, 0);
+        var hRisk = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.30, 0.32), secondaryMat);
+        headGroup.add(hRisk);
+        var slit = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.05), whiteGlow);
+        slit.position.set(0, 0.02, 0.16);
+        headGroup.add(slit);
+        armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.14), darkSuit);
+        armL.position.set(-0.42, 0.74, 0.06);
+        // Hexagonal glowing shield attached to left arm
+        propGroup = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.05, 6), neonMat);
+        propGroup.rotation.z = Math.PI / 2;
+        propGroup.rotation.y = 0.25;
+        propGroup.position.set(-0.54, 0.78, 0.22);
+        avatar.add(propGroup);
+        armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.14), darkSuit);
+        armR.position.set(0.42, 0.74, 0.06);
+        var legsRk = attachLegs(0.44, 0.18);
+        legL = legsRk[0]; legR = legsRk[1];
+      } else if (ag.id === 'reviewer') {
+        // Sora : Archiviste avec capuche ronde, sacoche dorsale et appareil photo flottant
+        var robe = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.36, 0.80, 16), darkSuit);
+        robe.position.y = 0.64;
+        avatar.add(robe);
+        var backpack = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.34, 0.18), secondaryMat);
+        backpack.position.set(0, 0.76, -0.22);
+        avatar.add(backpack);
+        headGroup.position.set(0, 1.18, 0);
+        var hood = new THREE.Mesh(new THREE.SphereGeometry(0.27, 18, 18), darkSuit);
+        hood.scale.set(1.05, 1.05, 1.1);
+        headGroup.add(hood);
+        var faceInner = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 16), secondaryMat);
+        faceInner.position.set(0, 0, 0.08);
+        headGroup.add(faceInner);
+        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.30, 10), neonMat);
+        armL.position.set(-0.30, 0.76, 0.05);
+        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.30, 10), neonMat);
+        armR.position.set(0.30, 0.76, 0.05);
+        // Floating retro camera rig
+        propGroup = new THREE.Group();
+        var camBody = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.12), secondaryMat);
+        var camLens = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.10, 12), whiteGlow);
+        camLens.rotation.x = Math.PI / 2;
+        camLens.position.z = 0.09;
+        propGroup.add(camBody);
+        propGroup.add(camLens);
+        propGroup.position.set(0.46, 1.12, 0.24);
+        avatar.add(propGroup);
+        var legsRv = attachLegs(0.30, 0.11);
+        legL = legsRv[0]; legR = legsRv[1];
+      } else if (ag.id === 'hunter') {
+        // Vex : DJ nocturne avec grand casque audio lumineux et antennes sonar
+        var jacket = new THREE.Mesh(new THREE.ConeGeometry(0.30, 0.78, 12), darkSuit);
+        jacket.position.y = 0.68;
+        avatar.add(jacket);
+        headGroup.position.set(0, 1.18, 0);
+        var hHunt = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 18), secondaryMat);
+        headGroup.add(hHunt);
+        // Studio Headphones
+        var band = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.032, 8, 24, Math.PI), neonMat);
+        headGroup.add(band);
+        var cupL = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 14), whiteGlow);
+        cupL.rotation.z = Math.PI / 2;
+        cupL.position.set(-0.24, 0, 0);
+        var cupR = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 14), whiteGlow);
+        cupR.rotation.z = Math.PI / 2;
+        cupR.position.set(0.24, 0, 0);
+        headGroup.add(cupL);
+        headGroup.add(cupR);
+        // Spiky DJ radar ears
+        var spL = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.22, 6), neonMat);
+        spL.position.set(-0.15, 0.24, 0);
+        var spR = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.22, 6), neonMat);
+        spR.position.set(0.15, 0.24, 0);
+        headGroup.add(spL);
+        headGroup.add(spR);
+        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
+        armL.position.set(-0.30, 0.74, 0.04);
+        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
+        armR.position.set(0.30, 0.74, 0.04);
+        var legsH = attachLegs(0.34, 0.11);
+        legL = legsH[0]; legR = legsH[1];
+      } else {
+        // Nova (Sentinel) : Droïde compagnon flottant à 4 rotors + œil cyclope + petit bonsaï holo flottant
+        var droneCore = new THREE.Mesh(new THREE.SphereGeometry(0.32, 24, 24), darkSuit);
+        droneCore.position.y = 0.96;
+        droneCore.castShadow = true;
+        avatar.add(droneCore);
+        var hoverRing = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.032, 10, 32), neonMat);
+        hoverRing.rotation.x = Math.PI / 2;
+        hoverRing.position.y = 0.72;
+        avatar.add(hoverRing);
+        headGroup.position.set(0, 0.96, 0);
+        var cyclops = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), whiteGlow);
+        cyclops.position.set(0, 0.02, 0.28);
+        headGroup.add(cyclops);
+        armL = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.26), neonMat);
+        armL.position.set(-0.42, 0.94, 0);
+        armR = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.26), neonMat);
+        armR.position.set(0.42, 0.94, 0);
+        // Floating glowing mini bonsai pot beside Nova
+        propGroup = new THREE.Group();
+        var pot = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.07, 0.10, 12), secondaryMat);
+        var leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.11, 0), new THREE.MeshBasicMaterial({ color: 0x34d399 }));
+        leaf.position.y = 0.14;
+        propGroup.add(pot);
+        propGroup.add(leaf);
+        propGroup.position.set(0.54, 1.15, 0.16);
+        avatar.add(propGroup);
+      }
+
+      avatar.add(headGroup);
+      if (armL) avatar.add(armL);
+      if (armR) avatar.add(armR);
+
+      return {
+        avatar: avatar,
+        headGroup: headGroup,
+        armL: armL,
+        armR: armR,
+        legL: legL,
+        legR: legR,
+        propGroup: propGroup
+      };
     }
 
     function buildBlackCatMesh() {
@@ -3034,14 +3508,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       // Ground soft glow outline ring so the black cat is easy to spot anywhere
       var catHalo = new THREE.Mesh(
         new THREE.RingGeometry(0.32, 0.38, 28),
-        new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide, transparent: true, opacity: 0.35 })
+        new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide, transparent: true, opacity: 0.42 })
       );
       catHalo.rotation.x = -Math.PI / 2;
       catHalo.position.y = 0.01;
       catGroup.add(catHalo);
 
+      // Speech bubble sprite above the Black Cat
+      var catSpeechTex = makeSpeechBubbleTexture('Minou', 'Miaou !', '#f59e0b');
+      var catSpeechSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: catSpeechTex, transparent: true, opacity: 0 }));
+      catSpeechSprite.position.set(0, 1.38, 0);
+      catSpeechSprite.scale.set(0.001, 0.001, 1);
+      catSpeechSprite.visible = false;
+      catGroup.add(catSpeechSprite);
+
       // Clickable hitbox for inspector
-      var hitCat = new THREE.Mesh(new THREE.SphereGeometry(0.75, 12, 12), new THREE.MeshBasicMaterial({ visible: false }));
+      var hitCat = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 12), new THREE.MeshBasicMaterial({ visible: false }));
       hitCat.position.y = 0.45;
       hitCat.userData = { catMascot: true };
       catGroup.add(hitCat);
@@ -3058,11 +3540,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         tailBase: tailBasePivot,
         tailMid: tailMidPivot,
         hitSphere: hitCat,
+        speechSprite: catSpeechSprite,
+        bubbleBaseY: 1.38,
+        bubbleScaleW: 2.35,
+        bubbleScaleH: 0.74,
+        bubbleAge: 99,
+        bubbleDuration: 4.5,
         pos: new THREE.Vector3(1.2, -1.5, 1.8),
-        target: new THREE.Vector3(-3.0, -1.5, 2.5),
+        target: new THREE.Vector3(-4.2, -1.5, 2.2),
         heading: 0,
-        pauseTimer: 0,
-        mood: 'Patrouille curieuse sur le floor'
+        pauseTimer: 0.4,
+        mood: 'Explore le studio 3D'
       };
     }
 
@@ -3089,7 +3577,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       host.innerHTML = '';
       host.appendChild(renderer3d.domElement);
 
-      ambient3d = new THREE.AmbientLight(0x94a3b8, 0.7);
+      ambient3d = new THREE.AmbientLight(0x94a3b8, 0.75);
       scene3d.add(ambient3d);
 
       spot3d = new THREE.SpotLight(0x38bdf8, 3.0, 56, Math.PI / 2.8, 0.45, 1.1);
@@ -3143,6 +3631,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       AGENTS.forEach(function (ag, idx) {
         var zp = STUDIO_ZONES[ag.id] || { x: (idx - 3.5) * 2.4, z: ((idx % 2) - 0.5) * 5.0, rot: 0 };
         var col = new THREE.Color(ag.color);
+        var persona = AGENT_PERSONAS[ag.id] || { nick: ag.name, hobby: '', lines: ['En salle'] };
 
         // Agent's custom self-built Spatial Habitat (unique geometry per role, asymmetric)
         var habitat = new THREE.Group();
@@ -3153,7 +3642,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var neonMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.25, roughness: 0.2, metalness: 0.4 });
         var glassScreenMat = new THREE.MeshBasicMaterial({ map: makeScreenTexture(ag.color), transparent: true, opacity: 0.88, side: THREE.DoubleSide });
 
-        // Base sculpted irregular island
         var island = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.12, 2.0), padMat);
         island.position.y = 0.06;
         island.receiveShadow = true;
@@ -3163,13 +3651,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         accentTrim.position.set(0, 0.12, 0.98);
         habitat.add(accentTrim);
 
-        // Custom self-built creative architecture per agent
         var holoScreens = [];
         var l2Bars = [];
         var sentinelLed = null;
 
         if (ag.id === 'analyst') {
-          // Floating curved crystal data wall + floating monitors
           for (var si = 0; si < 3; si++) {
             var scr = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.7), glassScreenMat);
             scr.position.set(-0.9 + si * 0.9, 1.35 + (si % 2) * 0.22, -0.55 + Math.abs(si - 1) * 0.2);
@@ -3181,7 +3667,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           spire.position.set(-1.05, 0.75, -0.65);
           habitat.add(spire);
         } else if (ag.id === 'strategist') {
-          // Architectural tactical polyhedra sculpting live ideas
           var sculpture = new THREE.Mesh(
             new THREE.DodecahedronGeometry(0.45, 0),
             new THREE.MeshPhysicalMaterial({ color: col, metalness: 0.3, roughness: 0.12, transmission: 0.6, clearcoat: 1.0 })
@@ -3193,7 +3678,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           mapScreen.position.set(-0.45, 1.2, -0.6);
           habitat.add(mapScreen);
         } else if (ag.id === 'hunter') {
-          // Live 3D Orderbook Depth Cityscape
           for (var bi = 0; bi < 8; bi++) {
             var isBid = bi < 4;
             var bar = new THREE.Mesh(
@@ -3205,7 +3689,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             l2Bars.push(bar);
           }
         } else if (ag.id === 'risk') {
-          // Protective shield monolith pylons
           for (var pi2 = -1; pi2 <= 1; pi2 += 2) {
             var pylon = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.65, 0.42), padMat);
             pylon.position.set(pi2 * 0.92, 0.85, -0.55);
@@ -3215,7 +3698,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             habitat.add(barGlow);
           }
         } else if (ag.id === 'sentinel') {
-          // Quantum Server Racks + dynamic latency LED beacon
           for (var ri = -1; ri <= 1; ri++) {
             var rack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 1.5, 0.36), padMat);
             rack.position.set(ri * 0.58, 0.8, -0.58);
@@ -3226,7 +3708,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           sentinelLed.position.set(0, 1.85, -0.52);
           habitat.add(sentinelLed);
         } else {
-          // Asymmetric holographic light-fins + floating screen for Execution / Lead / Reviewer
           var finA = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.45, 0.55), neonMat);
           finA.position.set(-0.85, 0.75, -0.5);
           finA.rotation.z = -0.14;
@@ -3239,52 +3720,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
         scene3d.add(habitat);
 
-        // Living Free-Roaming Agent Avatar (walks & expresses visibly across the studio)
+        // Unique Free-Roaming Agent Character (NO clones!)
         var walker = new THREE.Group();
-        walker.position.set(zp.x, -1.5, zp.z + 0.5);
+        walker.position.set(zp.x + (Math.random() - 0.5) * 1.6, -1.5, zp.z + 0.8 + (Math.random() - 0.5) * 1.4);
 
-        var avatar = new THREE.Group();
-        avatar.position.y = 0.05;
-
-        // Sleek floating hover-robe / articulated body
-        var bodyMesh = new THREE.Mesh(
-          new THREE.ConeGeometry(0.34, 0.92, 18),
-          new THREE.MeshPhysicalMaterial({ color: 0x111827, metalness: 0.45, roughness: 0.25, clearcoat: 0.9 })
-        );
-        bodyMesh.position.y = 0.56;
-        bodyMesh.castShadow = true;
-        avatar.add(bodyMesh);
-
-        var coreChest = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), neonMat);
-        coreChest.position.set(0, 0.72, 0.22);
-        avatar.add(coreChest);
-
-        var headGroup = new THREE.Group();
-        headGroup.position.set(0, 1.18, 0);
-        var head = new THREE.Mesh(
-          new THREE.SphereGeometry(0.24, 24, 24),
-          new THREE.MeshPhysicalMaterial({ color: col, emissive: col, emissiveIntensity: 0.9, roughness: 0.15, metalness: 0.35 })
-        );
-        headGroup.add(head);
-
-        var visor = new THREE.Mesh(
-          new THREE.BoxGeometry(0.34, 0.09, 0.16),
-          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
-        );
-        visor.position.set(0, 0.02, 0.17);
-        headGroup.add(visor);
-        avatar.add(headGroup);
-
-        // Expressive articulated holographic hands/fins that gesture when trading/analyzing
-        var armL = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.34, 10), neonMat);
-        armL.position.set(-0.36, 0.74, 0.08);
-        armL.rotation.z = 0.35;
-        avatar.add(armL);
-
-        var armR = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.34, 10), neonMat);
-        armR.position.set(0.36, 0.74, 0.08);
-        armR.rotation.z = -0.35;
-        avatar.add(armR);
+        var built = buildDistinctAgentAvatar(ag, col, neonMat);
 
         var padRing = new THREE.Mesh(
           new THREE.RingGeometry(0.45, 0.58, 28),
@@ -3294,38 +3734,56 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         padRing.position.y = 0.02;
         walker.add(padRing);
 
-        var spTex = makeNameplateTexture(ag.name.toUpperCase(), 'EN VEILLE', ag.color);
+        var spTex = makeNameplateTexture(persona.nick.toUpperCase() + ' · ' + ag.name.toUpperCase(), 'EN VEILLE', ag.color);
         var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spTex, transparent: true }));
-        sprite.position.set(0, 1.95, 0);
-        sprite.scale.set(2.55, 0.8, 1);
+        sprite.position.set(0, 2.02, 0);
+        sprite.scale.set(2.55, 0.74, 1);
         walker.add(sprite);
 
+        // Pop-up Speech Bubble Sprite right above nameplate
+        var sbTex = makeSpeechBubbleTexture(persona.nick, persona.lines[0], ag.color);
+        var speechSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sbTex, transparent: true, opacity: 0 }));
+        speechSprite.position.set(0, 2.86, 0);
+        speechSprite.scale.set(0.001, 0.001, 1);
+        speechSprite.visible = false;
+        walker.add(speechSprite);
+
         var hitSphere = new THREE.Mesh(
-          new THREE.SphereGeometry(1.15, 14, 14),
+          new THREE.SphereGeometry(1.2, 14, 14),
           new THREE.MeshBasicMaterial({ visible: false })
         );
         hitSphere.position.set(0, 0.95, 0);
         hitSphere.userData = { agentId: ag.id };
         walker.add(hitSphere);
-        walker.add(avatar);
+        walker.add(built.avatar);
         scene3d.add(walker);
 
         agentRigs[ag.id] = {
           station: walker,
           habitat: habitat,
-          avatar: avatar,
-          headGroup: headGroup,
-          armL: armL,
-          armR: armR,
+          avatar: built.avatar,
+          headGroup: built.headGroup,
+          armL: built.armL,
+          armR: built.armR,
+          legL: built.legL,
+          legR: built.legR,
+          propGroup: built.propGroup,
           padRing: padRing,
           hitSphere: hitSphere,
           sprite: sprite,
+          speechSprite: speechSprite,
+          bubbleBaseY: 2.86,
+          bubbleScaleW: 2.85,
+          bubbleScaleH: 0.90,
+          bubbleAge: 99,
+          bubbleDuration: 4.8,
           sentinelLed: sentinelLed,
           l2Bars: l2Bars,
           holoScreens: holoScreens,
-          homePos: new THREE.Vector3(zp.x, -1.5, zp.z + 0.5),
-          wanderTarget: new THREE.Vector3(zp.x + (Math.random() - 0.5) * 2.5, -1.5, zp.z + (Math.random() - 0.5) * 2.5),
-          pauseTimer: Math.random() * 2.0,
+          homePos: new THREE.Vector3(zp.x, -1.5, zp.z + 0.6),
+          wanderTarget: new THREE.Vector3((Math.random() - 0.5) * 14, -1.5, (Math.random() - 0.5) * 10),
+          pauseTimer: Math.random() * 0.6,
+          moveSpeed: ag.id === 'execution' ? 0.068 : (ag.id === 'risk' ? 0.036 : 0.048),
           worldPos: walker.position,
           lastLabel: 'EN VEILLE'
         };
@@ -3335,6 +3793,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       blackCat3d = buildBlackCatMesh();
       blackCat3d.group.position.copy(blackCat3d.pos);
       scene3d.add(blackCat3d.group);
+
+      // Kick off lively opening speech bubbles right away so the studio immediately feels alive
+      setTimeout(function () {
+        if (agentRigs.lead) triggerSpeechBubble(agentRigs.lead, 'Aria', 'Bienvenue dans le studio ! Pause café ?', '#22d3ee', 5.0);
+        if (blackCat3d) triggerSpeechBubble(blackCat3d, 'Minou', 'Miaou ! (*inspecte le studio*)', '#f59e0b', 4.6);
+      }, 650);
+      setTimeout(function () {
+        if (agentRigs.execution) triggerSpeechBubble(agentRigs.execution, 'Kira', 'Hover-skates prêts, en balade !', '#10b981', 4.8);
+      }, 1700);
 
       // Ambient holographic data motes across the open studio
       var pGeo = new THREE.BufferGeometry();
@@ -3387,8 +3854,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           var ud = hits[0].object.userData || {};
           if (ud.catMascot) {
             show3dCatInspector();
+            var ct = CAT_THOUGHTS[Math.floor(Math.random() * CAT_THOUGHTS.length)];
+            triggerSpeechBubble(blackCat3d, 'Minou', ct, '#f59e0b', 4.5);
           } else if (ud.agentId) {
             show3dAgentInspector(ud.agentId);
+            var agm = AGENTS.find(function (a) { return a.id === ud.agentId; });
+            var pm = AGENT_PERSONAS[ud.agentId];
+            if (pm && agentRigs[ud.agentId]) {
+              triggerSpeechBubble(agentRigs[ud.agentId], pm.nick, pm.lines[Math.floor(Math.random() * pm.lines.length)], agm ? agm.color : '#38bdf8', 4.5);
+            }
           }
         } else {
           document.getElementById('deskNodeInspector').style.display = 'none';
@@ -3397,9 +3871,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var clk = 0;
       var lastAmbientPulseClk = 0;
+      var nextSocialBanterClk = 2.5;
+      var dialogueIdx = 0;
       var pipeOrder = ['analyst', 'strategist', 'risk', 'execution', 'reviewer', 'lead', 'hunter', 'sentinel'];
       var pipeStep = 0;
       var zoneKeys = Object.keys(STUDIO_ZONES);
+
+      function updateBubblePopAnimation(ent, dt, tClk) {
+        if (!ent || !ent.speechSprite || !ent.speechSprite.visible) return;
+        ent.bubbleAge += dt;
+        var dur = ent.bubbleDuration || 4.8;
+        if (ent.bubbleAge >= dur) {
+          ent.speechSprite.visible = false;
+          ent.speechSprite.scale.set(0.001, 0.001, 1);
+          return;
+        }
+        var popScale = 1.0;
+        if (ent.bubbleAge < 0.34) {
+          // Elastic bounce pop-up
+          var p = ent.bubbleAge / 0.34;
+          var c1 = 1.70158;
+          var c3 = c1 + 1;
+          popScale = Math.max(0.01, 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2));
+        } else if (ent.bubbleAge > dur - 0.3) {
+          popScale = Math.max(0.01, (dur - ent.bubbleAge) / 0.3);
+        }
+        ent.speechSprite.scale.set(ent.bubbleScaleW * popScale, ent.bubbleScaleH * popScale, 1);
+        ent.speechSprite.position.y = ent.bubbleBaseY + Math.sin(tClk * 2.8) * 0.06;
+        ent.speechSprite.material.opacity = ent.bubbleAge > dur - 0.3 ? Math.max(0, (dur - ent.bubbleAge) / 0.3) : 1.0;
+      }
 
       function animate3d() {
         requestAnimationFrame(animate3d);
@@ -3422,7 +3922,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           pts3d.rotation.y += 0.0009;
           pts3d.position.y = Math.sin(clk * 0.45) * 0.12;
 
-          if (clk - lastAmbientPulseClk > 1.65 && pulseArcs.length < 8) {
+          if (clk - lastAmbientPulseClk > 1.8 && pulseArcs.length < 8) {
             lastAmbientPulseClk = clk;
             var fromId = pipeOrder[pipeStep % pipeOrder.length];
             var toId = pipeOrder[(pipeStep + 1 + (pipeStep % 3)) % pipeOrder.length];
@@ -3430,59 +3930,111 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             var agMeta = AGENTS.find(function (a) { return a.id === fromId; });
             spawn3dPulse(fromId, toId, agMeta ? agMeta.color : '#38bdf8');
           }
+
+          // Two-agent / Cat organic social conversations & pop-up bubbles outside of trading
+          if (clk >= nextSocialBanterClk) {
+            nextSocialBanterClk = clk + 3.4 + Math.random() * 2.2;
+            var d = STUDIO_DIALOGUES[dialogueIdx % STUDIO_DIALOGUES.length];
+            dialogueIdx++;
+            var rigA = agentRigs[d.a];
+            var metaA = AGENTS.find(function (a) { return a.id === d.a; });
+            var perA = AGENT_PERSONAS[d.a];
+            if (rigA) {
+              triggerSpeechBubble(rigA, perA ? perA.nick : d.a, d.tA, metaA ? metaA.color : '#38bdf8', 4.6);
+              // Walk Agent A toward partner / cat while talking
+              if (d.b === 'cat' && blackCat3d) {
+                rigA.wanderTarget.set(blackCat3d.pos.x + (Math.random() - 0.5) * 1.8, -1.5, blackCat3d.pos.z + (Math.random() - 0.5) * 1.8);
+                rigA.pauseTimer = 0;
+              } else if (agentRigs[d.b]) {
+                rigA.wanderTarget.set(agentRigs[d.b].worldPos.x + (Math.random() - 0.5) * 2.0, -1.5, agentRigs[d.b].worldPos.z + (Math.random() - 0.5) * 2.0);
+                rigA.pauseTimer = 0;
+              }
+            }
+            (function (dialog) {
+              setTimeout(function () {
+                if (currentTab !== 'desk') return;
+                if (dialog.b === 'cat' && blackCat3d) {
+                  triggerSpeechBubble(blackCat3d, 'Minou', dialog.tB, '#f59e0b', 4.4);
+                } else {
+                  var rigB = agentRigs[dialog.b];
+                  var metaB = AGENTS.find(function (a) { return a.id === dialog.b; });
+                  var perB = AGENT_PERSONAS[dialog.b];
+                  if (rigB) triggerSpeechBubble(rigB, perB ? perB.nick : dialog.b, dialog.tB, metaB ? metaB.color : '#38bdf8', 4.6);
+                }
+              }, 1450);
+            })(d);
+          }
         }
 
-        // Autonomous Free-Roaming Movement for all 8 Living Agents + Self-Shaping Habitats
+        // Autonomous Free-Roaming Movement for all 8 Distinct Agents
         AGENTS.forEach(function (ag, idx) {
           var rig = agentRigs[ag.id];
           if (!rig) return;
           var act = deskState && deskState.agentActivity && deskState.agentActivity[ag.id];
           var busy = act && act.status && act.status !== 'idle' && act.status !== 'watch';
+          updateBubblePopAnimation(rig, dt, clk);
 
           if (!prefersReducedMotion) {
-            if (rig.pauseTimer > 0) {
+            var isWalking = rig.pauseTimer <= 0;
+            if (!isWalking) {
               rig.pauseTimer -= dt;
-              rig.avatar.position.y = 0.04 + Math.sin(clk * (busy ? 3.5 : 1.7) + idx) * 0.05;
+              rig.avatar.position.y = Math.sin(clk * (busy ? 3.5 : 1.7) + idx) * 0.04;
+              if (rig.legL && rig.legR) {
+                rig.legL.rotation.x *= 0.85;
+                rig.legR.rotation.x *= 0.85;
+              }
             } else {
               var dx = rig.wanderTarget.x - rig.worldPos.x;
               var dz = rig.wanderTarget.z - rig.worldPos.z;
               var dist = Math.sqrt(dx * dx + dz * dz);
-              if (dist < 0.25) {
-                rig.pauseTimer = busy ? 1.2 + Math.random() * 1.5 : 2.2 + Math.random() * 3.0;
-                // 60% roam around own habitat, 40% walk across the open studio floor or visit another agent
-                if (Math.random() < 0.6) {
+              if (dist < 0.35) {
+                rig.pauseTimer = 0.8 + Math.random() * 1.4;
+                // Wide studio-wide exploration so every agent noticeably walks all over the floor
+                if (Math.random() < 0.28) {
                   rig.wanderTarget.set(
-                    Math.max(-10, Math.min(10, rig.homePos.x + (Math.random() - 0.5) * 4.2)),
+                    Math.max(-10, Math.min(10, rig.homePos.x + (Math.random() - 0.5) * 3.5)),
                     -1.5,
-                    Math.max(-7.5, Math.min(7.5, rig.homePos.z + (Math.random() - 0.5) * 3.8))
+                    Math.max(-7.5, Math.min(7.5, rig.homePos.z + (Math.random() - 0.5) * 3.2))
+                  );
+                } else if (Math.random() < 0.65) {
+                  var friendKey = zoneKeys[(idx + 1 + Math.floor(Math.random() * 6)) % zoneKeys.length];
+                  var friendRig = agentRigs[friendKey];
+                  var fx = friendRig ? friendRig.worldPos.x : 0;
+                  var fz = friendRig ? friendRig.worldPos.z : 0;
+                  rig.wanderTarget.set(
+                    Math.max(-10, Math.min(10, fx + (Math.random() - 0.5) * 2.8)),
+                    -1.5,
+                    Math.max(-7.5, Math.min(7.5, fz + (Math.random() - 0.5) * 2.8))
                   );
                 } else {
-                  var friendKey = zoneKeys[(idx + 1 + Math.floor(Math.random() * 5)) % zoneKeys.length];
-                  var friendRig = agentRigs[friendKey];
-                  var fx = friendRig ? friendRig.homePos.x : 0;
-                  var fz = friendRig ? friendRig.homePos.z : 0;
-                  rig.wanderTarget.set(
-                    Math.max(-9.5, Math.min(9.5, fx + (Math.random() - 0.5) * 3.0)),
-                    -1.5,
-                    Math.max(-7.2, Math.min(7.2, fz + (Math.random() - 0.5) * 3.0))
-                  );
+                  rig.wanderTarget.set((Math.random() - 0.5) * 19, -1.5, (Math.random() - 0.5) * 14);
                 }
               } else {
-                var spd = busy ? 0.036 : 0.021;
+                var spd = (rig.moveSpeed || 0.048) * (busy ? 1.25 : 1.0);
                 rig.worldPos.x += (dx / dist) * spd;
                 rig.worldPos.z += (dz / dist) * spd;
                 var targetRot = Math.atan2(dx, dz);
-                rig.avatar.rotation.y += Math.sin(targetRot - rig.avatar.rotation.y) * 0.1;
-                rig.avatar.position.y = 0.05 + Math.abs(Math.sin(clk * (busy ? 7.0 : 4.2) + idx)) * 0.08;
+                rig.avatar.rotation.y += Math.sin(targetRot - rig.avatar.rotation.y) * 0.14;
+                var stride = clk * (ag.id === 'execution' ? 11.5 : 8.2) + idx;
+                rig.avatar.position.y = Math.abs(Math.sin(stride)) * 0.06;
+                if (rig.legL && rig.legR) {
+                  rig.legL.rotation.x = Math.sin(stride) * 0.52;
+                  rig.legR.rotation.x = -Math.sin(stride) * 0.52;
+                }
               }
             }
 
             if (rig.headGroup) {
-              rig.headGroup.rotation.y = Math.sin(clk * 1.3 + idx) * 0.28;
+              rig.headGroup.rotation.y = Math.sin(clk * 1.4 + idx) * 0.24;
             }
             if (rig.armL && rig.armR) {
-              rig.armL.rotation.x = Math.sin(clk * (busy ? 6.5 : 2.2) + idx) * (busy ? 0.65 : 0.22);
-              rig.armR.rotation.x = -Math.sin(clk * (busy ? 6.5 : 2.2) + idx) * (busy ? 0.65 : 0.22);
+              var swing = isWalking ? Math.sin(clk * 8.2 + idx) * 0.55 : Math.sin(clk * (busy ? 5.5 : 1.9) + idx) * 0.20;
+              rig.armL.rotation.x = swing;
+              rig.armR.rotation.x = -swing;
+            }
+            if (rig.propGroup) {
+              rig.propGroup.rotation.y += 0.02;
+              rig.propGroup.position.y += Math.sin(clk * 2.5 + idx) * 0.0015;
             }
             if (rig.holoScreens && rig.holoScreens.length) {
               rig.holoScreens.forEach(function (hs, si) {
@@ -3517,56 +4069,58 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           }
         });
 
-        // Autonomous Free-Roaming Articulated Black Cat Animation
+        // Autonomous Free-Roaming Articulated Black Cat Animation + Cat Bubbles
         if (blackCat3d) {
+          updateBubblePopAnimation(blackCat3d, dt, clk);
           if (!prefersReducedMotion) {
             if (blackCat3d.pauseTimer > 0) {
               blackCat3d.pauseTimer -= dt;
-              // Resting / observant cat idle: slight ear twitch & graceful tail swish
-              blackCat3d.head.rotation.y = Math.sin(clk * 1.1) * 0.25;
-              blackCat3d.head.rotation.z = Math.sin(clk * 0.7) * 0.06;
+              blackCat3d.head.rotation.y = Math.sin(clk * 1.3) * 0.28;
+              blackCat3d.head.rotation.z = Math.sin(clk * 0.8) * 0.07;
               blackCat3d.earL.rotation.z = 0.26 + (Math.sin(clk * 7.5) > 0.92 ? 0.14 : 0);
               blackCat3d.legFL.rotation.x *= 0.85;
               blackCat3d.legFR.rotation.x *= 0.85;
               blackCat3d.legBL.rotation.x *= 0.85;
               blackCat3d.legBR.rotation.x *= 0.85;
-              blackCat3d.tailBase.rotation.z = Math.sin(clk * 2.2) * 0.35;
-              blackCat3d.tailMid.rotation.z = Math.sin(clk * 2.2 - 0.6) * 0.4;
+              blackCat3d.tailBase.rotation.z = Math.sin(clk * 2.4) * 0.38;
+              blackCat3d.tailMid.rotation.z = Math.sin(clk * 2.4 - 0.6) * 0.42;
             } else {
               var cdx = blackCat3d.target.x - blackCat3d.pos.x;
               var cdz = blackCat3d.target.z - blackCat3d.pos.z;
               var cdist = Math.sqrt(cdx * cdx + cdz * cdz);
-              if (cdist < 0.3) {
-                blackCat3d.pauseTimer = 1.8 + Math.random() * 2.8;
-                // Choose next spot: either wander freely or visit an agent's side
+              if (cdist < 0.35) {
+                blackCat3d.pauseTimer = 0.9 + Math.random() * 1.5;
                 if (Math.random() < 0.55) {
                   var vk = zoneKeys[Math.floor(Math.random() * zoneKeys.length)];
                   var vrig = agentRigs[vk];
                   if (vrig) {
-                    blackCat3d.target.set(vrig.worldPos.x + (Math.random() - 0.5) * 1.4, -1.5, vrig.worldPos.z + (Math.random() - 0.5) * 1.4);
-                    var vag = AGENTS.find(function (a) { return a.id === vk; });
-                    blackCat3d.mood = 'Rend visite à ' + (vag ? vag.name : vk);
+                    blackCat3d.target.set(
+                      Math.max(-9.5, Math.min(9.5, vrig.worldPos.x + (Math.random() - 0.5) * 1.4)),
+                      -1.5,
+                      Math.max(-7.2, Math.min(7.2, vrig.worldPos.z + (Math.random() - 0.5) * 1.4))
+                    );
+                    var vag = AGENT_PERSONAS[vk];
+                    blackCat3d.mood = 'Court retrouver ' + (vag ? vag.nick : vk);
                   }
                 } else {
-                  blackCat3d.target.set((Math.random() - 0.5) * 17, -1.5, (Math.random() - 0.5) * 12);
+                  blackCat3d.target.set((Math.random() - 0.5) * 18, -1.5, (Math.random() - 0.5) * 13);
                   blackCat3d.mood = 'Explore librement le studio 3D';
                 }
               } else {
-                var cSpd = 0.038;
+                var cSpd = 0.056;
                 blackCat3d.pos.x += (cdx / cdist) * cSpd;
                 blackCat3d.pos.z += (cdz / cdist) * cSpd;
                 blackCat3d.group.position.copy(blackCat3d.pos);
                 var wantRot = Math.atan2(cdx, cdz);
-                blackCat3d.group.rotation.y += Math.sin(wantRot - blackCat3d.group.rotation.y) * 0.14;
-                // 4-leg feline trotting gait
-                var g = clk * 10.5;
-                blackCat3d.legFL.rotation.x = Math.sin(g) * 0.55;
-                blackCat3d.legBR.rotation.x = Math.sin(g) * 0.55;
-                blackCat3d.legFR.rotation.x = -Math.sin(g) * 0.55;
-                blackCat3d.legBL.rotation.x = -Math.sin(g) * 0.55;
-                blackCat3d.group.position.y = -1.5 + Math.abs(Math.sin(g)) * 0.035;
-                blackCat3d.tailBase.rotation.z = Math.sin(clk * 4.5) * 0.25;
-                blackCat3d.tailMid.rotation.z = Math.sin(clk * 4.5 - 0.8) * 0.3;
+                blackCat3d.group.rotation.y += Math.sin(wantRot - blackCat3d.group.rotation.y) * 0.16;
+                var g = clk * 12.0;
+                blackCat3d.legFL.rotation.x = Math.sin(g) * 0.58;
+                blackCat3d.legBR.rotation.x = Math.sin(g) * 0.58;
+                blackCat3d.legFR.rotation.x = -Math.sin(g) * 0.58;
+                blackCat3d.legBL.rotation.x = -Math.sin(g) * 0.58;
+                blackCat3d.group.position.y = -1.5 + Math.abs(Math.sin(g)) * 0.04;
+                blackCat3d.tailBase.rotation.z = Math.sin(clk * 4.8) * 0.28;
+                blackCat3d.tailMid.rotation.z = Math.sin(clk * 4.8 - 0.8) * 0.34;
               }
             }
           }
@@ -3625,21 +4179,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (!rig) return;
         var act = deskState.agentActivity && deskState.agentActivity[ag.id];
         var lbl = (act && act.status ? act.status : 'idle').toUpperCase();
+        var per = AGENT_PERSONAS[ag.id];
+        var dispTitle = per ? (per.nick.toUpperCase() + ' · ' + ag.name.toUpperCase()) : ag.name.toUpperCase();
         if (lbl !== rig.lastLabel) {
           rig.lastLabel = lbl;
           rig.sprite.material.map.dispose();
-          rig.sprite.material.map = makeNameplateTexture(ag.name.toUpperCase(), lbl, ag.color);
+          rig.sprite.material.map = makeNameplateTexture(dispTitle, lbl, ag.color);
           rig.sprite.material.needsUpdate = true;
         }
       });
 
-      // Emit emerald profit coins from Execution/Strategist when winning trades close
       var wins = (deskState.tickets || []).filter(function (t) { return t.status === 'closed' && (t.pnl || 0) > 0; });
       if (lastClosedProfitCount >= 0 && wins.length > lastClosedProfitCount) {
         var execRig = agentRigs['execution'];
         var stratRig = agentRigs['strategist'];
         var lastWin = wins[wins.length - 1];
-        if (execRig) spawnProfitBurst(execRig.worldPos, lastWin ? lastWin.pnl : 50);
+        if (execRig) {
+          spawnProfitBurst(execRig.worldPos, lastWin ? lastWin.pnl : 50);
+          triggerSpeechBubble(execRig, 'Kira', 'Belle exécution ! +' + Number(lastWin?.pnl || 0).toFixed(0) + ' €', '#10b981', 4.5);
+        }
         if (stratRig) spawnProfitBurst(stratRig.worldPos, lastWin ? lastWin.pnl : 50);
       }
       lastClosedProfitCount = wins.length;
@@ -3666,7 +4224,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (!el) return;
       el.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-        '<strong style="color:#f59e0b">Chat Noir · Mascotte du Desk</strong>' +
+        '<strong style="color:#f59e0b">Minou · Chat Noir du Studio</strong>' +
         '<span class="mono" style="font-size:10px;color:var(--up)">ACTIF</span></div>' +
         '<div style="color:var(--fg-1)">' + (blackCat3d && blackCat3d.mood ? blackCat3d.mood : 'Se promène sur le desk') + '</div>';
       el.style.display = 'block';
@@ -3677,10 +4235,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var ag = AGENTS.find(function (a) { return a.id === agentId; });
       if (!ag || !el) return;
       var act = deskState && deskState.agentActivity && deskState.agentActivity[agentId];
+      var per = AGENT_PERSONAS[agentId];
       el.innerHTML =
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-        '<strong style="color:' + ag.color + '">' + ag.name + '</strong>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
+        '<strong style="color:' + ag.color + '">' + (per ? per.nick + ' · ' : '') + ag.name + '</strong>' +
         '<span class="mono" style="font-size:10px;color:var(--fg-2)">' + (act ? act.status : 'idle') + '</span></div>' +
+        (per && per.hobby ? '<div style="font-size:10.5px;color:var(--accent);margin-bottom:4px">' + per.hobby + '</div>' : '') +
         '<div style="color:var(--fg-1)">' + (act && act.label ? act.label : 'En veille stratégique') + '</div>';
       el.style.display = 'block';
     }
