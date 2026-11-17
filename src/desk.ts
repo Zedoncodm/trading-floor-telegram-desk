@@ -1621,7 +1621,7 @@ export class TradingFloorDesk {
     const peak = this.state.curve.reduce((m, p) => Math.max(m, p.eq), this.state.startEquity);
     const drawdownPct = peak > 0 ? Math.max(0, (peak - eq) / peak) : 0;
     this.state.curve = [
-      ...this.state.curve.slice(-119),
+      ...this.state.curve.slice(-20_000),
       { t: now, eq, realized, unrealized, drawdownPct },
     ];
   }
@@ -2247,6 +2247,18 @@ export class TradingFloorDesk {
         const idea = this.choosePlay(candidate);
         if (!idea) continue;
 
+        // VÉRIFICATION STRICTE ANTI-DEATH-LOOP DIRECTIONNELLE
+        const dirCool = this.state.directionalCooldowns?.[candidate.symbol];
+        if (dirCool && dirCool.until > now && dirCool.bannedDir === idea.dir) {
+          const remMin = Math.ceil((dirCool.until - now) / 60_000);
+          await this.say(
+            "risk",
+            `[VETO ANTI-DEATH-LOOP] ${candidate.symbol} ${idea.dir.toUpperCase()} interdit (Stop Loss récent). Cooldown actif encore ${remMin} min. Modèle en quarantaine directionnelle.`,
+            "veto",
+          );
+          continue;
+        }
+
         const macroEval = MarketAnalystAgent.computeMacroScore(
           candidate.symbol,
           this.state.macroEvents ?? [],
@@ -2810,6 +2822,27 @@ export class TradingFloorDesk {
     const isFastScalp = (this.state.settings?.regime === "hft_kamikaze") || (this.state.settings?.tradingStyle === "scalping");
     const cooldownMs = isFastScalp ? 15_000 : 5 * 60_000;
     this.state.cooldowns[ticket.asset] = now + cooldownMs;
+
+    // FIX DU DEATH LOOP : Si trade clôturé au Stop Loss (SL) ou perte <= -25€,
+    // interdiction stricte de reprendre dans la MÊME DIRECTION pendant au moins 15 minutes
+    if (!this.state.directionalCooldowns) {
+      this.state.directionalCooldowns = {};
+    }
+    if (reason === "invalidation" || netPnl <= -20) {
+      const dirCooldownMs = 15 * 60_000; // 15 minutes minimum
+      const tDir = ticket.direction;
+      this.state.directionalCooldowns[ticket.asset] = {
+        until: now + dirCooldownMs,
+        bannedDir: tDir,
+        reason: `Stop Loss touché (${fmtSignedUsd(netPnl, 2)}). Cooldown directionnel ${tDir.toUpperCase()} 15 min actif.`,
+      };
+      this.say(
+        "risk",
+        `[ANTI-DEATH-LOOP] Stop Loss sur ${ticket.asset} (${tDir.toUpperCase()} ${fmtSignedUsd(netPnl, 2)}). Biais ${tDir.toUpperCase()} verrouillé pendant 15 min.`,
+        "veto",
+      ).catch(() => {});
+    }
+
     this.store.appendBlotter("POSITION_CLOSED", ticket, `Clôture (${reason}) PnL=${netPnl.toFixed(2)}`, now);
 
     const regime: MarketRegime = (ticket.regime as MarketRegime) || "MEAN_REVERTING";

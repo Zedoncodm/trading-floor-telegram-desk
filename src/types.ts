@@ -491,6 +491,7 @@ export type DeskState = {
   activities: Record<AgentId, AgentActivity>;
   pulses: SignalPulse[];
   cooldowns: Record<string, number>;
+  directionalCooldowns?: Record<string, { until: number; bannedDir: Direction; reason: string }>;
   reportWeek: string;
   lastScanAt: number;
   lastTickAt: number;
