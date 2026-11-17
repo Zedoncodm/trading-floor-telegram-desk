@@ -4735,6 +4735,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     var chartEngine = 'desk';
     var activeTimeframe = '15m';
     var chartBarsCache = [];
+    var chartProfileCache = {};
     var lastChartExecSig = '';
     var favTimeframes = ['1m', '5m', '15m', '1h', '4h', '1d'];
     try {
@@ -5009,7 +5010,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var valEl = document.getElementById('mpValVal');
       var histEl = document.getElementById('mpVolumeHistogram');
       if (symEl) symEl.textContent = sym || '--';
-      var mp = deskState && deskState.marketProfiles && deskState.marketProfiles[sym];
+      var stateMp = deskState && deskState.marketProfiles && deskState.marketProfiles[sym];
+      var cachedMp = chartProfileCache && chartProfileCache[sym];
+      var mp = (cachedMp && Array.isArray(cachedMp.bins) && cachedMp.bins.length)
+        ? cachedMp
+        : (stateMp || cachedMp);
       if (!mp) {
         if (stEl) {
           stEl.textContent = 'STATUS: EN ATTENTE';
@@ -5151,6 +5156,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var res = await fetch('/api/candles?symbol=' + encodeURIComponent(sym) + '&interval=' + encodeURIComponent(activeTimeframe) + '&limit=240');
       var data = await res.json();
       if (!data.ok || !Array.isArray(data.candles)) return;
+      if (data.marketProfile) {
+        chartProfileCache[sym] = data.marketProfile;
+      }
+      renderMarketProfilePanel(sym);
 
       var ovEl = document.getElementById('chartOverlayStats');
       if (ovEl) {

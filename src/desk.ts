@@ -1428,6 +1428,7 @@ export class TradingFloorDesk {
     candles: MarketSnapshot["bars4h"];
     vwap: MarketSnapshot["vwapContext"] | null;
     fvg: MarketSnapshot["fvgZone"] | null;
+    marketProfile: MarketProfileSummary;
     sentimentScore: number;
   }> {
     const now = Date.now();
@@ -1465,13 +1466,23 @@ export class TradingFloorDesk {
         // Fallback sur bars4h du snapshot
       }
     }
+    const slicedCandles = candles.slice(-Math.min(500, Math.max(30, limit)));
+    const curPx =
+      markPriceOf(this.state, sym, 0) ||
+      snap.primary?.price ||
+      slicedCandles[slicedCandles.length - 1]?.close ||
+      1;
+    const marketProfile = MarketProfileAnalyzer.computeSessionProfile(sym, slicedCandles, curPx, now);
+    if (!this.state.marketProfiles) this.state.marketProfiles = {};
+    this.state.marketProfiles[sym] = marketProfile;
     return {
       ok: true,
       symbol: sym,
       interval: normTf,
-      candles: candles.slice(-Math.min(500, Math.max(30, limit))),
+      candles: slicedCandles,
       vwap: snap.vwapContext ?? null,
       fvg: snap.fvgZone ?? null,
+      marketProfile,
       sentimentScore: this.sentiment.getScore(sym),
     };
   }
