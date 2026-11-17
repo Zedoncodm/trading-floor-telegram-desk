@@ -284,6 +284,35 @@ export type FvgZone = {
   candleTime: number;
 };
 
+export type MarketProfileSummary = {
+  symbol: string;
+  poc: number;
+  vah: number;
+  val: number;
+  sessionHigh: number;
+  sessionLow: number;
+  totalVolume: number;
+  valueAreaPct: number;
+  isRange: boolean;
+  pricePosition: "above_vah" | "inside_va" | "below_val";
+  updatedAt: number;
+};
+
+export type PostMortemLogEntry = {
+  ticketId: string;
+  symbol: string;
+  closedAt: number;
+  closedAtIso: string;
+  direction: Direction;
+  setup: string;
+  thesis: string;
+  durationMs: number;
+  durationLabel: string;
+  pnl: number;
+  closeReason: CloseReason;
+  summary: string;
+};
+
 export type MarketSnapshot = {
   symbol: string;
   at: number;
@@ -303,6 +332,7 @@ export type MarketSnapshot = {
   vwapContext?: VwapContext;
   fvgZone?: FvgZone | null;
   cascadeWatch?: { active: boolean; reason: string; oiPurging: boolean };
+  marketProfile?: MarketProfileSummary;
 };
 
 export type BacktestWindow = {
@@ -525,6 +555,9 @@ export type DeskState = {
   sentinel?: SentinelTelemetry;
   liquidityHunter?: LiquidityHunterTelemetry;
   sessionGoal?: SessionGoal;
+  marketProfiles?: Record<string, MarketProfileSummary>;
+  current_market_regime_directive?: string;
+  lastSelfReflectionAt?: number;
   mt5Live?: {
     connected: boolean;
     updatedAt: number;

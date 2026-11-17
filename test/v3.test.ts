@@ -9,8 +9,10 @@ import { GrpoEngine } from "../src/rl/grpo.ts";
 import { DeskStore } from "../src/store.ts";
 import { TelegramFloorRoom } from "../src/telegram.ts";
 import { LiquidityHunterAgent } from "../src/agents/liquidityHunter.ts";
+import { MarketProfileAnalyzer } from "../src/agents/marketProfile.ts";
 import { SentinelAgent, TokenBucketRateLimiter } from "../src/agents/sentinel.ts";
 import { Mt5CloudBridge } from "../src/mt5.ts";
+import type { Kline, MarketSnapshot, Ticket } from "../src/types.ts";
 import { DASHBOARD_HTML } from "../src/ui.ts";
 
 function makeTestCfg(dataDir: string): Config {
@@ -747,6 +749,199 @@ test("Strict profitability guard: scalpRelaxed never passes negative expectancy 
     assert.equal(hftSized.ok, true);
     const estRoundTripFees = (hftSized.notional ?? 0) * 0.0008;
     assert.ok(estRoundTripFees <= 75 * 0.40, `Expected fee-safe Kamikaze sizing, got fees $${estRoundTripFees.toFixed(2)} for $75 target`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("MarketProfileAnalyzer computes POC/VAH/VAL and strictly forbids LONG above VAH or SHORT below VAL in range", () => {
+  const now = Date.now();
+  const bars: Kline[] = [];
+  for (let i = 0; i < 36; i++) {
+    const mid = i < 24 ? 100 : i < 30 ? 101.2 : 98.8;
+    const vol = i < 24 ? 500 : 120;
+    bars.push({
+      openTime: now - (36 - i) * 15 * 60_000,
+      open: mid - 0.3,
+      high: mid + 1.0,
+      low: mid - 1.0,
+      close: mid + 0.1,
+      volume: vol,
+      closeTime: now - (35 - i) * 15 * 60_000 - 1,
+    });
+  }
+
+  const profile = MarketProfileAnalyzer.computeSessionProfile("BTCUSDT", bars, 104.5, now);
+  assert.ok(profile.val < profile.poc && profile.poc < profile.vah, `Expected VAL < POC < VAH, got ${JSON.stringify(profile)}`);
+  assert.equal(profile.isRange, true);
+
+  const vetoLong = MarketProfileAnalyzer.checkRangeEntryAllowed("long", profile.vah + 1.5, profile, true);
+  assert.equal(vetoLong.allowed, false);
+  assert.match(vetoLong.reason ?? "", /VAH/i);
+
+  const vetoShort = MarketProfileAnalyzer.checkRangeEntryAllowed("short", profile.val - 1.5, profile, true);
+  assert.equal(vetoShort.allowed, false);
+  assert.match(vetoShort.reason ?? "", /VAL/i);
+
+  assert.equal(MarketProfileAnalyzer.checkRangeEntryAllowed("short", profile.vah + 1.5, profile, true).allowed, true);
+  assert.equal(MarketProfileAnalyzer.checkRangeEntryAllowed("long", profile.val - 1.5, profile, true).allowed, true);
+
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-mp-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const state = store.loadOrCreate(10_000, cfg.timeZone, ["BTCUSDT"], 15);
+    state.settings.regime = "standard";
+    state.settings.tradingStyle = "longtrade";
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "grpo-memory.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+    desk.state = state;
+
+    const highPx = profile.vah + 2.0;
+    const snapAboveVah: MarketSnapshot = {
+      symbol: "BTCUSDT",
+      at: now,
+      primary: { venue: "Binance", price: highPx, ret1h: 0.025, funding: 0.0001, oiChange1h: 0.01, oiValue: 1_000_000, book: 0.25 },
+      secondary: null,
+      bars4h: bars.slice(-24),
+      bars15m: bars,
+      channelHi: highPx - 0.5,
+      channelLo: profile.val,
+      atr: 1.4,
+      ret24h: 0.015,
+      news: [],
+      onchain: null,
+      errors: [],
+      marketProfile: { ...profile, pricePosition: "above_vah" },
+    };
+
+    const playAboveVah = (desk as unknown as { choosePlay: (s: MarketSnapshot) => { direction: string } | null }).choosePlay(
+      snapAboveVah,
+    );
+    assert.ok(playAboveVah === null || playAboveVah.direction !== "long", `Expected no LONG above VAH in range, got ${playAboveVah?.direction}`);
+
+    const lowPx = profile.val - 2.0;
+    const snapBelowVal: MarketSnapshot = {
+      ...snapAboveVah,
+      primary: { venue: "Binance", price: lowPx, ret1h: -0.025, funding: -0.0001, oiChange1h: 0.01, oiValue: 1_000_000, book: -0.25 },
+      channelHi: profile.vah,
+      channelLo: lowPx + 0.5,
+      marketProfile: { ...profile, pricePosition: "below_val" },
+    };
+
+    const playBelowVal = (desk as unknown as { choosePlay: (s: MarketSnapshot) => { direction: string } | null }).choosePlay(
+      snapBelowVal,
+    );
+    assert.ok(playBelowVal === null || playBelowVal.direction !== "short", `Expected no SHORT below VAL in range, got ${playBelowVal?.direction}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Agentic Self-Reflection persists trade_post_mortem.json on close and dynamically updates Strategist prompt", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-reflect-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const state = store.loadOrCreate(10_000, cfg.timeZone, ["BTCUSDT"], 15);
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "grpo-memory.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+    desk.state = state;
+
+    const now = Date.now();
+    const mkBreakoutTicket = (id: string, offsetMs: number): Ticket => ({
+      id,
+      asset: "BTCUSDT",
+      direction: "long",
+      playbook: "breakout",
+      engine: "breakout",
+      thesis: "Test breakout range trap",
+      entry: 100,
+      invalidation: 99,
+      target: 103,
+      timeStopHours: 4,
+      notional: 2500,
+      qty: 25,
+      riskUsd: 25,
+      riskPct: 0.0025,
+      exposurePct: 0.25,
+      binding: "risk",
+      producedBy: ["strategist", "risk", "execution"],
+      backtest: {
+        playbook: "breakout",
+        rules: "test",
+        source: "unit-test",
+        inSample: {
+          label: "IS",
+          bars: 100,
+          trades: 12,
+          winRate: 0.55,
+          expectancyR: 0.25,
+          profitFactor: 1.5,
+          sharpe: 1.1,
+          deflatedSharpe: 0.8,
+          maxDrawdownR: 2,
+          var95R: 1,
+          pass: true,
+        },
+        outOfSample: {
+          label: "OOS",
+          bars: 50,
+          trades: 8,
+          winRate: 0.5,
+          expectancyR: 0.2,
+          profitFactor: 1.4,
+          sharpe: 0.9,
+          deflatedSharpe: 0.7,
+          maxDrawdownR: 1.5,
+          var95R: 0.9,
+          pass: true,
+        },
+        pass: true,
+      },
+      status: "open",
+      createdAt: now - offsetMs - 600_000,
+      filledAt: now - offsetMs - 300_000,
+      expiresAt: now + 900_000,
+      fees: 1.0,
+      funding: 0,
+    });
+
+    const closeFn = (
+      desk as unknown as {
+        closeOpenTicket: (t: Ticket, px: number, reason: string, ts?: number, ovPnl?: number) => Promise<void>;
+      }
+    ).closeOpenTicket.bind(desk);
+
+    const t1 = mkBreakoutTicket("PM-1", 120_000);
+    const t2 = mkBreakoutTicket("PM-2", 60_000);
+    const t3 = mkBreakoutTicket("PM-3", 10_000);
+    desk.state.tickets.push(t1, t2, t3);
+
+    await closeFn(t1, 99, "invalidation", now - 120_000, -25);
+    await closeFn(t2, 99, "invalidation", now - 60_000, -25);
+    await closeFn(t3, 99, "invalidation", now - 10_000, -25);
+
+    assert.equal(existsSync(desk.postMortemPath), true);
+    const entries = desk.readTradePostMortems(10);
+    assert.equal(entries.length, 3);
+    assert.equal(entries[0].direction, "long");
+    assert.equal(entries[0].setup, "breakout");
+    assert.equal(entries[0].pnl, -25);
+    assert.ok(entries[0].durationLabel.includes("m"));
+
+    const directive = await desk.runAgenticSelfReflection(now);
+    assert.ok(directive.length > 10);
+    assert.equal(desk.current_market_regime_directive, directive);
+    assert.equal(desk.state.current_market_regime_directive, directive);
+    assert.match(directive, /mean-reversion|breakout/i);
+    assert.ok(
+      desk.state.agentPrompts.strategist.systemPrompt.includes("[DIRECTIVE_REVIEWER_15M"),
+      "Expected Strategist systemPrompt to be dynamically updated with 15m Reviewer directive",
+    );
+    assert.ok(desk.state.agentPrompts.strategist.systemPrompt.includes(directive));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

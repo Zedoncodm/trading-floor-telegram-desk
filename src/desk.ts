@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { evaluateCandidateForGrpo, filterBarsByDateRange, optimizeParametersOnHistory, runBacktestOnBars, trainStrategyOnHistory } from "./backtest.ts";
 import { MAX_DAY_LOSS, MAX_EXPOSURE, MAX_RISK, type Config } from "./config.ts";
 import { LiquidityHunterAgent } from "./agents/liquidityHunter.ts";
@@ -8,6 +10,7 @@ import { ExecutionTraderAgent } from "./agents/executionTrader.ts";
 import { StrategistAgent } from "./agents/strategist.ts";
 import { MarketAnalystAgent } from "./agents/analyst.ts";
 import { ReviewerAgent } from "./agents/reviewer.ts";
+import { MarketProfileAnalyzer } from "./agents/marketProfile.ts";
 import { Mt5CloudBridge, type LocalMt5Position, type LocalMt5State } from "./mt5.ts";
 import { GrpoEngine, type GrpoCandidateOutcome, type MarketRegime } from "./rl/grpo.ts";
 import {
@@ -42,10 +45,12 @@ import type {
   FomoWebhookPayload,
   LiveTapeRow,
   MacroWebhookPayload,
+  MarketProfileSummary,
   MarketSnapshot,
   MessageTone,
   ParameterOptimizationReport,
   PlayKind,
+  PostMortemLogEntry,
   Speaker,
   Ticket,
   WakeKind,
@@ -647,6 +652,8 @@ export class TradingFloorDesk {
   readonly sentinel = new SentinelAgent();
   readonly hunter = new LiquidityHunterAgent();
   readonly mt5: Mt5CloudBridge;
+  readonly postMortemPath: string;
+  current_market_regime_directive = "";
   state: DeskState;
   private listeners = new Set<(state: DeskState) => void>();
   private busy = false;
@@ -660,8 +667,10 @@ export class TradingFloorDesk {
     this.store = store;
     this.tg = tg;
     this.mt5 = new Mt5CloudBridge(cfg.dataDir);
+    this.postMortemPath = join(cfg.dataDir, "trade_post_mortem.json");
     this.grpo = grpo ?? new GrpoEngine();
     this.state = this.store.loadOrCreate(cfg.paperEquity, cfg.timeZone, cfg.symbols, cfg.scanIntervalMin);
+    this.current_market_regime_directive = this.state.current_market_regime_directive ?? "";
     this.state.sentinel = this.sentinel.getTelemetry();
     this.state.liquidityHunter = this.hunter.getTelemetry();
     if (!this.state.sessionGoal) {
@@ -1771,9 +1780,16 @@ export class TradingFloorDesk {
     });
     this.state.tape = nextTape;
     this.state.lastTickAt = now;
+    if (!this.state.marketProfiles) this.state.marketProfiles = {};
     for (const snap of snaps) {
       if (snap.bars4h?.length) {
         this.latestBarsBySymbol.set(snap.symbol, snap.bars4h);
+      }
+      const curPx = snap.primary?.price ?? snap.secondary?.price ?? snap.bars4h[snap.bars4h.length - 1]?.close ?? 0;
+      if (snap.bars4h?.length && curPx > 0) {
+        const mp = MarketProfileAnalyzer.computeSessionProfile(snap.symbol, snap.bars4h, curPx, now);
+        snap.marketProfile = mp;
+        this.state.marketProfiles[snap.symbol] = mp;
       }
     }
     await this.sentiment.pollFeeds(activeSymbols, snaps, now);
@@ -1912,6 +1928,22 @@ export class TradingFloorDesk {
     const squeezeSig = this.hunter.computeSqueezeSignal(funding, p.oiChange1h ?? 0, ret1h);
     const magnetZones = this.hunter.computeLiquidityMagnetZones(snap.bars4h ?? [], px, snap.symbol);
 
+    // Calcul temps réel du Market Profile (POC, VAH, VAL) pour contextualiser le Strategist
+    const mp: MarketProfileSummary =
+      snap.marketProfile ??
+      MarketProfileAnalyzer.computeSessionProfile(snap.symbol, snap.bars4h ?? [], px, now);
+    snap.marketProfile = mp;
+    if (!this.state.marketProfiles) this.state.marketProfiles = {};
+    this.state.marketProfiles[snap.symbol] = mp;
+
+    const directiveLower = (this.current_market_regime_directive || "").toLowerCase();
+    const directiveForcesMeanRev =
+      directiveLower.includes("mean-reversion") ||
+      directiveLower.includes("mean reversion") ||
+      directiveLower.includes("range") ||
+      directiveLower.includes("breakouts échouent");
+    const isRangeMarket = mp.isRange || regime === "MEAN_REVERTING" || directiveForcesMeanRev;
+
     const applyMagnetTarget = (dir: Direction, fallbackTarget: number | undefined, playbook: PlayKind): number | undefined => {
       if (playbook !== "HFT_OrderFlow_Imbalance" && playbook !== "Session_VWAP_Reversion") {
         return fallbackTarget;
@@ -1936,10 +1968,25 @@ export class TradingFloorDesk {
         trailingAtr1m?: number;
       },
     ) => {
+      // Règle stricte Market Profile : Interdiction de LONG > VAH ou SHORT < VAL en marché range
+      const mpCheck = MarketProfileAnalyzer.checkRangeEntryAllowed(res.dir, px, mp, isRangeMarket);
+      if (!mpCheck.allowed) {
+        return null;
+      }
+      // Si la directive Reviewer indique explicitement que les breakouts échouent en range, bloquer les breakouts purs
+      if (directiveForcesMeanRev && res.playbook === "breakout") {
+        return null;
+      }
       const targetPrice = applyMagnetTarget(res.dir, res.customTarget, res.playbook);
       const fomoBoost = res.dir === "long" ? fomoLong : fomoShort;
       const rlWeight = this.grpo.getStrategyWeight(regime, res.playbook);
-      const extras: string[] = [`Regime=${regime}(w=${rlWeight.toFixed(2)})`];
+      const extras: string[] = [
+        `Regime=${regime}(w=${rlWeight.toFixed(2)})`,
+        `MP(POC=${fmtPx(mp.poc)}, VAH=${fmtPx(mp.vah)}, VAL=${fmtPx(mp.val)}, ${isRangeMarket ? "RANGE" : "TREND"})`,
+      ];
+      if (this.current_market_regime_directive) {
+        extras.push(`Directive15m="${this.current_market_regime_directive.slice(0, 80)}"`);
+      }
       if (Math.abs(sentimentScore) >= 0.05) extras.push(`Social=${sentimentScore >= 0 ? "+" : ""}${sentimentScore.toFixed(2)}`);
       if (fomoBoost > 0) extras.push(`FOMO=+${fomoBoost.toFixed(2)}`);
       if (squeezeSig) extras.push(`${squeezeSig.signal}(${Math.round(squeezeSig.probability * 100)}%)`);
@@ -1953,6 +2000,31 @@ export class TradingFloorDesk {
         thesis: `${res.thesis} [${extras.join(" · ")}]`,
       };
     };
+
+    // Filtre Mean-Reversion prioritaire sur bords Value Area en range ou sous directive 15m Mean-Reversion
+    if (isRangeMarket && mp.vah > mp.val) {
+      const stopBand = Math.max((snap.atr || px * 0.01) * 1.1, (mp.vah - mp.val) * 0.35);
+      if (px >= mp.vah) {
+        return withConfluence({
+          dir: "short",
+          playbook: "fade",
+          thesis: `Market Profile Mean-Reversion : prix (${fmtPx(px)}) >= VAH (${fmtPx(mp.vah)}) en range -> retour ciblé sur POC (${fmtPx(mp.poc)}).`,
+          customEntry: px,
+          customStop: px + stopBand,
+          customTarget: mp.poc,
+        });
+      }
+      if (px <= mp.val) {
+        return withConfluence({
+          dir: "long",
+          playbook: "fade",
+          thesis: `Market Profile Mean-Reversion : prix (${fmtPx(px)}) <= VAL (${fmtPx(mp.val)}) en range -> rebond ciblé sur POC (${fmtPx(mp.poc)}).`,
+          customEntry: px,
+          customStop: Math.max(px * 0.5, px - stopBand),
+          customTarget: mp.poc,
+        });
+      }
+    }
 
     // 0. Priorité absolue : Mode HFT FIAT-TARGET (KAMIKAZE) & Haute Agressivité
     const activeRegime = this.state.settings?.regime ?? "standard";
@@ -2139,6 +2211,15 @@ export class TradingFloorDesk {
         dir: ret1h >= 0 ? "long" : "short",
         playbook: "breakout",
         thesis: `Impulsion directionnelle (${fmtSignedPct(ret1h)}) validée par le carnet et la 2e source.`,
+      });
+    }
+    if (directiveForcesMeanRev) {
+      const mrDir: Direction = px >= mp.poc ? "short" : "long";
+      return withConfluence({
+        dir: mrDir,
+        playbook: "fade",
+        thesis: `Directive Reviewer Mean-Reversion (${fmtPx(px)} vs POC ${fmtPx(mp.poc)}) : retour à la moyenne dans Value Area [${fmtPx(mp.val)} - ${fmtPx(mp.vah)}].`,
+        customTarget: mp.poc,
       });
     }
     const socialBias = sentimentScore + (fomoLong - fomoShort);
@@ -2520,9 +2601,13 @@ export class TradingFloorDesk {
       const dsrPct = ((bt.outOfSample.deflatedSharpe ?? 0.5) * 100).toFixed(0);
       const stratPassFallback = `Setup validé [${activePlaybook}] : ${chosen.symbol} ${activeDir.toUpperCase()} (${tf}). ${activeThesis} Entrée ${fmtPx(entry)} · Invalidation ${fmtPx(invalidation)} (${fmtPct(actualStopDist / entry, 2)}) · Cible ${fmtPx(target)}. WFO Purgé IS : ${bt.inSample.trades} tr (${fmtR(bt.inSample.expectancyR)}) | OOS : ${bt.outOfSample.trades} tr (${fmtR(bt.outOfSample.expectancyR)}, PF ${bt.outOfSample.profitFactor.toFixed(2)}, DSR ${dsrPct}%).`;
 
+      const chosenMp = chosen.marketProfile;
+      const mpFact = chosenMp ? `, MarketProfile=(POC=${fmtPx(chosenMp.poc)}, VAH=${fmtPx(chosenMp.vah)}, VAL=${fmtPx(chosenMp.val)}, Range=${chosenMp.isRange})` : "";
+      const dirFact = this.current_market_regime_directive ? `, Directive15m=${this.current_market_regime_directive}` : "";
+
       await this.speakWithAgentPrompt(
         "strategist",
-        `Décision=VALIDÉ, Moteur=${activePlaybook}, Actif=${chosen.symbol}, Direction=${activeDir.toUpperCase()}, Thèse=${activeThesis}, Entrée=${fmtPx(entry)}, Invalidation=${fmtPx(invalidation)}, Cible=${fmtPx(target)}, WFO_OOS=${bt.outOfSample.trades} trades (${fmtR(bt.outOfSample.expectancyR)}, PF=${bt.outOfSample.profitFactor.toFixed(2)}, DSR=${dsrPct}%).`,
+        `Décision=VALIDÉ, Moteur=${activePlaybook}, Actif=${chosen.symbol}, Direction=${activeDir.toUpperCase()}, Thèse=${activeThesis}, Entrée=${fmtPx(entry)}, Invalidation=${fmtPx(invalidation)}, Cible=${fmtPx(target)}, WFO_OOS=${bt.outOfSample.trades} trades (${fmtR(bt.outOfSample.expectancyR)}, PF=${bt.outOfSample.profitFactor.toFixed(2)}, DSR=${dsrPct}%)${mpFact}${dirFact}.`,
         stratPassFallback,
       );
 
@@ -3023,8 +3108,161 @@ export class TradingFloorDesk {
       "plain",
       ticket.id,
     );
+    this.appendTradePostMortem(ticket, reason, exitPrice, netPnl, now);
     this.recordEquityPoint(now);
     this.pushLocalMt5BridgePayload(now);
+  }
+
+  readTradePostMortems(limit = 50): PostMortemLogEntry[] {
+    try {
+      if (!existsSync(this.postMortemPath)) return [];
+      const raw = JSON.parse(readFileSync(this.postMortemPath, "utf8")) as PostMortemLogEntry[];
+      return Array.isArray(raw) ? raw.slice(-limit) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private appendTradePostMortem(
+    ticket: Ticket,
+    reason: CloseReason,
+    exitPrice: number,
+    netPnl: number,
+    now: number,
+  ): void {
+    const startTs = ticket.filledAt ?? ticket.decidedAt ?? ticket.createdAt ?? now;
+    const durationMs = Math.max(0, now - startTs);
+    const mins = Math.floor(durationMs / 60_000);
+    const secs = Math.floor((durationMs % 60_000) / 1000);
+    const durationLabel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m ${secs}s`;
+    const setupName = String(ticket.engine ?? ticket.playbook ?? "unknown");
+    const tag = reason === "invalidation" ? "SL" : reason === "target" ? "TP" : reason.toUpperCase();
+    const entry: PostMortemLogEntry = {
+      ticketId: ticket.id,
+      symbol: ticket.asset,
+      closedAt: now,
+      closedAtIso: new Date(now).toISOString(),
+      direction: ticket.direction,
+      setup: setupName,
+      thesis: ticket.thesis,
+      durationMs,
+      durationLabel,
+      pnl: Number(netPnl.toFixed(2)),
+      closeReason: reason,
+      summary: `${tag} ${netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}€ @ ${fmtPx(exitPrice)}`,
+    };
+    const existing = this.readTradePostMortems(250);
+    const next = [...existing, entry].slice(-250);
+    mkdirSync(dirname(this.postMortemPath), { recursive: true });
+    const tmp = `${this.postMortemPath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
+    renameSync(tmp, this.postMortemPath);
+  }
+
+  /**
+   * Boucle Agentic Self-Reflection (toutes les 15 minutes) :
+   * Le Trade Reviewer analyse les N derniers post-mortems, met à jour `current_market_regime_directive`
+   * et injecte dynamiquement cette directive dans le System Prompt du Stratège.
+   */
+  async runAgenticSelfReflection(now = Date.now(), maxTrades = 12): Promise<string> {
+    this.state.lastSelfReflectionAt = now;
+    const recent = this.readTradePostMortems(maxTrades);
+    const closedFallback =
+      recent.length > 0
+        ? recent
+        : this.state.tickets
+            .filter((t) => t.status === "closed")
+            .slice(-maxTrades)
+            .map((t) => ({
+              ticketId: t.id,
+              symbol: t.asset,
+              closedAt: t.closedAt ?? now,
+              closedAtIso: new Date(t.closedAt ?? now).toISOString(),
+              direction: t.direction,
+              setup: String(t.engine ?? t.playbook),
+              thesis: t.thesis,
+              durationMs: Math.max(0, (t.closedAt ?? now) - (t.filledAt ?? t.createdAt)),
+              durationLabel: "n/a",
+              pnl: Number((t.pnl ?? 0).toFixed(2)),
+              closeReason: (t.closeReason ?? "time") as CloseReason,
+              summary: `${(t.pnl ?? 0) >= 0 ? "TP" : "SL"} ${(t.pnl ?? 0).toFixed(2)}€`,
+            }));
+
+    const breakoutTrades = closedFallback.filter((e) => e.setup === "breakout");
+    const breakoutLosses = breakoutTrades.filter((e) => e.pnl < 0).length;
+    const meanRevTrades = closedFallback.filter(
+      (e) => e.setup === "fade" || e.setup === "Session_VWAP_Reversion",
+    );
+    const meanRevPnl = meanRevTrades.reduce((s, e) => s + e.pnl, 0);
+    const totalPnl = closedFallback.reduce((s, e) => s + e.pnl, 0);
+    const rangeCount = Object.values(this.state.marketProfiles ?? {}).filter((m) => m.isRange).length;
+    const totalProfiles = Object.keys(this.state.marketProfiles ?? {}).length;
+
+    let deterministicDirective =
+      "Marché en équilibre : privilégiez les entrées proches du POC ou Value Area avec un ratio R/R >= 2.0.";
+    if (
+      breakoutTrades.length >= 2 &&
+      (breakoutLosses >= Math.ceil(breakoutTrades.length * 0.6) || totalPnl < 0)
+    ) {
+      deterministicDirective =
+        "Marché en range, les breakouts échouent, passez en mean-reversion.";
+    } else if (meanRevTrades.length >= 1 && meanRevPnl > 0 && rangeCount >= Math.max(1, Math.floor(totalProfiles / 2))) {
+      deterministicDirective =
+        "Marché en range confirmé, continuez en mean-reversion vers le POC entre VAL et VAH.";
+    } else if (totalPnl > 0 && breakoutTrades.length > 0 && breakoutLosses === 0) {
+      deterministicDirective =
+        "Tendance directionnelle propre, suivez l'impulsion tout en respectant le Market Profile.";
+    }
+
+    const digest = closedFallback
+      .slice(-8)
+      .map((e) => `${e.closedAtIso.slice(11, 16)} ${e.symbol} ${e.direction.toUpperCase()} [${e.setup}] ${e.durationLabel} => ${e.summary}`)
+      .join(" | ");
+
+    const reviewerCfg = this.state.agentPrompts.reviewer ?? DEFAULT_AGENT_PROMPTS.reviewer;
+    const llmPromptCfg: AgentPromptConfig = {
+      ...reviewerCfg,
+      systemPrompt:
+        "Tu es l'Auditeur Stratégique (Trade Reviewer). Synthétise les derniers trades en UNE SEULE phrase directive courte et impérative pour le Stratège (ex: 'Marché en range, les breakouts échouent, passez en mean-reversion.').",
+    };
+
+    let directive = deterministicDirective;
+    if (closedFallback.length > 0) {
+      const voice = await generateAgentVoice(
+        llmPromptCfg,
+        this.state.settings,
+        `Derniers trades (${closedFallback.length}) : ${digest}. PnL cumulé=${totalPnl.toFixed(2)}€, Breakouts perdants=${breakoutLosses}/${breakoutTrades.length}, RangeProfiles=${rangeCount}/${totalProfiles}.`,
+        deterministicDirective,
+      );
+      if (voice.text && !voice.usedProvider.startsWith("Moteur déterministe") && !voice.usedProvider.startsWith("Fallback")) {
+        directive = voice.text.replace(/\s+/g, " ").trim();
+      }
+    }
+
+    this.current_market_regime_directive = directive;
+    this.state.current_market_regime_directive = directive;
+
+    // Mise à jour dynamique du System Prompt du Strategist avec la directive la plus récente
+    const basePrompt = (this.state.agentPrompts.strategist?.systemPrompt ?? DEFAULT_AGENT_PROMPTS.strategist.systemPrompt)
+      .replace(/\n\[DIRECTIVE_REVIEWER_15M[^\]]*\]:[\s\S]*$/m, "")
+      .trimEnd();
+    const hhmm = new Date(now).toISOString().slice(11, 16);
+    if (this.state.agentPrompts.strategist) {
+      this.state.agentPrompts.strategist.systemPrompt =
+        `${basePrompt}\n[DIRECTIVE_REVIEWER_15M | MAJ ${hhmm} UTC] current_market_regime_directive: ${directive} (RÈGLE STRICTE : obéis impérativement à cette directive et ne prends jamais de LONG > VAH ou SHORT < VAL en range).`;
+    }
+
+    setAgentActivity(this.state, "reviewer", "logging", `Directive 15m : ${directive.slice(0, 48)}`, now, {
+      targetAgent: "strategist",
+    });
+    emitPulse(this.state, "reviewer", "strategist", "log", "SELF_REFLECTION_15M", undefined, now);
+    await this.say(
+      "reviewer",
+      `[AUTO-RÉFLEXION 15M] Directive mise à jour pour le Stratège : "${directive}" (${closedFallback.length} trade(s) analysé(s)).`,
+      "report",
+    );
+    this.broadcast();
+    return directive;
   }
 
   async monitorStep(): Promise<void> {
@@ -3303,6 +3541,10 @@ export class TradingFloorDesk {
     this.recordEquityPoint(now);
     if (this.state.settings?.progressiveStopEnabled && this.state.tickets.some((t) => t.status === "open" && (t.progressiveStopUsd ?? 0) > 0)) {
       this.pushLocalMt5BridgePayload(now);
+    }
+
+    if (now - (this.state.lastSelfReflectionAt ?? 0) >= 15 * 60_000 && this.state.tickets.some((t) => t.status === "closed")) {
+      await this.runAgenticSelfReflection(now);
     }
 
     const parts = localParts(now, this.cfg.timeZone);

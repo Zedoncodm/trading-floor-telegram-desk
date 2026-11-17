@@ -4967,6 +4967,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (data.fvg && data.fvg.midPrice) {
         lwPriceLines.push(lwCandleSeries.createPriceLine({ price: data.fvg.midPrice, color: tTheme.amber || '#f59e0b', lineWidth: 1, title: 'FVG 50%' }));
       }
+      var mp = deskState && deskState.marketProfiles && deskState.marketProfiles[sym];
+      if (mp && mp.poc > 0) {
+        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: mp.poc, color: '#eab308', lineWidth: 2, lineStyle: 0, title: 'POC' }));
+        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: mp.vah, color: '#a855f7', lineWidth: 1, lineStyle: 2, title: 'VAH' }));
+        lwPriceLines.push(lwCandleSeries.createPriceLine({ price: mp.val, color: '#a855f7', lineWidth: 1, lineStyle: 2, title: 'VAL' }));
+      }
       if (deskState && deskState.tickets) {
         deskState.tickets.filter(function (tk) { return tk.status === 'open' && tk.asset === sym; }).forEach(function (tk) {
           lwPriceLines.push(lwCandleSeries.createPriceLine({ price: tk.fillPrice || tk.entry, color: '#22d3ee', lineWidth: 2, title: tk.id + ' ENTRY' }));
@@ -6668,8 +6674,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var klPct = Math.min(100, Math.max(5, Math.round((klVal / 0.20) * 100)));
 
       var dsrPct = Math.round(Number(sum.deflatedSharpe || 0.27) * 100);
+      var directive15m = (deskState && deskState.current_market_regime_directive) || 'En attente du prochain cycle 15 min (analyse Reviewer -> Stratège).';
 
       var html =
+        '<div class="ai-metric-card" style="border-left:3px solid var(--accent)">' +
+          '<div>' +
+            '<div style="font-weight:700">Auto-Réflexion 15 min (Reviewer -> Stratège)</div>' +
+            '<div style="font-size:11px;color:var(--fg-1);margin-top:3px;line-height:1.35">' + escHtml(directive15m) + '</div>' +
+          '</div>' +
+        '</div>' +
         '<div class="ai-metric-card">' +
           '<div>' +
             '<div style="font-weight:700">Avantage Stratégique (Â) <span class="info-tip" data-tip="Mesure à quel point la stratégie gagne plus qu&#39;elle ne perd en R-multiple net (récompense moyenne des trajectoires récentes de l&#39;IA). Valeur positive = stratégie gagnante sur le marché.">?</span></div>' +

@@ -66,6 +66,11 @@ async function main(): Promise<void> {
     void desk.monitorStep();
   }, Math.min(cfg.monitorIntervalSec, 5) * 1000);
 
+  // Agentic Self-Reflection CRON loop (every 15 minutes): Trade Reviewer updates Strategist directive
+  setInterval(() => {
+    void desk.runAgenticSelfReflection();
+  }, 15 * 60_000);
+
   // Telegram group chat polling loop (checks live so UI token config activates immediately without restart)
   setInterval(async () => {
     if (!tg.hasTokens()) return;
