@@ -2231,6 +2231,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
           <div id="trainingReportHost" style="font-size:11.5px;color:var(--fg-1);max-height:175px;overflow-y:auto"></div>
         </div>
+
+        <div class="glass-card strat-widget" data-widget-id="w-agent-prompts" draggable="false" style="padding:14px">
+          <div class="card-hdr" style="margin-bottom:6px">
+            <span class="card-title">Consignes des 8 Agents (Prompts Live v2)</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <select id="agentPromptSelect" class="input-dark" style="padding:4px 8px;font-size:11px" onchange="renderAgentPromptsEditor()">
+                <option value="lead">01 · Chef de Salle</option>
+                <option value="analyst">02 · Analyste</option>
+                <option value="strategist">03 · Stratège</option>
+                <option value="risk">04 · Directeur Risques</option>
+                <option value="execution">05 · Exécution</option>
+                <option value="reviewer">06 · Reviewer</option>
+                <option value="sentinel">07 · Sentinel SRE</option>
+                <option value="hunter">08 · Liquidity Hunter</option>
+              </select>
+              <button type="button" class="pill-btn primary" style="padding:4px 10px;font-size:11px" onclick="saveSelectedAgentPrompt()">Sauver</button>
+            </div>
+          </div>
+          <div id="agentPromptRoleMeta" class="mono" style="font-size:10.5px;color:var(--fg-2);margin-bottom:5px">--</div>
+          <textarea id="agentPromptTextarea" class="input-dark mono" rows="4" style="width:100%;font-size:11px;line-height:1.4;resize:vertical" oninput="isAgentPromptDirty=true"></textarea>
+        </div>
       </div>
     </div>
   </section>
@@ -6098,6 +6119,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           riskMode: 'pct',
           maxRiskPct: 0.015,
           slMode: 'atr',
+          slVal: 1.50,
           fixedStopAtr: 1.50,
           tpMode: 'rr',
           tpVal: 2.2,
@@ -6130,6 +6152,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (tpEl) tpEl.value = '2.5';
         var scEl = document.getElementById('cfgAutoStopLossChk');
         if (scEl) scEl.checked = true;
+        saveSettingsToServer({
+          defaultLeverage: 2,
+          riskMode: 'pct',
+          maxRiskPct: 0.01,
+          slMode: 'atr',
+          slVal: 1.80,
+          fixedStopAtr: 1.80,
+          tpMode: 'rr',
+          tpVal: 2.5,
+          maxDayLossMode: 'pct',
+          maxDayLossPct: 0.03,
+          maxLossPerTradeMode: 'pct',
+          maxLossPerTradeVal: 1.5,
+          autoStopOnMaxLoss: true
+        });
       } else if (p === 'aggressive' || p === 'agressif') {
         syncLevFromSlider(20);
         setRiskMode('pct');
@@ -6151,6 +6188,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (tpEl) tpEl.value = '1.5';
         var scEl = document.getElementById('cfgAutoStopLossChk');
         if (scEl) scEl.checked = true;
+        saveSettingsToServer({
+          defaultLeverage: 20,
+          riskMode: 'pct',
+          maxRiskPct: 0.035,
+          slMode: 'atr',
+          slVal: 1.00,
+          fixedStopAtr: 1.00,
+          tpMode: 'rr',
+          tpVal: 1.5,
+          maxDayLossMode: 'pct',
+          maxDayLossPct: 0.08,
+          maxLossPerTradeMode: 'pct',
+          maxLossPerTradeVal: 4.0,
+          autoStopOnMaxLoss: true
+        });
       } else {
         syncLevFromSlider(5);
         setRiskMode('pct');
@@ -6172,6 +6224,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (tpEl) tpEl.value = '2.0';
         var scEl = document.getElementById('cfgAutoStopLossChk');
         if (scEl) scEl.checked = true;
+        saveSettingsToServer({
+          defaultLeverage: 5,
+          riskMode: 'pct',
+          maxRiskPct: 0.02,
+          slMode: 'atr',
+          slVal: 1.35,
+          fixedStopAtr: 1.35,
+          tpMode: 'rr',
+          tpVal: 2.0,
+          maxDayLossMode: 'pct',
+          maxDayLossPct: 0.05,
+          maxLossPerTradeMode: 'pct',
+          maxLossPerTradeVal: 3.0,
+          autoStopOnMaxLoss: true
+        });
       }
       updateRiskLevelBadges();
       updateLiveRiskCalculator();
@@ -6324,6 +6391,55 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ settings: { progressiveStopEnabled: nextVal } })
         });
+      } catch (e) {}
+    }
+
+    var isAgentPromptDirty = false;
+    var lastRenderedPromptAgent = '';
+
+    function renderAgentPromptsEditor() {
+      var sel = document.getElementById('agentPromptSelect');
+      var meta = document.getElementById('agentPromptRoleMeta');
+      var ta = document.getElementById('agentPromptTextarea');
+      if (!sel || !ta || !deskState || !deskState.agentPrompts) return;
+      var agId = sel.value || 'strategist';
+      if (lastRenderedPromptAgent !== agId) {
+        isAgentPromptDirty = false;
+        lastRenderedPromptAgent = agId;
+      }
+      var cfg = deskState.agentPrompts[agId];
+      if (!cfg) return;
+      if (meta) {
+        meta.textContent = (cfg.roleTitle || cfg.name) + ' · T=' + Number(cfg.temperature || 0.2).toFixed(2);
+      }
+      if (!isAgentPromptDirty && document.activeElement !== ta) {
+        ta.value = cfg.systemPrompt || '';
+      }
+    }
+
+    async function saveSelectedAgentPrompt() {
+      var sel = document.getElementById('agentPromptSelect');
+      var ta = document.getElementById('agentPromptTextarea');
+      var meta = document.getElementById('agentPromptRoleMeta');
+      if (!sel || !ta) return;
+      var agId = sel.value || 'strategist';
+      var txt = ta.value || '';
+      try {
+        var patch = {};
+        patch[agId] = { systemPrompt: txt };
+        var res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agentPrompts: patch })
+        });
+        var out = await res.json();
+        if (out && out.ok) {
+          isAgentPromptDirty = false;
+          if (deskState && deskState.agentPrompts && deskState.agentPrompts[agId]) {
+            deskState.agentPrompts[agId].systemPrompt = txt;
+          }
+          if (meta) meta.textContent = 'Consigne sauvegardée en direct pour ' + agId.toUpperCase();
+        }
       } catch (e) {}
     }
 
@@ -7251,6 +7367,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderChat();
       renderJournalView();
       renderRlMetrics();
+      renderAgentPromptsEditor();
       if (currentTab === 'journal' && !eqChart) {
         renderEquityChart();
       }

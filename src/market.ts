@@ -559,8 +559,8 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
   return {
     symbol,
     at: now,
-    primary: { venue: "Binance", price, ret1h, funding: null, oiChange1h: null, oiValue: null, book: 0 },
-    secondary: { venue: "Bybit", price, ret1h, funding: null, oiChange1h: null, oiValue: null, book: 0 },
+    primary: { venue: "YahooFinance", price, ret1h, funding: null, oiChange1h: null, oiValue: null, book: 0 },
+    secondary: null,
     bars4h,
     channelHi,
     channelLo,
@@ -569,6 +569,7 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
     news: [],
     onchain: `Flux Yahoo Finance (${ySym})`,
     errors: [],
+    vwapContext: computeSessionVwap(bars4h, now),
     fvgZone: detectLatestFvg(bars4h, 0.5),
   };
 }
@@ -704,6 +705,12 @@ export function verifySecondSource(snap: MarketSnapshot): {
 } {
   const p = snap.primary;
   const s = snap.secondary;
+  if (p && (p.venue === "YahooFinance" || p.venue === "MT5") && p.price > 0) {
+    return {
+      verified: true,
+      reason: `Flux ${p.venue} validé (${p.price}, sans carnet L2 crypto). Contexte uniquement, aucune proposition de trade.`,
+    };
+  }
   if (!p || !s) {
     return {
       verified: false,

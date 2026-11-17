@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createDefaultSettings, DEFAULT_AGENT_PROMPTS } from "./llm.ts";
+import { createDefaultSettings, DEFAULT_AGENT_PROMPTS, PROMPT_SCHEMA_VERSION } from "./llm.ts";
 import { dayKey, isoWeek, ticketDay } from "./time.ts";
 import { AGENT_IDS, type AgentId, type DeskState, type Ticket } from "./types.ts";
 
@@ -97,6 +97,7 @@ export class DeskStore {
       telegramConnected: false,
       settings: createDefaultSettings(symbols, scanIntervalMin),
       agentPrompts: JSON.parse(JSON.stringify(DEFAULT_AGENT_PROMPTS)),
+      promptsVersion: PROMPT_SCHEMA_VERSION,
       llmCallCount: 0,
       lastLlmProviderUsed: "Moteur déterministe FR (0 coût)",
       volatilityShieldUntil: 0,
@@ -115,6 +116,22 @@ export class DeskStore {
     now: number,
   ): DeskState {
     const empty = this.createEmpty(startEquity, tz, symbols, scanIntervalMin, now);
+    const mergedSettings = { ...empty.settings, ...(s.settings ?? {}) };
+    if (mergedSettings.slMode === "atr" && (mergedSettings.slVal ?? 0) >= 10) {
+      mergedSettings.slVal = mergedSettings.fixedStopAtr || 1.35;
+    }
+
+    const needPromptUpgrade = (s.promptsVersion ?? 1) < PROMPT_SCHEMA_VERSION;
+    let upgradedPrompts = { ...empty.agentPrompts, ...(s.agentPrompts ?? {}) };
+    if (needPromptUpgrade) {
+      upgradedPrompts = JSON.parse(JSON.stringify(DEFAULT_AGENT_PROMPTS));
+      const oldStrat = s.agentPrompts?.strategist?.systemPrompt ?? "";
+      const dirMatch = oldStrat.match(/(\[DIRECTIVE_REVIEWER_15M[^\n]*[\s\S]*)$/);
+      if (dirMatch) {
+        upgradedPrompts.strategist.systemPrompt = `${upgradedPrompts.strategist.systemPrompt.trimEnd()}\n${dirMatch[1]}`;
+      }
+    }
+
     return {
       ...empty,
       ...s,
@@ -123,8 +140,9 @@ export class DeskStore {
       curve: s.curve?.length ? s.curve : empty.curve,
       tape: s.tape ?? [],
       pulses: s.pulses ?? [],
-      settings: { ...empty.settings, ...(s.settings ?? {}) },
-      agentPrompts: { ...empty.agentPrompts, ...(s.agentPrompts ?? {}) },
+      settings: mergedSettings,
+      agentPrompts: upgradedPrompts,
+      promptsVersion: PROMPT_SCHEMA_VERSION,
     };
   }
 

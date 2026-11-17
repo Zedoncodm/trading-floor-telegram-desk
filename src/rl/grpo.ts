@@ -292,9 +292,11 @@ export class GrpoEngine {
   computeCompositeReward(outcome: GrpoCandidateOutcome): number {
     const baseSign = outcome.pnl > 0 ? 1.0 : outcome.pnl < 0 ? -1.0 : outcome.realizedR > 0 ? 1.0 : -1.0;
     const clampedR = clamp(outcome.realizedR, -3, 5);
-    const maePenalty = outcome.maxAdverseExcursion / Math.max(outcome.stopDistance, 1e-9);
-    const feePenalty = Math.max(0, outcome.executionFees);
-    return baseSign + this.alpha * clampedR - this.betaMae * clamp(maePenalty, 0, 2.5) - this.gammaFees * feePenalty;
+    // Normalize MAE (already stored in R-multiples or fractional drawdown) & fees relative to gross trade size
+    const maePenalty = clamp(Math.max(0, outcome.maxAdverseExcursion), 0, 2.5);
+    const feeDenom = Math.max(25, Math.abs(outcome.pnl) + Math.max(0, outcome.executionFees) + 50);
+    const feeRatio = clamp(Math.max(0, outcome.executionFees) / feeDenom, 0, 1);
+    return baseSign + this.alpha * clampedR - this.betaMae * maePenalty - this.gammaFees * feeRatio * 10;
   }
 
   /**

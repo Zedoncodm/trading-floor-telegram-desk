@@ -232,7 +232,7 @@ export type Mark = {
 export type Headline = { source: string; title: string; at: number; link: string };
 
 export type VenueSnap = {
-  venue: "Binance" | "Bybit" | "SimFeed";
+  venue: "Binance" | "Bybit" | "YahooFinance" | "MT5" | "SimFeed";
   price: number;
   ret1h: number | null;
   funding: number | null;
@@ -566,6 +566,7 @@ export type DeskState = {
   sessionGoal?: SessionGoal;
   marketProfiles?: Record<string, MarketProfileSummary>;
   current_market_regime_directive?: string;
+  promptsVersion?: number;
   lastSelfReflectionAt?: number;
   executionTraderState?: {
     updatedAt: number;

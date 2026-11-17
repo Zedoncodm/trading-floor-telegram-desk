@@ -27,8 +27,15 @@ async function main(): Promise<void> {
   const uiPort = Number(process.env.UI_PORT || 4080);
   const web = startDashboardServer(desk, uiPort);
 
+  process.on("unhandledRejection", (reason) => {
+    console.error("[TradingFloor] UnhandledRejection interceptée (serveur maintenu actif) :", reason);
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("[TradingFloor] UncaughtException interceptée (serveur maintenu actif) :", err);
+  });
+
   setInterval(() => {
-    void desk.syncWithLocalMt5Bridge();
+    void desk.syncWithLocalMt5Bridge().catch((e) => console.error("[MT5 Sync Error]", e));
   }, 1000);
 
   console.log("==================================================================");
@@ -46,8 +53,8 @@ async function main(): Promise<void> {
   console.log("==================================================================\n");
 
   await desk.bootstrapIfFresh();
-  if (Mt5CloudBridge.readLocalMt5State() && desk.state.tickets.some((t) => !t.mt5PositionId)) {
-    await desk.resetAndSyncToMt5();
+  if (Mt5CloudBridge.readLocalMt5State()) {
+    await desk.syncWithLocalMt5Bridge().catch((e) => console.error("[MT5 Boot Sync Error]", e));
   }
 
   // Print new messages to terminal console as well
@@ -63,24 +70,28 @@ async function main(): Promise<void> {
 
   // Periodic market monitor (5s fast loop for responsive paper scalp & stop/target tracking)
   setInterval(() => {
-    void desk.monitorStep();
+    void desk.monitorStep().catch((e) => console.error("[MonitorStep Error]", e));
   }, Math.min(cfg.monitorIntervalSec, 5) * 1000);
 
   // Agentic Self-Reflection CRON loop (every 15 minutes): Trade Reviewer updates Strategist directive
   setInterval(() => {
-    void desk.runAgenticSelfReflection();
+    void desk.runAgenticSelfReflection().catch((e) => console.error("[SelfReflection Error]", e));
   }, 15 * 60_000);
 
   // Telegram group chat polling loop (checks live so UI token config activates immediately without restart)
   setInterval(async () => {
-    if (!tg.hasTokens()) return;
-    const { nextOffset, commands } = await tg.pollCommands(desk.state.tgOffset);
-    if (nextOffset !== desk.state.tgOffset) {
-      desk.state.tgOffset = nextOffset;
-      store.save(desk.state);
-    }
-    for (const cmd of commands) {
-      await desk.handleHumanInput(cmd.text, "telegram");
+    try {
+      if (!tg.hasTokens()) return;
+      const { nextOffset, commands } = await tg.pollCommands(desk.state.tgOffset);
+      if (nextOffset !== desk.state.tgOffset) {
+        desk.state.tgOffset = nextOffset;
+        store.save(desk.state);
+      }
+      for (const cmd of commands) {
+        await desk.handleHumanInput(cmd.text, "telegram");
+      }
+    } catch (e) {
+      console.error("[Telegram Poll Error]", e);
     }
   }, 2500);
 

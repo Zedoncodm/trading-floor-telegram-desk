@@ -658,6 +658,7 @@ export class TradingFloorDesk {
   state: DeskState;
   private listeners = new Set<(state: DeskState) => void>();
   private busy = false;
+  private monitoring = false;
   private syncingMt5 = false;
   private latestBarsBySymbol = new Map<string, MarketSnapshot["bars4h"]>();
   private lastKnownEquity = 0;
@@ -699,7 +700,7 @@ export class TradingFloorDesk {
     const prevAgg = this.state.sessionGoal.aggressiveness;
     const { updatedGoal, event } = DeskLeadAgent.evaluateTick(
       this.state.sessionGoal,
-      eq,
+      eq - this.state.realizedPnl,
       this.state.realizedPnl,
       now,
     );
@@ -1036,8 +1037,8 @@ export class TradingFloorDesk {
       }
 
       this.pushLocalMt5BridgePayload(now);
+      this.lastKnownEquity = liveEq;
       if (structuralChange || telemetryChange) {
-        this.lastKnownEquity = liveEq;
         this.broadcast();
       }
       return { ok: true, mt5Connected: true, state: mt5State };
@@ -1837,8 +1838,15 @@ export class TradingFloorDesk {
         currentEquity: curEq,
       });
       if (desync.fatal) {
-        await this.say("sentinel", `SYS_OPS [${desync.reason}] -> EMERGENCY_LIQUIDATE_ALL`, "veto");
-        await this.sentinel.executeCircuitBreaker(() => this.emergencyLiquidateAll());
+        await this.say("sentinel", `SYS_OPS [${desync.reason}] -> EMERGENCY_LIQUIDATE_ALL + HALT SÉCURISÉ`, "veto");
+        await this.sentinel.executeCircuitBreaker(
+          () => this.emergencyLiquidateAll(),
+          () => {
+            this.state.halted = true;
+            this.state.haltKind = "loss";
+            this.broadcast();
+          },
+        );
       }
     }
     this.lastKnownEquity = curEq;
@@ -1861,17 +1869,15 @@ export class TradingFloorDesk {
       );
     }
 
-    // Agent 8: Liquidity Hunter (L2 orderbook, spoofing, squeeze & magnet zones)
-    const primarySnap = snaps.find((s) => s.primary && s.bars4h?.length);
-    if (primarySnap?.primary) {
+    // Agent 8: Liquidity Hunter (uniquement sur flux L2 réel Binance/Bybit — jamais de carnet synthétique inventé)
+    const primarySnap = snaps.find(
+      (s) => s.primary && s.bars4h?.length && s.primary.top5Bids?.length && s.primary.top5Asks?.length,
+    );
+    if (primarySnap?.primary?.top5Bids?.length && primarySnap.primary.top5Asks?.length) {
       const p = primarySnap.primary;
       const mid = p.price;
-      const bids: [number, number][] = p.top5Bids?.length
-        ? p.top5Bids
-        : [[mid * 0.999, 12], [mid * 0.997, 18], [mid * 0.994, 24], [mid * 0.991, 30]];
-      const asks: [number, number][] = p.top5Asks?.length
-        ? p.top5Asks
-        : [[mid * 1.001, 11], [mid * 1.003, 17], [mid * 1.006, 22], [mid * 1.009, 28]];
+      const bids = p.top5Bids ?? [];
+      const asks = p.top5Asks ?? [];
       const hunterOut = this.hunter.updateSnapshotSummary({
         symbol: primarySnap.symbol,
         midPrice: mid,
@@ -2030,10 +2036,11 @@ export class TradingFloorDesk {
       };
     };
 
-    // Filtre Mean-Reversion prioritaire sur bords Value Area en range ou sous directive 15m Mean-Reversion
+    // Filtre Mean-Reversion prioritaire sur bords Value Area en range (uniquement si R:R vers POC >= 1.25)
     if (isRangeMarket && mp.vah > mp.val) {
       const stopBand = Math.max((snap.atr || px * 0.01) * 1.1, (mp.vah - mp.val) * 0.35);
-      if (px >= mp.vah) {
+      const rewardToPoc = Math.abs(px - mp.poc);
+      if (px >= mp.vah && rewardToPoc >= stopBand * 1.25) {
         return withConfluence({
           dir: "short",
           playbook: "fade",
@@ -2043,7 +2050,7 @@ export class TradingFloorDesk {
           customTarget: mp.poc,
         });
       }
-      if (px <= mp.val) {
+      if (px <= mp.val && rewardToPoc >= stopBand * 1.25) {
         return withConfluence({
           dir: "long",
           playbook: "fade",
@@ -2594,17 +2601,29 @@ export class TradingFloorDesk {
       const localAtr = recentAtrBars.length
         ? recentAtrBars.reduce((sum, b) => sum + (b.high - b.low), 0) / recentAtrBars.length
         : chosen.atr;
-      const atrMult = this.state.settings.fixedStopAtr || this.state.settings.trainedAtrMult || (isScalp ? 0.85 : 1.4);
+      const slMode = this.state.settings?.slMode ?? "atr";
+      const rawSlVal = Number(this.state.settings?.slVal ?? 0);
+      const effectiveAtrSetting =
+        slMode === "atr" && rawSlVal > 0 && rawSlVal < 10
+          ? rawSlVal
+          : (this.state.settings.fixedStopAtr || this.state.settings.trainedAtrMult || (isScalp ? 0.85 : 1.4));
+      const atrMult = isScalp ? effectiveAtrSetting : Math.max(0.75, effectiveAtrSetting);
       const macroShieldApplied = this.isVolatilityShieldActive(now);
       let stopDist: number;
       let rewardMult: number;
-      if (isScalp) {
+      if (slMode === "pips" && rawSlVal > 0) {
+        stopDist = rawSlVal * pipSizeForAsset(chosen.symbol, entry);
+        rewardMult = this.state.settings.trainedRewardR || 2.0;
+      } else if (slMode === "pct" && rawSlVal > 0) {
+        stopDist = entry * (rawSlVal / 100);
+        rewardMult = this.state.settings.trainedRewardR || 2.0;
+      } else if (isScalp) {
         const rawDist = localAtr ? localAtr * Math.min(atrMult, 0.85) : entry * 0.0025;
         stopDist = Math.min(entry * 0.0045, Math.max(entry * 0.0015, rawDist));
         rewardMult = Math.min(Math.max(this.state.settings.trainedRewardR || 1.5, 1.3), 1.8);
       } else {
         const rawDist = localAtr ? localAtr * atrMult : entry * 0.025;
-        stopDist = Math.min(entry * 0.06, Math.max(entry * 0.012, rawDist));
+        stopDist = Math.min(entry * 0.06, Math.max(entry * 0.008, rawDist));
         rewardMult = this.state.settings.trainedRewardR || (activePlaybook === "breakout" ? 2.0 : 1.6);
       }
       if (macroShieldApplied) {
@@ -2670,6 +2689,21 @@ export class TradingFloorDesk {
         return;
       }
 
+      // Garde-fou frais aller-retour (hors HFT Kamikaze qui a déjà son propre plafond) :
+      // empêche un stop ultra-serré de générer un notionnel où les frais mangent > 30% du budget de risque.
+      if (!isKamikazeTrade) {
+        const estRoundTripFees = sized.notional * 0.0008;
+        const maxSafeFees = Math.max(2, sized.riskUsd * 0.30);
+        if (estRoundTripFees > maxSafeFees) {
+          const capFactor = maxSafeFees / estRoundTripFees;
+          sized.notional = Number((sized.notional * capFactor).toFixed(2));
+          sized.qty = Number((sized.notional / Math.max(entry, 1e-9)).toFixed(6));
+          sized.riskUsd = Number((sized.notional * (actualStopDist / Math.max(entry, 1e-9))).toFixed(2));
+          sized.riskPct = sized.riskUsd / Math.max(currentEquity(this.state), 1);
+          sized.exposurePct = sized.notional / Math.max(currentEquity(this.state), 1);
+        }
+      }
+
       const isFullAuto = this.state.settings.executionMode === "auto" || isScalp;
       let finalTarget = target;
       const tpMode = this.state.settings?.tpMode ?? "rr";
@@ -2690,19 +2724,9 @@ export class TradingFloorDesk {
       }
 
       let finalStop = invalidation;
-      const slMode = this.state.settings?.slMode ?? "atr";
-      const slVal = Number(this.state.settings?.slVal ?? (this.state.settings?.riskMode === "amount" ? this.state.settings?.riskAmount : 0));
-      if (!macroShieldApplied && !selectedIdea?.customStop && slVal > 0) {
-        if (slMode === "amount" && sized.notional > 0) {
-          const d = (slVal / sized.notional) * entry;
-          finalStop = activeDir === "long" ? entry - d : entry + d;
-        } else if (slMode === "pips") {
-          const d = slVal * pipSizeForAsset(chosen.symbol, entry);
-          finalStop = activeDir === "long" ? entry - d : entry + d;
-        } else if (slMode === "pct") {
-          const d = entry * (slVal / 100);
-          finalStop = activeDir === "long" ? entry - d : entry + d;
-        }
+      if (!macroShieldApplied && !selectedIdea?.customStop && slMode === "amount" && rawSlVal > 0 && sized.notional > 0) {
+        const d = (rawSlVal / sized.notional) * entry;
+        finalStop = activeDir === "long" ? entry - d : entry + d;
       }
 
       const id = this.nextTicketId(now);
@@ -3298,8 +3322,11 @@ export class TradingFloorDesk {
   }
 
   async monitorStep(): Promise<void> {
-    const now = Date.now();
-    await this.refreshTape();
+    if (this.monitoring) return;
+    this.monitoring = true;
+    try {
+      const now = Date.now();
+      await this.refreshTape();
 
     const curDay = dayKey(now, this.cfg.timeZone);
     if (curDay !== this.state.dayKey) {
@@ -3425,7 +3452,8 @@ export class TradingFloorDesk {
           ticket.peakProfitUsd = Number(effectiveUnrealized.toFixed(2));
         }
         const activePeak = ticket.peakProfitUsd ?? 0;
-        if (activePeak >= 5) {
+        const minActivatePeakUsd = Math.max(15, ticket.riskUsd * 0.25, ticket.fees * 1.5);
+        if (activePeak >= minActivatePeakUsd) {
           const floorUsd = Number((activePeak * 0.5).toFixed(2));
           if (floorUsd > (ticket.progressiveStopUsd ?? 0)) {
             const firstLock = (ticket.progressiveStopUsd ?? 0) <= 0;
@@ -3443,6 +3471,7 @@ export class TradingFloorDesk {
               if ((isLong && lockPx > ticket.invalidation) || (!isLong && lockPx < ticket.invalidation)) {
                 ticket.invalidation = lockPx;
                 ticket.breakEvenActive = true;
+                ticket.hardSlSyncedAt = now;
               }
             }
             if (firstLock || floorUsd >= 25) {
@@ -3455,7 +3484,11 @@ export class TradingFloorDesk {
             }
           }
         }
-        if ((ticket.progressiveStopUsd ?? 0) > 0 && effectiveUnrealized <= (ticket.progressiveStopUsd ?? 0)) {
+        if (
+          (ticket.progressiveStopUsd ?? 0) > 0 &&
+          effectiveUnrealized <= (ticket.progressiveStopUsd ?? 0) &&
+          effectiveUnrealized > 0
+        ) {
           await this.closeOpenTicket(
             ticket,
             mark,
@@ -3634,11 +3667,14 @@ export class TradingFloorDesk {
       : isScalp
         ? (this.state.settings?.scalpIntervalSec || 12) * 1000
         : (this.state.settings?.scanIntervalMin || this.cfg.scanIntervalMin) * 60_000;
-    if (!hasPending && !this.state.halted && now - this.state.lastScanAt >= intervalMs) {
-      await this.runDeskScan("scheduled");
-    }
+      if (!hasPending && !this.state.halted && now - this.state.lastScanAt >= intervalMs) {
+        await this.runDeskScan("scheduled");
+      }
 
-    this.broadcast();
+      this.broadcast();
+    } finally {
+      this.monitoring = false;
+    }
   }
 
   private async enforceDailyLossLimit(now = Date.now()): Promise<void> {

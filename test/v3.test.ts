@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Config } from "../src/config.ts";
+import { DeskLeadAgent, PacingCalculator } from "../src/agents/deskLead.ts";
+import { createDefaultSettings, DEFAULT_AGENT_PROMPTS, PROMPT_SCHEMA_VERSION } from "../src/llm.ts";
+import { verifySecondSource } from "../src/market.ts";
 import { computeLeveragedSizing, SocialSentimentEngine, TradingFloorDesk } from "../src/desk.ts";
 import { GrpoEngine } from "../src/rl/grpo.ts";
 import { DeskStore } from "../src/store.ts";
@@ -1043,6 +1046,85 @@ test("ActiveTradeManager emits async Hard Break-Even OrderModify at 50% TP (+ fe
     const eaSource = Mt5CloudBridge.generateMql5ExpertAdvisor();
     assert.ok(eaSource.includes("SyncOpenPositionStops"), "MQL5 bridge must sync Hard SL/TP via PositionModify on open positions");
     assert.ok(eaSource.includes("trade.PositionModify"), "MQL5 bridge must invoke PositionModify");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Full System Audit Overhaul: 8 Agent Prompts v2, Store Migration, No Double-Count Pacing, GRPO Normalization & Live Prompts UI", () => {
+  // 1. Default settings slVal must be sane ATR multiple (1.35, never 100)
+  const def = createDefaultSettings(["BTCUSDT"], 15);
+  assert.equal(def.slMode, "atr");
+  assert.equal(def.slVal, 1.35);
+
+  // 2. All 8 upgraded Agent System Prompts reflect v2 architecture & Market Profile / ActiveTradeManager / Self-Reflection
+  assert.match(DEFAULT_AGENT_PROMPTS.lead.systemPrompt, /8 agents/i);
+  assert.match(DEFAULT_AGENT_PROMPTS.strategist.systemPrompt, /MARKET PROFILE/i);
+  assert.match(DEFAULT_AGENT_PROMPTS.risk.systemPrompt, /FRAIS/i);
+  assert.match(DEFAULT_AGENT_PROMPTS.execution.systemPrompt, /ACTIVE TRADE MANAGER/i);
+  assert.match(DEFAULT_AGENT_PROMPTS.reviewer.systemPrompt, /trade_post_mortem\.json/i);
+  assert.match(DEFAULT_AGENT_PROMPTS.sentinel.systemPrompt, /HALT sécurisé/i);
+  assert.match(DEFAULT_AGENT_PROMPTS.hunter.systemPrompt, /carnets L2 réels/i);
+
+  // 3. PacingCalculator + updateSessionGoal avoid double-counting realizedPnl
+  const goal = DeskLeadAgent.createSessionGoal(10_000, 1_000, 4, Date.now() - 3_600_000);
+  const pace = PacingCalculator.calculate(goal, 10_500 - 300, 300, Date.now());
+  assert.equal(pace.currentProfitFiat, 500, "Must compute exact 500 unrealized+realized profit without double-counting");
+
+  // 4. YahooFinance non-crypto verification works honestly without fake Binance/Bybit agreement
+  const yfCheck = verifySecondSource({
+    symbol: "XAUUSD",
+    at: Date.now(),
+    primary: { venue: "YahooFinance", price: 3875, ret1h: 0.002, funding: null, oiChange1h: null, oiValue: null, book: 0 },
+    secondary: null,
+    bars4h: [],
+    channelHi: null,
+    channelLo: null,
+    atr: null,
+    ret24h: null,
+    news: [],
+    onchain: null,
+    errors: [],
+  });
+  assert.equal(yfCheck.verified, true);
+  assert.match(yfCheck.reason, /YahooFinance/i);
+
+  // 5. Store upgrades old v1 state prompts & fixes stale slVal=100 while preserving 15m Reviewer directive
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-overhaul-"));
+  try {
+    const store = new DeskStore(dir);
+    const seed = store.loadOrCreate(10_000, "Europe/Paris", ["BTCUSDT"], 15);
+    seed.promptsVersion = 1;
+    seed.settings.slMode = "atr";
+    seed.settings.slVal = 100;
+    seed.agentPrompts.strategist.systemPrompt = "OLD PROMPT\n[DIRECTIVE_REVIEWER_15M | MAJ 08:00 UTC] current_market_regime_directive: range mode";
+    writeFileSync(store.statePath, JSON.stringify(seed), "utf8");
+
+    const migrated = store.loadOrCreate(10_000, "Europe/Paris", ["BTCUSDT"], 15);
+    assert.equal(migrated.promptsVersion, PROMPT_SCHEMA_VERSION);
+    assert.equal(migrated.settings.slVal, 1.35);
+    assert.match(migrated.agentPrompts.strategist.systemPrompt, /MARKET PROFILE/i);
+    assert.match(migrated.agentPrompts.strategist.systemPrompt, /\[DIRECTIVE_REVIEWER_15M/i);
+
+    // 6. GRPO composite reward properly scales fees & R-multiples without exploding on tight stops
+    const grpo = new GrpoEngine(join(dir, "grpo-norm.json"));
+    const reward = grpo.computeCompositeReward({
+      config: { id: "c1", strategy: "breakout", slMult: 1.5, tpMult: 2.2, leverage: 20, probOld: 0.2 },
+      pnl: 500,
+      realizedR: 1.5,
+      maxAdverseExcursion: 0.3,
+      stopDistance: 0.002,
+      executionFees: 200,
+    });
+    assert.ok(reward > 0.5, `Expected positive normalized GRPO reward even on high notional/fees, got ${reward}`);
+
+    // 7. Live 8-Agent Prompt Viewer & Editor compiles cleanly inside DASHBOARD_HTML
+    assert.ok(DASHBOARD_HTML.includes("agentPromptSelect"));
+    assert.ok(DASHBOARD_HTML.includes("agentPromptTextarea"));
+    assert.ok(DASHBOARD_HTML.includes("saveSelectedAgentPrompt"));
+    const scriptMatch = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+    assert.ok(scriptMatch && scriptMatch[1]);
+    assert.doesNotThrow(() => new Function(scriptMatch[1]));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
