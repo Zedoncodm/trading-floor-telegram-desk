@@ -123,6 +123,8 @@ export type DeskRuntimeSettings = {
   autoPaperScalp: boolean;
   scalpIntervalSec: number;
   tradesPerMinute?: number;
+  focusSymbol?: string;
+  strictQuotaMode?: boolean;
   executionMode: ExecutionMode;
   tradingStyle: TradingStyle;
   trainedLookback: number;
@@ -579,6 +581,13 @@ export type DeskState = {
   sentinel?: SentinelTelemetry;
   liquidityHunter?: LiquidityHunterTelemetry;
   sessionGoal?: SessionGoal;
+  quotaTelemetry?: {
+    tradesPerMinTarget: number;
+    executedLast60s: number;
+    focusSymbol: string;
+    strictQuotaMode: boolean;
+    updatedAt: number;
+  };
   marketProfiles?: Record<string, MarketProfileSummary>;
   current_market_regime_directive?: string;
   promptsVersion?: number;

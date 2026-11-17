@@ -135,6 +135,8 @@ export function createDefaultSettings(symbols: string[], scanIntervalMin: number
     autoPaperScalp: false,
     scalpIntervalSec: 15,
     tradesPerMinute: 4,
+    focusSymbol: "",
+    strictQuotaMode: false,
     executionMode: "human_confirm",
     tradingStyle: "daytrade",
     trainedLookback: 20,

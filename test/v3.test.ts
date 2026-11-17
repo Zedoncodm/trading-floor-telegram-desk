@@ -1324,3 +1324,62 @@ test("Equity curve clean rendering without -85k drop & tradesPerMinute accelerat
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Single-pair HFT Focus & Strict Quota execution meets tradesPerMinute across all 8 agents", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-focus-hft-"));
+  try {
+    assert.ok(DASHBOARD_HTML.includes("cfgFocusSymbol"));
+    assert.ok(DASHBOARD_HTML.includes("cfgStrictQuotaChk"));
+    assert.ok(DASHBOARD_HTML.includes("btnFocusHftStart"));
+    assert.ok(DASHBOARD_HTML.includes("quotaLiveMeter"));
+    assert.ok(DASHBOARD_HTML.includes("function applyFocusHftDirectly("));
+
+    const store = new DeskStore(dir);
+    const cfg = makeTestCfg(dir);
+    const desk = new TradingFloorDesk(cfg, store, new TelegramFloorRoom(cfg), new GrpoEngine(join(dir, "grpo.json")));
+    const now = Date.now();
+    desk.state.tape = [
+      {
+        symbol: "XAUUSD",
+        name: "Gold Spot",
+        px: 3866.5,
+        prev: 3865.2,
+        change24h: 0.008,
+        funding: null,
+        oiUsd: null,
+        bookImbalance: 0.35,
+        venue1: "MT5",
+        venue2: "YahooFinance",
+        verified2ndSource: true,
+        sparkline: [3860, 3863, 3865, 3866.5],
+        updatedAt: now,
+      },
+    ];
+    await desk.updateBoardConfig({
+      settings: {
+        focusSymbol: "XAUUSD",
+        strictQuotaMode: true,
+        tradesPerMinute: 30,
+      },
+    });
+    assert.equal(desk.state.settings.focusSymbol, "XAUUSD");
+    assert.equal(desk.state.settings.strictQuotaMode, true);
+    assert.equal(desk.state.settings.tradesPerMinute, 30);
+
+    // Burst execution of 3 slots executes exclusively on XAUUSD in milliseconds
+    const count = await desk.runSinglePairHftQuotaStep(now, 3);
+    assert.equal(count, 3);
+    const recentOpen = desk.state.tickets.filter((t) => t.status === "open" && t.asset === "XAUUSD");
+    assert.ok(recentOpen.length >= 3);
+    assert.equal(desk.state.quotaTelemetry?.executedLast60s, 3);
+    assert.equal(desk.state.quotaTelemetry?.tradesPerMinTarget, 30);
+    assert.equal(desk.state.quotaTelemetry?.focusSymbol, "XAUUSD");
+
+    // Verify all 8 agents are synchronized on XAUUSD
+    for (const id of ["lead", "analyst", "strategist", "risk", "execution", "reviewer", "sentinel", "hunter"] as const) {
+      assert.equal(desk.state.activities[id].asset, "XAUUSD");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

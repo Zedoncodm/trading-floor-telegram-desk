@@ -2182,6 +2182,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
                 <button type="button" class="pill-btn mono cadence-preset-btn" data-tpm="30" onclick="applyTradesPerMinDirectly(30)">30/min (Turbo · 2s)</button>
                 <button type="button" class="pill-btn mono cadence-preset-btn" data-tpm="60" style="border-color:var(--up-ring);color:var(--up)" onclick="applyTradesPerMinDirectly(60)">60/min (Max · 1s)</button>
               </div>
+              <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center">
+                <div>
+                  <label class="field-lbl" style="display:block;margin-bottom:4px">Focus Paire Unique (HFT Mono-Paire)</label>
+                  <select id="cfgFocusSymbol" class="input-dark mono" style="width:100%;padding:5px 8px;font-size:11.5px" onchange="markStrategyFormDirty()">
+                    <option value="">Multi-Actifs (Analyse générale)</option>
+                  </select>
+                </div>
+                <button type="button" id="btnFocusHftStart" class="pill-btn primary" style="margin-top:16px;padding:6px 12px;font-size:11px;font-weight:700" onclick="applyFocusHftDirectly()">Activer Focus HFT</button>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:6px">
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer">
+                  <input id="cfgStrictQuotaChk" type="checkbox" onchange="markStrategyFormDirty()" />
+                  <span>Respecter à tout prix le quota / min (8 agents dédiés à cette paire)</span>
+                </label>
+                <span id="quotaLiveMeter" class="mono" style="font-size:10.5px;color:var(--fg-2)">Quota 60s : 0 / 4</span>
+              </div>
             </div>
           </div>
 
@@ -6159,6 +6175,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     function applyTradesPerMinDirectly(val) {
       var n = Math.max(1, Math.min(60, Math.round(Number(val) || 4)));
       var sec = Math.max(1, Math.round(60 / n));
+      var focusSym = String(document.getElementById('cfgFocusSymbol')?.value || '').trim().toUpperCase();
+      var strictQ = Boolean(document.getElementById('cfgStrictQuotaChk')?.checked);
+      if (focusSym && !strictQ && n >= 6) {
+        strictQ = true;
+        var qChk = document.getElementById('cfgStrictQuotaChk');
+        if (qChk) qChk.checked = true;
+      }
       var el = document.getElementById('cfgTradesPerMin');
       var sl = document.getElementById('cfgTradesPerMinSlider');
       if (el) el.value = String(n);
@@ -6173,14 +6196,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       fetch('/api/settings', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ settings: { tradesPerMinute: n, scalpIntervalSec: sec } })
+        body: JSON.stringify({
+          settings: {
+            tradesPerMinute: n,
+            scalpIntervalSec: sec,
+            focusSymbol: focusSym,
+            strictQuotaMode: strictQ
+          }
+        })
       })
       .then(function (r) { return r.json(); })
       .then(function () {
         if (deskState && deskState.settings) {
           deskState.settings.tradesPerMinute = n;
           deskState.settings.scalpIntervalSec = sec;
-          if (n >= 6) {
+          deskState.settings.focusSymbol = focusSym;
+          deskState.settings.strictQuotaMode = strictQ;
+          if (n >= 6 || (focusSym && strictQ)) {
             deskState.settings.autoPaperScalp = true;
             deskState.settings.executionMode = 'auto';
           }
@@ -6189,8 +6221,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (fb) {
           fb.style.display = 'inline-block';
           fb.style.color = 'var(--up)';
-          fb.textContent = 'OK · ' + n + '/min (' + sec + 's) actif !';
-          setTimeout(function () { if (fb) fb.style.display = 'none'; }, 3000);
+          fb.textContent = 'OK · ' + n + '/min' + (focusSym ? (' sur ' + focusSym) : '') + ' actif !';
+          setTimeout(function () { if (fb) fb.style.display = 'none'; }, 3500);
         }
       })
       .catch(function () {
@@ -6200,6 +6232,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           fb.textContent = 'ERR · échec mise à jour';
         }
       });
+    }
+
+    function applyFocusHftDirectly() {
+      var focusSel = document.getElementById('cfgFocusSymbol');
+      var qChk = document.getElementById('cfgStrictQuotaChk');
+      var focusSym = String(focusSel?.value || '').trim().toUpperCase();
+      if (qChk) qChk.checked = Boolean(focusSym);
+      var n = Math.max(1, Math.min(60, Math.round(Number(document.getElementById('cfgTradesPerMin')?.value || 12))));
+      if (focusSym && n < 6) {
+        n = 12;
+        var el = document.getElementById('cfgTradesPerMin');
+        var sl = document.getElementById('cfgTradesPerMinSlider');
+        if (el) el.value = '12';
+        if (sl) sl.value = '12';
+      }
+      applyTradesPerMinDirectly(n);
     }
 
     function applyCurrentLeverageInput() {
@@ -6806,6 +6854,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (tpmEl) tpmEl.value = String(tpm);
       if (tpmSl) tpmSl.value = String(tpm);
       highlightCadencePresets(tpm);
+      var fSel = document.getElementById('cfgFocusSymbol');
+      if (fSel && settings.focusSymbol !== undefined) fSel.value = settings.focusSymbol || '';
+      var sqChk = document.getElementById('cfgStrictQuotaChk');
+      if (sqChk) sqChk.checked = Boolean(settings.strictQuotaMode);
 
       var autoStopChk = document.getElementById('cfgAutoStopLossChk');
       if (autoStopChk) autoStopChk.checked = settings.autoStopOnMaxLoss !== false;
@@ -6875,6 +6927,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var progressiveStopEnabled = Boolean(document.getElementById('cfgProgressiveSlEnabled')?.checked);
       var tradesPerMinute = Math.max(1, Math.min(60, Math.round(Number(document.getElementById('cfgTradesPerMin')?.value || 4))));
       var scalpIntervalSec = Math.max(1, Math.round(60 / tradesPerMinute));
+      var focusSymbol = String(document.getElementById('cfgFocusSymbol')?.value || '').trim().toUpperCase();
+      var strictQuotaMode = Boolean(document.getElementById('cfgStrictQuotaChk')?.checked);
 
       var errors = [];
       if (lev < 1 || lev > 500) errors.push('Le levier doit être compris entre 1 et 500.');
@@ -6916,7 +6970,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         dailyProfitTargetVal: dailyTpVal,
         progressiveStopEnabled: progressiveStopEnabled,
         tradesPerMinute: tradesPerMinute,
-        scalpIntervalSec: scalpIntervalSec
+        scalpIntervalSec: scalpIntervalSec,
+        focusSymbol: focusSymbol,
+        strictQuotaMode: strictQuotaMode
       };
 
       var prevLev = Number(deskState?.settings?.defaultLeverage || 5);
@@ -7453,8 +7509,39 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (navLevEl) navLevEl.textContent = 'x' + lev;
       highlightLevPresets(lev);
       var tpmLive = Math.max(1, Math.min(60, Math.round(Number(s.tradesPerMinute || (60 / Math.max(1, s.scalpIntervalSec || 15))) || 4)));
+      var focusLive = String(s.focusSymbol || '').trim().toUpperCase();
       var navCadEl = document.getElementById('navCadenceBadge');
-      if (navCadEl) navCadEl.textContent = tpmLive + '/min';
+      if (navCadEl) {
+        navCadEl.textContent = (focusLive ? (focusLive + ' · ') : '') + tpmLive + '/min';
+        navCadEl.style.borderColor = focusLive ? 'var(--up-ring)' : '';
+        navCadEl.style.color = focusLive ? 'var(--up)' : '';
+      }
+      var focusSel = document.getElementById('cfgFocusSymbol');
+      if (focusSel) {
+        var symPool = (s.symbols && s.symbols.length ? s.symbols : (deskState.tape || []).map(function (r) { return r.symbol; }));
+        var cryptoDisabled = Boolean(deskState.mt5Live && deskState.mt5Live.connected && deskState.mt5Live.cryptoSupported === false);
+        var symsKey = symPool.join(',') + '|' + (cryptoDisabled ? 'nocryp' : 'all');
+        if (focusSel.dataset.syms !== symsKey) {
+          var prevVal = focusSel.value || focusLive;
+          focusSel.innerHTML = '<option value="">Multi-Actifs (Analyse générale)</option>' + symPool.map(function (sym) {
+            var u = String(sym).toUpperCase();
+            var tag = (cryptoDisabled && u.endsWith('USDT')) ? ' (Paper · hors MT5 Demo)' : (deskState.mt5Live && deskState.mt5Live.connected ? ' (MT5 Live)' : '');
+            return '<option value="' + u + '">' + u + tag + '</option>';
+          }).join('');
+          focusSel.dataset.syms = symsKey;
+          focusSel.value = prevVal;
+        } else if (!isStrategyFormDirty && document.activeElement !== focusSel) {
+          focusSel.value = focusLive;
+        }
+      }
+      var qMeter = document.getElementById('quotaLiveMeter');
+      if (qMeter) {
+        var qt = deskState.quotaTelemetry;
+        var ex60 = qt ? Number(qt.executedLast60s || 0) : 0;
+        var tgt60 = qt ? Number(qt.tradesPerMinTarget || tpmLive) : tpmLive;
+        qMeter.textContent = 'Quota 60s : ' + ex60 + ' / ' + tgt60 + (focusLive ? (' · Focus : ' + focusLive) : ' · Multi-Actifs');
+        qMeter.style.color = (focusLive && ex60 >= tgt60) ? 'var(--up)' : 'var(--fg-2)';
+      }
 
       var open = (deskState.tickets || []).filter(function (t) { return t.status === 'open'; });
       var pending = (deskState.tickets || []).filter(function (t) { return t.status === 'pending'; });
