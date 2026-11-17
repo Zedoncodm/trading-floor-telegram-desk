@@ -1551,6 +1551,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="macro_fvg">Macro FVG</option>
         <option value="hft_kamikaze">Kamikaze HFT</option>
       </select>
+      <button type="button" class="pill-btn mono" id="navCadenceBadge" onclick="switchTab('strategy');setTimeout(function(){var el=document.getElementById('cfgTradesPerMin');if(el)el.focus();},120);" title="Cadence actuelle de scan/trading (cliquer pour accélérer)">4/min</button>
 
       <div style="position:relative;display:inline-block">
         <button class="pill-btn mono" id="navLevBadge" onclick="toggleNavLevDropdown(event)" title="Levier actif (cliquer pour modifier en 1 clic)">x5</button>
@@ -2153,6 +2154,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
                   <input id="cfgAutoStopLossChk" type="checkbox" checked onchange="updateLiveRiskCalculator()" />
                   <span>Arrêt auto</span>
                 </label>
+              </div>
+            </div>
+
+            <!-- 6. CADENCE D'EXÉCUTION (TRADES / MINUTE) -->
+            <div class="risk-field-card risk-field-card-compact risk-bento-wide">
+              <div class="risk-field-head" style="margin-bottom:4px">
+                <div class="risk-field-title" style="font-size:12px">
+                  6. Vitesse d'Exécution (Trades / minute)
+                  <span class="info-tip" data-tip="Accélère la fréquence des scans et ouvertures automatiques de positions (1/min = toutes les 60s jusqu'à 60/min = toutes les 1s).">?</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span id="cadenceApplyFeedback" style="font-size:11px;font-weight:600;display:none"></span>
+                  <span id="cadenceIntervalLabel" class="mono accent" style="font-size:11px;font-weight:700">1 trade / 15s</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <input id="cfgTradesPerMinSlider" type="range" min="1" max="60" value="4" class="lev-slider" oninput="syncCadenceFromSlider(this.value)" />
+                <input id="cfgTradesPerMin" type="number" min="1" max="60" value="4" class="input-dark mono" style="width:68px;text-align:center;font-weight:700;padding:5px" oninput="syncCadenceFromNumber(this.value)" onkeydown="if(event.key==='Enter'){applyTradesPerMinDirectly(this.value);}" />
+                <span class="mono" style="font-size:11px;font-weight:700">/ min</span>
+                <button id="btnApplyCadenceDirect" type="button" class="pill-btn primary" style="padding:5px 11px;font-size:11px;font-weight:700" onclick="applyTradesPerMinDirectly(document.getElementById('cfgTradesPerMin').value)">Accélérer</button>
+              </div>
+              <div id="cadencePresetsWrap" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">
+                <button type="button" class="pill-btn mono cadence-preset-btn" data-tpm="2" onclick="applyTradesPerMinDirectly(2)">2/min (30s)</button>
+                <button type="button" class="pill-btn mono cadence-preset-btn" data-tpm="4" onclick="applyTradesPerMinDirectly(4)">4/min (Standard · 15s)</button>
+                <button type="button" class="pill-btn mono cadence-preset-btn" data-tpm="12" onclick="applyTradesPerMinDirectly(12)">12/min (Rapide · 5s)</button>
+                <button type="button" class="pill-btn mono cadence-preset-btn" data-tpm="30" onclick="applyTradesPerMinDirectly(30)">30/min (Turbo · 2s)</button>
+                <button type="button" class="pill-btn mono cadence-preset-btn" data-tpm="60" style="border-color:var(--up-ring);color:var(--up)" onclick="applyTradesPerMinDirectly(60)">60/min (Max · 1s)</button>
               </div>
             </div>
           </div>
@@ -5628,6 +5656,94 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderEquityChart();
     }
 
+    function buildEquitySeriesPoints() {
+      if (!deskState) return { points: [], bySec: {} };
+      var now = Date.now();
+      var cutoff =
+        equityRange === '1D' ? now - 86400000
+        : equityRange === '1W' ? now - 7 * 86400000
+        : equityRange === '1M' ? now - 30 * 86400000
+        : equityRange === '2M' ? now - 60 * 86400000
+        : 0;
+
+      var hasMt5 = Boolean(deskState.mt5Live && deskState.mt5Live.connected);
+      var baseCurve = (deskState.curve || []).filter(function (pt) {
+        return pt && Number.isFinite(Number(pt.t)) && Number.isFinite(Number(pt.eq)) && Number(pt.eq) > 0;
+      });
+      var lastMeasured = baseCurve.length ? baseCurve[baseCurve.length - 1] : null;
+      var liveEq = hasMt5
+        ? Number(deskState.mt5Live.equity || 0)
+        : Number((lastMeasured && lastMeasured.eq) || deskState.startEquity || 10000);
+      var liveUnreal = hasMt5
+        ? Number(deskState.mt5Live.profit || 0)
+        : Number((lastMeasured && lastMeasured.unrealized) || 0);
+
+      var merged = baseCurve.slice();
+
+      // Reconstitution en arrière UNIQUEMENT au démarrage vierge sans historique mesuré (< 2 points)
+      if (merged.length < 2) {
+        var closedAll = (deskState.tickets || [])
+          .filter(function (t) { return t.status === 'closed' && (t.closedAt || t.createdAt); })
+          .slice(-200)
+          .sort(function (a, b) { return (a.closedAt || a.createdAt) - (b.closedAt || b.createdAt); });
+        if (closedAll.length > 0) {
+          var anchorEq = liveEq > 0 ? liveEq : Number(deskState.startEquity || 10000);
+          var totalClosedPnl = closedAll.reduce(function (s, t) { return s + Number(t.pnl || 0); }, 0);
+          var startAnchor = Math.max(1, anchorEq - totalClosedPnl);
+          var runEq = startAnchor;
+          var runRealized = 0;
+          var peak = startAnchor;
+          var synth = [{ t: Math.max(0, (closedAll[0].closedAt || closedAll[0].createdAt) - 60000), eq: startAnchor, realized: 0, drawdownPct: 0 }];
+          closedAll.forEach(function (t) {
+            var p = Number(t.pnl || 0);
+            runEq = Math.max(1, runEq + p);
+            runRealized += p;
+            if (runEq > peak) peak = runEq;
+            synth.push({ t: t.closedAt || t.createdAt, eq: runEq, realized: runRealized, drawdownPct: peak > 0 ? (peak - runEq) / peak : 0 });
+          });
+          merged = synth;
+        }
+      }
+
+      if (liveEq > 0 && (!lastMeasured || now - lastMeasured.t >= 1000 || Math.abs(lastMeasured.eq - liveEq) >= 0.01)) {
+        merged.push({
+          t: now,
+          eq: liveEq,
+          realized: Number(deskState.realizedPnl || 0),
+          unrealized: liveUnreal,
+          drawdownPct: lastMeasured ? (lastMeasured.drawdownPct || 0) : 0
+        });
+      }
+
+      var rawCurve = merged.filter(function (pt) { return pt.t >= cutoff; });
+      if (rawCurve.length < 2 && merged.length >= 1) {
+        var lastVal = merged[merged.length - 1];
+        var anchorT = cutoff > 0 ? Math.max(cutoff, now - 3600000) : now - 60000;
+        rawCurve = [{ t: Math.min(anchorT, lastVal.t - 60000), eq: lastVal.eq, realized: lastVal.realized || 0, drawdownPct: lastVal.drawdownPct || 0 }, lastVal];
+      }
+
+      var bySec = {};
+      rawCurve.forEach(function (pt) {
+        var sec = Math.floor(Number(pt.t) / 1000);
+        bySec[sec] = pt;
+      });
+      var points = Object.keys(bySec)
+        .sort(function (a, b) { return Number(a) - Number(b); })
+        .map(function (sec) {
+          return { time: Number(sec), value: Number(Number(bySec[sec].eq || 0).toFixed(2)) };
+        });
+      return { points: points, bySec: bySec };
+    }
+
+    function updateLiveEquityChart() {
+      if (!eqChart || !eqAreaSeries || !deskState) return;
+      var res = buildEquitySeriesPoints();
+      window._eqBySec = res.bySec;
+      if (res.points.length) {
+        eqAreaSeries.setData(res.points);
+      }
+    }
+
     function renderEquityChart() {
       var wrap = document.getElementById('equityAreaWrap');
       if (!wrap || typeof LightweightCharts === 'undefined' || !deskState) return;
@@ -5643,8 +5759,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         height: h,
         layout: { background: { color: 'transparent' }, textColor: '#94a3b8' },
         grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
-        timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true },
-        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' }
+        timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)', scaleMargins: { top: 0.12, bottom: 0.12 } }
       });
 
       eqAreaSeries = eqChart.addAreaSeries({
@@ -5654,56 +5770,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         lineWidth: 2
       });
 
-      var now = Date.now();
-      var cutoff =
-        equityRange === '1D' ? now - 86400000
-        : equityRange === '1W' ? now - 7 * 86400000
-        : equityRange === '1M' ? now - 30 * 86400000
-        : equityRange === '2M' ? now - 60 * 86400000
-        : 0;
-
-      // Agrégation complète : courbe live + historique intégral des trades fermés + PnL latent ouvert
-      var baseEq = Number(deskState.startEquity || 10000);
-      var closedAll = (deskState.tickets || [])
-        .filter(function (t) { return t.status === 'closed' && (t.closedAt || t.createdAt); })
-        .slice()
-        .sort(function (a, b) { return (a.closedAt || a.createdAt) - (b.closedAt || b.createdAt); });
-
-      var synthesized = [];
-      var runningEq = baseEq;
-      var totalRealizedAll = 0;
-      if (closedAll.length > 0) {
-        var firstT = Math.max(0, (closedAll[0].closedAt || closedAll[0].createdAt) - 60000);
-        synthesized.push({ t: firstT, eq: baseEq, realized: 0, drawdownPct: 0 });
-        var peakEq = baseEq;
-        closedAll.forEach(function (t) {
-          var pnl = Number(t.pnl || 0);
-          runningEq += pnl;
-          totalRealizedAll += pnl;
-          if (runningEq > peakEq) peakEq = runningEq;
-          var dd = peakEq > 0 ? Math.max(0, (peakEq - runningEq) / peakEq) : 0;
-          synthesized.push({ t: t.closedAt || t.createdAt, eq: runningEq, realized: totalRealizedAll, drawdownPct: dd });
-        });
-      }
-
-      var merged = synthesized.concat(deskState.curve || []);
-      var rawCurve = merged.filter(function (pt) { return pt.t >= cutoff; });
-      if (rawCurve.length < 2 && merged.length >= 2) {
-        var lastVal = merged[merged.length - 1];
-        rawCurve = [{ t: Math.max(cutoff, now - 3600000), eq: lastVal.eq, realized: lastVal.realized, drawdownPct: lastVal.drawdownPct }, lastVal];
-      }
-
-      var bySec = {};
-      var points = [];
-      rawCurve.forEach(function (pt) {
-        var sec = Math.floor(pt.t / 1000);
-        bySec[sec] = pt;
-      });
-      Object.keys(bySec).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (sec) {
-        points.push({ time: Number(sec), value: Number(bySec[sec].eq || 0) });
-      });
-      if (points.length) {
-        eqAreaSeries.setData(points);
+      var res = buildEquitySeriesPoints();
+      window._eqBySec = res.bySec;
+      if (res.points.length) {
+        eqAreaSeries.setData(res.points);
         eqChart.timeScale().fitContent();
       }
 
@@ -5711,7 +5781,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       eqChart.subscribeCrosshairMove(function (param) {
         if (!tip) return;
         if (!param || !param.time) { tip.style.display = 'none'; return; }
-        var match = bySec[param.time];
+        var match = (window._eqBySec || {})[param.time];
         if (!match) { tip.style.display = 'none'; return; }
         tip.innerHTML =
           '<div><strong>' + new Date(match.t).toLocaleString('fr-FR') + '</strong></div>' +
@@ -6056,6 +6126,80 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function quickApplyLeverage(val) {
       applyLeverageDirectly(val);
+    }
+
+    function highlightCadencePresets(tpm) {
+      var n = Math.max(1, Math.min(60, Math.round(Number(tpm) || 4)));
+      document.querySelectorAll('.cadence-preset-btn').forEach(function (b) {
+        b.classList.toggle('active', Number(b.getAttribute('data-tpm')) === n);
+      });
+      var sec = Math.max(1, Math.round(60 / n));
+      var lbl = document.getElementById('cadenceIntervalLabel');
+      if (lbl) lbl.textContent = n + '/min (1 trade / ' + sec + 's)';
+      var navB = document.getElementById('navCadenceBadge');
+      if (navB) navB.textContent = n + '/min';
+    }
+
+    function syncCadenceFromSlider(val) {
+      var n = Math.max(1, Math.min(60, Math.round(Number(val) || 4)));
+      var el = document.getElementById('cfgTradesPerMin');
+      if (el) el.value = String(n);
+      highlightCadencePresets(n);
+      markStrategyFormDirty();
+    }
+
+    function syncCadenceFromNumber(val) {
+      var n = Math.max(1, Math.min(60, Math.round(Number(val) || 4)));
+      var sl = document.getElementById('cfgTradesPerMinSlider');
+      if (sl) sl.value = String(n);
+      highlightCadencePresets(n);
+      markStrategyFormDirty();
+    }
+
+    function applyTradesPerMinDirectly(val) {
+      var n = Math.max(1, Math.min(60, Math.round(Number(val) || 4)));
+      var sec = Math.max(1, Math.round(60 / n));
+      var el = document.getElementById('cfgTradesPerMin');
+      var sl = document.getElementById('cfgTradesPerMinSlider');
+      if (el) el.value = String(n);
+      if (sl) sl.value = String(n);
+      highlightCadencePresets(n);
+      var fb = document.getElementById('cadenceApplyFeedback');
+      if (fb) {
+        fb.style.display = 'inline-block';
+        fb.style.color = 'var(--amber)';
+        fb.textContent = 'Application...';
+      }
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ settings: { tradesPerMinute: n, scalpIntervalSec: sec } })
+      })
+      .then(function (r) { return r.json(); })
+      .then(function () {
+        if (deskState && deskState.settings) {
+          deskState.settings.tradesPerMinute = n;
+          deskState.settings.scalpIntervalSec = sec;
+          if (n >= 6) {
+            deskState.settings.autoPaperScalp = true;
+            deskState.settings.executionMode = 'auto';
+          }
+        }
+        isStrategyFormDirty = false;
+        if (fb) {
+          fb.style.display = 'inline-block';
+          fb.style.color = 'var(--up)';
+          fb.textContent = 'OK · ' + n + '/min (' + sec + 's) actif !';
+          setTimeout(function () { if (fb) fb.style.display = 'none'; }, 3000);
+        }
+      })
+      .catch(function () {
+        if (fb) {
+          fb.style.display = 'inline-block';
+          fb.style.color = 'var(--down)';
+          fb.textContent = 'ERR · échec mise à jour';
+        }
+      });
     }
 
     function applyCurrentLeverageInput() {
@@ -6655,6 +6799,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var totValEl = document.getElementById('cfgTotalLossVal');
       if (totValEl) totValEl.value = String(settings.maxTotalLossVal || 0);
 
+      var tpm = Number(settings.tradesPerMinute || Math.round(60 / Math.max(1, settings.scalpIntervalSec || 15)) || 4);
+      tpm = Math.max(1, Math.min(60, Math.round(tpm)));
+      var tpmEl = document.getElementById('cfgTradesPerMin');
+      var tpmSl = document.getElementById('cfgTradesPerMinSlider');
+      if (tpmEl) tpmEl.value = String(tpm);
+      if (tpmSl) tpmSl.value = String(tpm);
+      highlightCadencePresets(tpm);
+
       var autoStopChk = document.getElementById('cfgAutoStopLossChk');
       if (autoStopChk) autoStopChk.checked = settings.autoStopOnMaxLoss !== false;
 
@@ -6721,6 +6873,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var dailyTpVal = Number(document.getElementById('cfgDailyTpVal')?.value || 500);
       var dailyTpMode = document.getElementById('cfgDailyTpMode')?.value || 'amount';
       var progressiveStopEnabled = Boolean(document.getElementById('cfgProgressiveSlEnabled')?.checked);
+      var tradesPerMinute = Math.max(1, Math.min(60, Math.round(Number(document.getElementById('cfgTradesPerMin')?.value || 4))));
+      var scalpIntervalSec = Math.max(1, Math.round(60 / tradesPerMinute));
 
       var errors = [];
       if (lev < 1 || lev > 500) errors.push('Le levier doit être compris entre 1 et 500.');
@@ -6760,7 +6914,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         dailyProfitTargetEnabled: dailyTpEnabled,
         dailyProfitTargetMode: dailyTpMode,
         dailyProfitTargetVal: dailyTpVal,
-        progressiveStopEnabled: progressiveStopEnabled
+        progressiveStopEnabled: progressiveStopEnabled,
+        tradesPerMinute: tradesPerMinute,
+        scalpIntervalSec: scalpIntervalSec
       };
 
       var prevLev = Number(deskState?.settings?.defaultLeverage || 5);
@@ -7296,6 +7452,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var navLevEl = document.getElementById('navLevBadge');
       if (navLevEl) navLevEl.textContent = 'x' + lev;
       highlightLevPresets(lev);
+      var tpmLive = Math.max(1, Math.min(60, Math.round(Number(s.tradesPerMinute || (60 / Math.max(1, s.scalpIntervalSec || 15))) || 4)));
+      var navCadEl = document.getElementById('navCadenceBadge');
+      if (navCadEl) navCadEl.textContent = tpmLive + '/min';
 
       var open = (deskState.tickets || []).filter(function (t) { return t.status === 'open'; });
       var pending = (deskState.tickets || []).filter(function (t) { return t.status === 'pending'; });
@@ -7522,8 +7681,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderJournalView();
       renderRlMetrics();
       renderAgentPromptsEditor();
-      if (currentTab === 'journal' && !eqChart) {
-        renderEquityChart();
+      if (currentTab === 'journal') {
+        if (!eqChart) renderEquityChart();
+        else updateLiveEquityChart();
       }
     }
 

@@ -122,6 +122,7 @@ export type DeskRuntimeSettings = {
   llmApiKeyHint: string;
   autoPaperScalp: boolean;
   scalpIntervalSec: number;
+  tradesPerMinute?: number;
   executionMode: ExecutionMode;
   tradingStyle: TradingStyle;
   trainedLookback: number;

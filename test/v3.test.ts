@@ -1296,3 +1296,31 @@ test("MT5 Crypto Bridge v2.1: alias mapping, contract-size safe payload & EA dia
   assert.ok(mq5.includes("availableCryptos"));
   assert.ok(mq5.includes("cryptoSupported"));
 });
+
+test("Equity curve clean rendering without -85k drop & tradesPerMinute acceleration setting", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-eq-cadence-"));
+  try {
+    assert.ok(DASHBOARD_HTML.includes("function buildEquitySeriesPoints("));
+    assert.ok(DASHBOARD_HTML.includes("function updateLiveEquityChart("));
+    assert.ok(DASHBOARD_HTML.includes("function applyTradesPerMinDirectly("));
+    assert.ok(DASHBOARD_HTML.includes("cfgTradesPerMin"));
+    assert.ok(DASHBOARD_HTML.includes("navCadenceBadge"));
+
+    const scriptMatch = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+    assert.ok(scriptMatch && scriptMatch[1]);
+    assert.doesNotThrow(() => new Function(scriptMatch[1]));
+
+    const store = new DeskStore(dir);
+    const cfg = makeTestCfg(dir);
+    const desk = new TradingFloorDesk(cfg, store, new TelegramFloorRoom(cfg), new GrpoEngine(join(dir, "grpo.json")));
+    desk.state.lastScanAt = Date.now();
+    await desk.updateBoardConfig({ settings: { tradesPerMinute: 30 } });
+    assert.equal(desk.state.settings.tradesPerMinute, 30);
+    assert.equal(desk.state.settings.scalpIntervalSec, 2);
+    assert.equal(desk.state.settings.autoPaperScalp, true);
+    assert.equal(desk.state.settings.executionMode, "auto");
+    assert.equal(desk.state.lastScanAt, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

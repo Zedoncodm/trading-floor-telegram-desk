@@ -134,6 +134,7 @@ export function createDefaultSettings(symbols: string[], scanIntervalMin: number
     llmApiKeyHint: detected.hint,
     autoPaperScalp: false,
     scalpIntervalSec: 15,
+    tradesPerMinute: 4,
     executionMode: "human_confirm",
     tradingStyle: "daytrade",
     trainedLookback: 20,

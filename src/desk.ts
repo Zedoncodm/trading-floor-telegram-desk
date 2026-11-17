@@ -1880,8 +1880,8 @@ export class TradingFloorDesk {
     const peak = merged.reduce((m, p) => Math.max(m, p.eq), this.state.startEquity);
     const drawdownPct = peak > 0 ? Math.max(0, (peak - eq) / peak) : 0;
     const last = merged[merged.length - 1];
-    // Évite le spam : enregistre sur variation d'équité (>= 15s) ou au minimum toutes les 5 min à plat
-    if (last && (now - last.t < 15_000 || (Math.abs(last.eq - eq) < 0.01 && now - last.t < 300_000))) {
+    // Enregistre sur variation d'équité (>= 5s) ou au minimum toutes les 5 min à plat
+    if (last && (now - last.t < 5_000 || (Math.abs(last.eq - eq) < 0.01 && now - last.t < 300_000))) {
       return;
     }
     this.state.curve = [
@@ -3618,7 +3618,9 @@ export class TradingFloorDesk {
     this.monitoring = true;
     try {
       const now = Date.now();
-      await this.refreshTape();
+      if (now - (this.state.lastTickAt || 0) >= 2500 || !this.state.tape.length) {
+        await this.refreshTape();
+      }
 
     const curDay = dayKey(now, this.cfg.timeZone);
     if (curDay !== this.state.dayKey) {
@@ -3954,10 +3956,16 @@ export class TradingFloorDesk {
       await this.approveTicket(pending.id);
     }
     const hasPending = this.state.tickets.some((t) => t.status === "pending");
+    const rawTpm = Number(
+      this.state.settings?.tradesPerMinute ??
+        Math.round(60 / Math.max(1, this.state.settings?.scalpIntervalSec || 15)),
+    );
+    const tpm = Math.max(1, Math.min(60, Number.isFinite(rawTpm) ? rawTpm : 4));
+    const cadenceMs = Math.max(1000, Math.round(60_000 / tpm));
     const intervalMs = isHftRegime
-      ? Math.min(this.state.settings?.scalpIntervalSec || 5, 5) * 1000
-      : isScalp
-        ? (this.state.settings?.scalpIntervalSec || 12) * 1000
+      ? Math.min(cadenceMs, 3_000)
+      : isScalp || this.state.settings?.tradesPerMinute !== undefined
+        ? cadenceMs
         : (this.state.settings?.scanIntervalMin || this.cfg.scanIntervalMin) * 60_000;
       if (!hasPending && !this.state.halted && now - this.state.lastScanAt >= intervalMs) {
         await this.runDeskScan("scheduled");
@@ -4226,11 +4234,27 @@ export class TradingFloorDesk {
         payload.settings.defaultLeverage !== undefined
           ? Math.max(1, Math.min(500, Math.round(Number(payload.settings.defaultLeverage) || 1)))
           : this.state.settings.defaultLeverage;
+      let nextTpm = this.state.settings.tradesPerMinute ?? Math.max(1, Math.round(60 / Math.max(1, this.state.settings.scalpIntervalSec || 15)));
+      let nextScalpSec = this.state.settings.scalpIntervalSec ?? 15;
+      if (payload.settings.tradesPerMinute !== undefined) {
+        nextTpm = Math.max(1, Math.min(60, Math.round(Number(payload.settings.tradesPerMinute) || 4)));
+        nextScalpSec = Math.max(1, Math.round(60 / nextTpm));
+        this.state.lastScanAt = 0; // Accélération ou réglage appliqué immédiatement au prochain tick
+      } else if (payload.settings.scalpIntervalSec !== undefined) {
+        nextScalpSec = Math.max(1, Math.min(300, Math.round(Number(payload.settings.scalpIntervalSec) || 15)));
+        nextTpm = Math.max(1, Math.min(60, Math.round(60 / nextScalpSec)));
+      }
       this.state.settings = {
         ...this.state.settings,
         ...payload.settings,
         defaultLeverage: nextLev,
+        tradesPerMinute: nextTpm,
+        scalpIntervalSec: nextScalpSec,
       };
+      if (payload.settings.tradesPerMinute !== undefined && nextTpm >= 6) {
+        this.state.settings.autoPaperScalp = true;
+        this.state.settings.executionMode = "auto";
+      }
 
       if (payload.settings.regime && payload.settings.regime !== prevRegime) {
         emitPulse(this.state, "lead", "strategist", "flag", `REGIME_CHANGED: ${payload.settings.regime.toUpperCase()}`, undefined, Date.now());

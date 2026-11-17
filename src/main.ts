@@ -68,10 +68,10 @@ async function main(): Promise<void> {
     }
   });
 
-  // Periodic market monitor (5s fast loop for responsive paper scalp & stop/target tracking)
+  // Fast 1s market monitor loop so responsive scalp, stops, and high trades/min trigger cleanly
   setInterval(() => {
     void desk.monitorStep().catch((e) => console.error("[MonitorStep Error]", e));
-  }, Math.min(cfg.monitorIntervalSec, 5) * 1000);
+  }, 1000);
 
   // Agentic Self-Reflection CRON loop (every 15 minutes): Trade Reviewer updates Strategist directive
   setInterval(() => {
