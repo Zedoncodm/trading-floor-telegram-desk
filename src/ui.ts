@@ -92,11 +92,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       font-family: var(--font);
       font-size: var(--fs-md);
       font-feature-settings: "cv11", "ss03";
+      overflow-wrap: break-word;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
       text-rendering: optimizeLegibility;
       transition: background-color 0.24s var(--ease-out), color 0.18s var(--ease-out);
     }
+    h1, h2, h3 { text-wrap: balance; }
 
     button, input, select, textarea { font-family: inherit; color: inherit; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -155,99 +157,40 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     @keyframes spinLoader { to { transform: rotate(360deg); } }
 
-    /* ================= STEALTH TOP BAR & MODE FOND D'ÉCRAN VIVANT ================= */
-    #stealthHoverZone {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 76px;
-      z-index: 62;
-      pointer-events: auto;
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-      padding-top: 6px;
-    }
-    body:not(.stealth-desk) #stealthHoverZone,
-    body.nav-pinned #stealthHoverZone,
-    body.nav-revealed #stealthHoverZone { pointer-events: none; }
-    #stealthHintPill {
-      width: 54px;
-      height: 4px;
-      border-radius: 99px;
-      background: var(--fg-2);
-      opacity: 0;
-      transition: opacity 0.3s var(--spring-fluid), width 0.25s var(--spring-fluid);
-      pointer-events: none;
-    }
-    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #stealthHintPill { opacity: 0.38; }
-    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #stealthHoverZone:hover #stealthHintPill { opacity: 0.85; width: 78px; background: var(--accent); }
-
-    #topNav {
+    /* ================= UNIFIED TOP HUD BAR (ZERO COLLISION) ================= */
+    #topHudBar {
       position: fixed;
       top: 10px;
       left: 14px;
       right: 14px;
       min-height: 54px;
-      z-index: 65;
+      z-index: 90;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
-      padding: 6px 14px;
-      border-radius: var(--r-lg);
-      background: var(--surface-glass);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      border: 1px solid var(--ring-1);
-      box-shadow: var(--shadow-glass);
-      transition: opacity 0.32s var(--spring-fluid), transform 0.34s var(--spring-fluid), border-color 0.2s ease;
-    }
-    /* Sur la page d'accueil Desk 3D non épinglée, tout le chrome disparaît pour laisser 100 % place au spectacle visuel */
-    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #topNav {
-      opacity: 0;
-      transform: translateY(-18px) scale(0.985);
-      pointer-events: none;
-    }
-    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #deskStatusStrip,
-    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #deskFloatingBadge,
-    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #goalTrackerWidget,
-    body.stealth-desk:not(.nav-pinned):not(.nav-revealed) #panicDock {
-      opacity: 0;
-      transform: translateY(14px);
-      pointer-events: none;
-    }
-    #deskStatusStrip, #deskFloatingBadge, #goalTrackerWidget, #panicDock {
-      transition: opacity 0.32s var(--spring-fluid), transform 0.34s var(--spring-fluid);
-    }
-    body.nav-pinned #topNav,
-    body.stealth-desk.nav-revealed #topNav {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-      border-color: var(--ring-2);
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      padding: 6px 12px;
+      border-radius: 16px;
+      background: rgba(11, 15, 24, 0.86);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65);
     }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      font-weight: 800;
-      font-size: 13px;
-      letter-spacing: 0.08em;
-      white-space: nowrap;
-    }
     .brand-dot {
-      width: 10px;
-      height: 10px;
+      width: 9px;
+      height: 9px;
+      flex-shrink: 0;
       border-radius: 50%;
       background: var(--up);
-      box-shadow: 0 0 14px var(--up);
+      box-shadow: 0 0 12px var(--up);
       transition: transform 0.2s ease;
     }
     .brand-dot.halted {
       background: var(--amber);
-      box-shadow: 0 0 16px var(--amber);
+      box-shadow: 0 0 14px var(--amber);
       animation: pulseWarn 1.1s infinite;
     }
     @keyframes pulseWarn {
@@ -255,56 +198,60 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       50% { transform: scale(1.25); opacity: 0.65; }
     }
 
-    .tabs {
+    #hudKpiBadge {
       display: flex;
       align-items: center;
-      gap: 4px;
-      overflow-x: auto;
-      padding: 4px;
-      background: rgba(255, 255, 255, 0.035);
-      border-radius: 12px;
-      border: 1px solid var(--ring-1);
+      gap: 9px;
+      min-inline-size: 0;
+      flex-wrap: nowrap;
     }
-    .tab-btn {
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--fg-2);
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      cursor: pointer;
+    .hud-kpi-item {
+      display: flex;
+      flex-direction: column;
       white-space: nowrap;
-      transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
     }
-    .tab-btn:hover { color: var(--fg-0); background: rgba(255, 255, 255, 0.06); transform: translateY(-1px); }
-    .tab-btn.active {
-      color: var(--fg-0);
-      background: var(--accent-bg);
-      border-color: var(--accent);
-      box-shadow: 0 0 14px var(--accent-bg);
+    .hud-kpi-lbl {
+      font-size: 8.5px;
+      text-transform: uppercase;
+      font-family: var(--font);
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #94a3b8;
+      margin-bottom: 1px;
+    }
+    .hud-kpi-val {
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #f8fafc;
+      line-height: 1.15;
+    }
+    .hud-divider {
+      width: 1px;
+      height: 22px;
+      background: rgba(255, 255, 255, 0.12);
     }
 
     .nav-actions {
       display: flex;
       align-items: center;
-      gap: 7px;
+      gap: 5px;
+      flex-wrap: wrap;
       position: relative;
-      white-space: nowrap;
     }
     .pill-btn {
       border: 1px solid var(--ring-1);
       background: linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%);
       color: var(--fg-1);
-      padding: 7px 11px;
-      border-radius: 10px;
-      font-size: 11px;
+      padding: 5px 8px;
+      min-block-size: 30px;
+      border-radius: 8px;
+      font-size: 10.5px;
       font-weight: 600;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
+      white-space: nowrap;
       transition: all 0.16s ease;
     }
     .pill-btn:hover {
@@ -331,77 +278,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       color: var(--amber);
     }
 
-    /* ================= SPATIAL BENTO & MAC OS DOCK ================= */
-    #hudKpiBadge {
-      position: fixed;
-      top: 18px;
-      left: 20px;
-      z-index: 90;
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 10px 18px;
-      border-radius: 18px;
-      background: rgba(14, 18, 28, 0.75);
-      backdrop-filter: blur(28px);
-      -webkit-backdrop-filter: blur(28px);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
-      pointer-events: auto;
-    }
-    .hud-kpi-item {
-      display: flex;
-      flex-direction: column;
-    }
-    .hud-kpi-lbl {
-      font-size: 9.5px;
-      text-transform: uppercase;
-      font-family: var(--font);
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      color: #94a3b8;
-      margin-bottom: 2px;
-    }
-    .hud-kpi-val {
-      font-size: 14px;
-      font-weight: 800;
-      color: #f8fafc;
-    }
-    .hud-divider {
-      width: 1px;
-      height: 28px;
-      background: rgba(255, 255, 255, 0.12);
-    }
     #emergencyWidget {
-      position: fixed;
-      top: 18px;
-      right: 20px;
-      z-index: 90;
       display: flex;
       align-items: center;
-      gap: 8px;
-      pointer-events: auto;
+      gap: 5px;
+      flex-wrap: wrap;
     }
     .btn-emergency-act {
       border: 1px solid rgba(255, 255, 255, 0.12);
-      background: rgba(14, 18, 28, 0.8);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
+      background: rgba(14, 18, 28, 0.85);
       color: #e2e8f0;
-      padding: 8px 14px;
-      border-radius: 12px;
-      font-size: 11px;
+      padding: 5px 8px;
+      min-block-size: 30px;
+      border-radius: 8px;
+      font-size: 10px;
       font-weight: 800;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.03em;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
+      white-space: nowrap;
       transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     }
     .btn-emergency-act:hover {
-      transform: translateY(-2px);
+      transform: translateY(-1px);
     }
     .btn-emergency-close {
       border-color: rgba(244, 63, 94, 0.45);
@@ -412,7 +313,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: rgba(225, 29, 72, 0.35);
       border-color: #f43f5e;
       color: #fff;
-      box-shadow: 0 0 20px rgba(244, 63, 94, 0.4);
+      box-shadow: 0 0 16px rgba(244, 63, 94, 0.35);
     }
     .btn-emergency-halt {
       border-color: rgba(250, 204, 21, 0.45);
@@ -423,7 +324,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: rgba(234, 179, 8, 0.35);
       border-color: #facc15;
       color: #fff;
-      box-shadow: 0 0 20px rgba(250, 204, 21, 0.4);
+      box-shadow: 0 0 16px rgba(250, 204, 21, 0.35);
+    }
+    .btn-emergency-halt.resuming {
+      border-color: var(--up-ring);
+      background: var(--up-bg);
+      color: var(--up);
     }
     .btn-emergency-mt5 {
       border-color: rgba(56, 189, 248, 0.45);
@@ -434,31 +340,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: rgba(14, 165, 233, 0.35);
       border-color: #38bdf8;
       color: #fff;
-      box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.35);
     }
+
+    /* ================= FLOATING MAC OS DOCK (BOTTOM CENTER) ================= */
     #macDock {
       position: fixed;
-      bottom: 20px;
+      bottom: max(12px, env(safe-area-inset-bottom, 0px));
       left: 50%;
       transform: translateX(-50%);
       z-index: 95;
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px 14px;
-      border-radius: 26px;
-      background: rgba(11, 15, 24, 0.78);
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 22px;
+      background: rgba(11, 15, 24, 0.84);
       backdrop-filter: blur(28px);
       -webkit-backdrop-filter: blur(28px);
       border: 1px solid rgba(255, 255, 255, 0.14);
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.78), inset 0 1px 0 rgba(255, 255, 255, 0.1);
       pointer-events: auto;
     }
     .dock-btn {
       position: relative;
-      width: 48px;
-      height: 48px;
-      border-radius: 16px;
+      width: 44px;
+      height: 44px;
+      min-inline-size: 44px;
+      min-block-size: 44px;
+      border-radius: 14px;
       border: 1px solid transparent;
       background: transparent;
       color: #94a3b8;
@@ -467,20 +377,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.18s ease, color 0.18s ease;
     }
     .dock-btn:hover {
-      transform: scale(1.18) translateY(-6px);
+      transform: scale(1.12) translateY(-4px);
       color: #ffffff;
       background: rgba(255, 255, 255, 0.08);
       border-color: rgba(255, 255, 255, 0.15);
-      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
     }
     .dock-btn.active {
       color: #38bdf8;
       background: rgba(56, 189, 248, 0.15);
       border-color: rgba(56, 189, 248, 0.35);
-      box-shadow: 0 0 20px rgba(56, 189, 248, 0.25);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.22);
     }
     .dock-btn.active::after {
       content: "";
@@ -494,12 +404,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     .dock-tooltip {
       position: absolute;
-      top: -34px;
+      bottom: calc(100% + 8px);
       left: 50%;
       transform: translateX(-50%);
       padding: 4px 8px;
       border-radius: 6px;
-      background: rgba(0, 0, 0, 0.9);
+      background: rgba(0, 0, 0, 0.92);
       border: 1px solid rgba(255, 255, 255, 0.15);
       color: #ffffff;
       font-size: 10px;
@@ -507,34 +417,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       white-space: nowrap;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.15s ease;
+      visibility: hidden;
+      transition: opacity 0.14s ease, visibility 0.14s ease;
     }
-    .dock-btn:hover .dock-tooltip {
+    .dock-btn:hover .dock-tooltip,
+    .dock-btn:focus-visible .dock-tooltip {
       opacity: 1;
+      visibility: visible;
     }
     .dock-sep {
       width: 1px;
-      height: 30px;
+      height: 26px;
       background: rgba(255, 255, 255, 0.12);
-      margin: 0 4px;
+      margin: 0 2px;
     }
 
-    #panicDock {
-      position: fixed;
-      right: 16px;
-      bottom: 16px;
-      z-index: 80;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 14px;
-      background: var(--surface-elevated);
-      backdrop-filter: blur(22px);
-      -webkit-backdrop-filter: blur(22px);
-      border: 1px solid var(--ring-2);
-      box-shadow: var(--shadow-glass);
-    }
     .btn-panic-close {
       border: 1px solid rgba(244, 63, 94, 0.65);
       background: linear-gradient(135deg, #dc2626 0%, #9f1239 100%);
@@ -550,42 +447,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
     .btn-panic-close:hover { transform: translateY(-1px) scale(1.02); box-shadow: 0 0 26px rgba(244, 63, 94, 0.72); }
 
-    .btn-panic-halt {
-      border: 1px solid #facc15;
-      background: repeating-linear-gradient(-45deg, #111827, #111827 8px, #272206 8px, #272206 16px);
-      color: #fde047;
-      padding: 8px 13px;
-      border-radius: 10px;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      cursor: pointer;
-      box-shadow: 0 0 16px rgba(250, 204, 21, 0.25);
-      transition: all 0.16s ease;
-    }
-    .btn-panic-halt:hover { transform: translateY(-1px) scale(1.02); box-shadow: 0 0 24px rgba(250, 204, 21, 0.5); }
-    .btn-panic-halt.resuming {
-      border-color: var(--up);
-      background: var(--up-bg);
-      color: var(--up);
-    }
-
     /* Asset multi-select dropdown */
     #assetDropdownMenu {
-      position: absolute;
-      top: 54px;
-      right: 0;
-      width: min(460px, calc(100vw - 24px));
-      max-height: 80vh;
+      position: fixed;
+      top: var(--top-clearance, 76px);
+      right: 14px;
+      width: min(460px, calc(100dvw - 28px));
+      max-height: calc(100dvh - var(--top-clearance, 76px) - 112px);
       overflow-y: auto;
-      z-index: 95;
+      overscroll-behavior: contain;
+      z-index: 125;
       display: none;
       padding: 16px;
       border-radius: 16px;
       background: var(--surface-elevated);
       backdrop-filter: blur(28px);
       border: 1px solid var(--ring-2);
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.72);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.78);
     }
     .asset-accordion {
       margin-bottom: 8px;
@@ -655,14 +533,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* ================= VIEWPORT PANELS ================= */
     .view-panel {
       position: fixed;
-      inset: 0;
+      top: var(--top-clearance, 72px);
+      right: 0;
+      bottom: 82px;
+      left: 0;
       display: none;
-      padding: 76px 16px 76px;
+      padding: 8px 16px 24px;
+      scroll-padding-top: 12px;
+      scroll-padding-bottom: 24px;
       overflow-y: auto;
       overflow-x: hidden;
     }
     .view-panel.active { display: block; }
-    #view-desk.active { padding: 0; overflow: hidden; }
+    #view-desk.view-panel {
+      inset: 0;
+      padding: 0;
+      overflow: hidden;
+    }
 
     /* ================= TAB 1: DESK 3D ================= */
     #canvas3dWrap {
@@ -671,22 +558,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       width: 100%;
       height: 100%;
       background: var(--bg-gradient);
-    }
-    #deskFloatingBadge {
-      position: fixed;
-      left: 16px;
-      bottom: 16px;
-      z-index: 40;
-      padding: 14px 18px;
-      border-radius: 16px;
-      background: var(--surface-glass);
-      backdrop-filter: blur(24px);
-      -webkit-backdrop-filter: blur(24px);
-      border: 1px solid var(--ring-1);
-      box-shadow: var(--shadow-glass);
-      display: flex;
-      align-items: center;
-      gap: 20px;
     }
     .pnl-hero-label {
       font-size: 10px;
@@ -705,7 +576,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #deskNodeInspector {
       position: fixed;
       left: 16px;
-      top: 120px;
+      top: calc(var(--top-clearance, 78px) + 40px);
       width: 310px;
       z-index: 45;
       padding: 14px 16px;
@@ -720,7 +591,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #deskStatusStrip {
       position: fixed;
       left: 16px;
-      top: 76px;
+      top: var(--top-clearance, 78px);
+      max-width: calc(100dvw - 32px);
       z-index: 35;
       display: flex;
       flex-wrap: wrap;
@@ -895,9 +767,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* ================= TAB 2: SALON ET CHAT ================= */
     .chat-shell {
       display: grid;
-      grid-template-columns: 260px 1fr;
+      grid-template-columns: 240px minmax(0, 1fr);
       gap: 14px;
-      height: calc(100vh - 156px);
+      height: 100%;
+      min-height: 0;
+    }
+    .chat-shell > aside {
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .channel-list { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
     .chan-btn {
@@ -983,29 +861,30 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .input-dark:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 
     /* ================= TAB 3: CHARTS & TRADINGVIEW ================= */
+    #view-charts.view-panel { padding: 4px 14px 8px !important; overflow: hidden; }
     .chart-shell {
       display: flex;
       flex-direction: column;
       gap: 6px;
-      min-height: calc(100vh - 64px);
-      height: calc(100vh - 64px);
-      padding: 8px 10px !important;
-      border-radius: 0 !important;
+      height: 100%;
+      min-height: 0;
+      padding: 10px 12px !important;
+      overflow: hidden;
     }
-    #view-charts.view-panel { padding: 64px 0 0 0 !important; }
     .chart-toolbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       flex-wrap: wrap;
-      gap: 10px;
-      padding-bottom: 10px;
+      gap: 8px;
+      padding-bottom: 8px;
       border-bottom: 1px solid var(--ring-1);
+      flex-shrink: 0;
     }
     #lwChartContainer {
       flex: 1;
       width: 100%;
-      min-height: 460px;
+      min-height: 0;
       position: relative;
       background: transparent;
     }
@@ -1068,9 +947,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     .notion-two-col { display: grid; grid-template-columns: 1.75fr 1fr; gap: 14px; }
-    @media (max-width: 1100px) {
+    @media (max-width: 860px) {
       .notion-two-col { grid-template-columns: 1fr; }
-      .chat-shell { grid-template-columns: 1fr; }
+      .chat-shell { grid-template-columns: 1fr; height: auto; min-height: calc(100dvh - 196px); }
     }
 
     table.ledger { width: 100%; border-collapse: collapse; font-size: 11.5px; }
@@ -1105,7 +984,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* ================= TAB 5: ENTRAINEMENT IA & LEVIER 500x ================= */
     .strat-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr));
       gap: 14px;
       padding-bottom: 24px;
     }
@@ -1420,7 +1299,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     /* ================= PHASE 5 : CHARTS, TIMEFRAMES & DESSIN ================= */
-    .chart-shell { min-height: calc(100vh - 64px); height: calc(100vh - 64px); }
     .chart-tf-strip {
       display: flex;
       align-items: center;
@@ -1444,7 +1322,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       flex: 1;
       display: flex;
       gap: 8px;
-      min-height: 480px;
+      min-height: 0;
       position: relative;
       overflow: hidden;
     }
@@ -1457,13 +1335,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: rgba(128, 128, 128, 0.06);
       border: 1px solid var(--ring-1);
       width: 46px;
+      height: 100%;
+      max-height: 100%;
       align-items: center;
       flex-shrink: 0;
       overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .draw-tool-btn {
       width: 34px;
       height: 34px;
+      min-height: 34px;
+      flex-shrink: 0;
       border-radius: 8px;
       border: 1px solid transparent;
       background: transparent;
@@ -1485,13 +1368,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: var(--input-bg);
       border: 1px solid var(--ring-1);
       min-width: 0;
+      min-height: 0;
     }
     #lwChartContainer, #tvWidgetContainer {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
-      min-height: 460px;
+      min-height: 0;
     }
     #tvWidgetContainer { display: none; }
     #chartDrawCanvas {
@@ -1507,125 +1391,56 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #chartDrawCanvas.select-mode { pointer-events: auto; cursor: default; }
 
     /* ================= RESPONSIVE MOBILE & TABLETTE (Zéro débordement) ================= */
-    @media (max-width: 960px) {
-      #topNav { left: 8px; right: 8px; top: 8px; padding: 6px 10px; gap: 6px; flex-wrap: wrap; }
-      .tabs { order: 3; width: 100%; justify-content: flex-start; scrollbar-width: none; }
-      .tabs::-webkit-scrollbar { display: none; }
-      .nav-actions { gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
-      .pill-btn, .tab-btn, .draw-tool-btn, .tf-btn { min-height: 40px; }
-      .btn-text-hide-sm { display: none; }
-      .view-panel { padding: 122px 10px 84px; }
-      .strat-grid { grid-template-columns: 1fr; }
+    @media (max-width: 1000px) {
+      #topHudBar { left: 8px; right: 8px; top: 8px; padding: 6px 10px; gap: 6px; }
+      .view-panel:not(#view-desk) { padding: 8px 10px 24px; }
+      #view-charts.view-panel { padding: 4px 10px 8px !important; }
+    }
+    @media (max-width: 720px) {
+      .pill-btn, .draw-tool-btn, .tf-btn { min-height: 44px; }
       .form-grid { grid-template-columns: 1fr; }
       .theme-grid { grid-template-columns: 1fr; }
-      #deskFloatingBadge { left: 10px; right: 10px; bottom: 68px; gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
-      .pnl-hero-value { font-size: 20px; }
-      #panicDock { left: 10px; right: 10px; bottom: 10px; justify-content: space-between; }
       .chart-workspace { flex-direction: column; }
       .draw-toolbar { flex-direction: row; width: 100%; height: auto; overflow-x: auto; }
     }
   </style>
 </head>
-<body class="stealth-desk">
-  <div id="stealthHoverZone"><div id="stealthHintPill" aria-hidden="true"></div></div>
-
-  <!-- HUD PERMANENT KPI TOP-LEFT (TOUJOURS VISIBLE) -->
-  <div id="hudKpiBadge">
-    <div class="hud-kpi-item">
-      <span class="hud-kpi-lbl">Total Equity (MT5)</span>
-      <span class="hud-kpi-val mono" id="hudTotalEquityVal">$10,000.00</span>
+<body>
+  <!-- BARRE HUD SUPÉRIEURE UNIFIÉE (ZERO SUPERPOSITION) -->
+  <header id="topHudBar">
+    <div id="hudKpiBadge">
+      <span class="brand-dot" id="liveHealthDot" title="Statut du Desk"></span>
+      <div class="hud-kpi-item">
+        <span class="hud-kpi-lbl">Equity (MT5)</span>
+        <span class="hud-kpi-val mono" id="hudTotalEquityVal">$10,000.00</span>
+      </div>
+      <div class="hud-divider"></div>
+      <div class="hud-kpi-item">
+        <span class="hud-kpi-lbl">Session PnL</span>
+        <span class="hud-kpi-val mono up" id="hudSessionPnlVal">+$0.00</span>
+      </div>
+      <div class="hud-divider"></div>
+      <div class="hud-kpi-item">
+        <span class="hud-kpi-lbl">Active Risk</span>
+        <span class="hud-kpi-val mono" id="hudActiveRiskVal" style="color:#38bdf8">0.00% ($0)</span>
+      </div>
     </div>
-    <div class="hud-divider"></div>
-    <div class="hud-kpi-item">
-      <span class="hud-kpi-lbl">Session PnL</span>
-      <span class="hud-kpi-val mono up" id="hudSessionPnlVal">+$0.00</span>
-    </div>
-    <div class="hud-divider"></div>
-    <div class="hud-kpi-item">
-      <span class="hud-kpi-lbl">Active Risk</span>
-      <span class="hud-kpi-val mono" id="hudActiveRiskVal" style="color:#38bdf8">0.00% ($0)</span>
-    </div>
-  </div>
-
-  <!-- FLOATING EMERGENCY WIDGET TOP-RIGHT -->
-  <div id="emergencyWidget">
-    <button class="btn-emergency-act btn-emergency-close" onclick="openPanicModal()" title="Liquider toutes les positions immédiatement">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      <span>CLOSE ALL</span>
-    </button>
-    <button id="btnEmergencyHalt" class="btn-emergency-act btn-emergency-halt" onclick="toggleManualHalt()" title="Mettre le desk en pause immédiate">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-      <span id="emergencyHaltLabel">HALT DESK</span>
-    </button>
-    <button class="btn-emergency-act btn-emergency-mt5" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Nouveau profil MT5 / Réinitialiser">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
-      <span>NEW MT5 PROFILE</span>
-    </button>
-  </div>
-
-  <!-- FLOATING MAC OS DOCK BOTTOM -->
-  <nav id="macDock" aria-label="Mac Navigation Dock">
-    <button class="dock-btn active" data-tab="desk" onclick="switchTab(&quot;desk&quot;)" title="Spatial Desk">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-      <div class="dock-tooltip">Spatial Desk</div>
-    </button>
-    <button class="dock-btn" data-tab="charts" onclick="switchTab(&quot;charts&quot;)" title="Charts &amp; TradingView">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      <div class="dock-tooltip">Charts</div>
-    </button>
-    <button class="dock-btn" data-tab="journal" onclick="switchTab(&quot;journal&quot;)" title="Ledger &amp; Notion">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-      <div class="dock-tooltip">Ledger</div>
-    </button>
-    <button class="dock-btn" data-tab="strategy" onclick="switchTab(&quot;strategy&quot;)" title="RL Training &amp; Stratégie">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-      <div class="dock-tooltip">RL Training</div>
-    </button>
-    <div class="dock-sep"></div>
-    <button class="dock-btn" data-tab="chat" onclick="switchTab(&quot;chat&quot;)" title="Salon &amp; Chat Agents">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <div class="dock-tooltip">Salon &amp; Télémétrie</div>
-    </button>
-    <button class="dock-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" title="Thèmes &amp; Préférences">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-      <div class="dock-tooltip">Thèmes</div>
-    </button>
-  </nav>
-
-  <!-- STEALTH / TOP NAVIGATION (CONSERVES POUR CONTROLES SECONDAIRES & TESTS) -->
-  <header id="topNav">
-    <div class="brand">
-      <span class="brand-dot" id="liveHealthDot"></span>
-      <span>TRADING FLOOR <span class="accent">V3</span></span>
-    </div>
-
-    <nav class="tabs" id="mainTabs">
-      <button class="tab-btn active" data-tab="desk" onclick="switchTab(&quot;desk&quot;)" title="Raccourci : 1">DESK 3D</button>
-      <button class="tab-btn" data-tab="chat" onclick="switchTab(&quot;chat&quot;)" title="Raccourci : 2">SALON ET CHAT</button>
-      <button class="tab-btn" data-tab="charts" onclick="switchTab(&quot;charts&quot;)" title="Raccourci : 3">CHARTS ET TRADINGVIEW</button>
-      <button class="tab-btn" data-tab="journal" onclick="switchTab(&quot;journal&quot;)" title="Raccourci : 4">JOURNAL NOTION</button>
-      <button class="tab-btn" data-tab="strategy" onclick="switchTab(&quot;strategy&quot;)" title="Raccourci : 5">STRATEGIE</button>
-    </nav>
 
     <div class="nav-actions">
-      <!-- FAST STRATEGY SWITCHER (HUD) -->
-      <div style="display:flex;align-items:center;gap:6px">
-        <label for="topActiveRegimeSelect" style="font-size:10px;font-family:var(--font-mono);font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">RÉGIME :</label>
-        <select id="topActiveRegimeSelect" class="pill-btn mono" style="background:var(--bg-panel);border:1px solid var(--ring-1);font-size:11px;font-weight:700;padding:4px 8px;cursor:pointer;outline:none" onchange="quickSwitchRegime(this.value)" title="Changer le régime de trading en direct">
-          <option value="standard">Standard (WFO/GRPO)</option>
-          <option value="macro_fvg">Macro FVG</option>
-          <option value="hft_kamikaze">HFT FIAT-TARGET (KAMIKAZE)</option>
-        </select>
-      </div>
+      <select id="topActiveRegimeSelect" aria-label="Régime de trading" class="pill-btn mono" style="background:var(--surface-elevated);border:1px solid var(--ring-1);font-size:10.5px;font-weight:700;padding:4px 7px;cursor:pointer;outline:none;max-width:122px" onchange="quickSwitchRegime(this.value)" title="Changer le régime de trading en direct">
+        <option value="standard">Standard</option>
+        <option value="macro_fvg">Macro FVG</option>
+        <option value="hft_kamikaze">Kamikaze HFT</option>
+      </select>
 
       <div style="position:relative;display:inline-block">
         <button class="pill-btn mono" id="navLevBadge" onclick="toggleNavLevDropdown(event)" title="Levier actif (cliquer pour modifier en 1 clic)">x5</button>
-        <div id="navLevDropdown" style="display:none;position:absolute;top:calc(100% + 8px);left:0;background:var(--bg-panel);border:1px solid var(--ring-2);box-shadow:0 16px 36px rgba(0,0,0,0.65);border-radius:12px;padding:14px;z-index:99999;width:290px">
+        <div id="navLevDropdown" style="display:none;position:absolute;top:calc(100% + 8px);right:0;left:auto;background:var(--surface-elevated);border:1px solid var(--ring-2);box-shadow:0 16px 36px rgba(0,0,0,0.72);border-radius:12px;padding:14px;z-index:99999;width:min(290px, calc(100dvw - 28px))">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-weight:700;font-size:12px;letter-spacing:0.02em;color:var(--text-main)">LEVIER DE TRADING</div>
+            <div style="font-weight:700;font-size:12px;letter-spacing:0.02em;color:var(--fg-0)">LEVIER DE TRADING</div>
             <span id="navLevCurrentBadge" class="level-badge prudent" style="font-size:11px">Prudent</span>
           </div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;line-height:1.4">
+          <div style="font-size:11px;color:var(--fg-2);margin-bottom:10px;line-height:1.4">
             Modifiez le levier en 1 clic pour l'appliquer en direct au desk et à MT5 :
           </div>
           <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;margin-bottom:12px">
@@ -1647,31 +1462,67 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
       </div>
-      <button id="btnExecMode" class="pill-btn auto-off" onclick="toggleExecutionMode()">Confirmation Humaine</button>
-      <button class="pill-btn primary" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Connecter MT5 Téléphone &amp; Telegram"><span class="btn-text-hide-sm">MT5 &amp; Telegram</span></button>
+
+      <button id="btnExecMode" class="pill-btn auto-off" onclick="toggleExecutionMode()">Confirm</button>
       <button id="btnAssetsToggle" class="pill-btn" onclick="toggleAssetDropdown()">Actifs ▾</button>
-      <button id="btnPinNav" class="pill-btn" onclick="togglePinNav()" aria-pressed="false" data-tip="Garde la barre toujours visible sur le Desk 3D, ou la masque automatiquement en mode fond d'écran (Raccourci : P)" title="Garde la barre toujours visible / la masque automatiquement (Raccourci : P)">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
-        <span id="pinNavLabel" class="btn-text-hide-sm">Barre Auto</span>
-      </button>
-      <button class="pill-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" title="Thèmes &amp; Préférences (Raccourci : T)"><span class="btn-text-hide-sm">Thèmes</span></button>
-      <!-- PANIC CONTROLS RELOCATED TO HEADER TOP-RIGHT -->
-      <button class="pill-btn" style="background:rgba(239,68,68,0.92);color:#fff;border-color:#f87171;font-weight:800;font-size:10.5px;padding:5px 10px" onclick="openPanicModal()" title="Liquider toutes les positions immédiatement">CLOSE ALL</button>
-      <button id="btnPanicHalt" class="pill-btn" style="background:#facc15;color:#09090b;border-color:#eab308;font-weight:800;font-size:10.5px;padding:5px 10px" onclick="toggleManualHalt()" title="Mettre le desk en pause immédiate">HALT</button>
     </div>
 
-    <div id="assetDropdownMenu">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--ring-1)">
-        <div style="display:flex;align-items:center;gap:8px">
-          <strong style="font-size:12px;font-weight:800;letter-spacing:0.04em">Univers Multi-Marches</strong>
-          <button type="button" class="asset-quick-btn" onclick="selectAllAssets()" title="Cocher tous les actifs">Tous</button>
-          <button type="button" class="asset-quick-btn" onclick="deselectAllAssets()" title="Tout decocher">Aucun</button>
-        </div>
-        <button class="pill-btn primary" onclick="applySelectedAssets()">Appliquer &amp; Scanner</button>
-      </div>
-      <div id="assetChecklistHost"></div>
+    <div id="emergencyWidget">
+      <button class="btn-emergency-act btn-emergency-close" onclick="openPanicModal()" title="Liquider toutes les positions immédiatement">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>CLOSE ALL</span>
+      </button>
+      <button id="btnPanicHalt" class="btn-emergency-act btn-emergency-halt" onclick="toggleManualHalt()" title="Mettre le desk en pause immédiate">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+        <span id="emergencyHaltLabel">HALT DESK</span>
+      </button>
+      <button class="btn-emergency-act btn-emergency-mt5" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Nouveau profil MT5 / Config Telegram">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
+        <span>NEW MT5 PROFILE</span>
+      </button>
     </div>
   </header>
+
+  <div id="assetDropdownMenu">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--ring-1)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <strong style="font-size:12px;font-weight:800;letter-spacing:0.04em">Univers Multi-Marches</strong>
+        <button type="button" class="asset-quick-btn" onclick="selectAllAssets()" title="Cocher tous les actifs">Tous</button>
+        <button type="button" class="asset-quick-btn" onclick="deselectAllAssets()" title="Tout decocher">Aucun</button>
+      </div>
+      <button class="pill-btn primary" onclick="applySelectedAssets()">Appliquer &amp; Scanner</button>
+    </div>
+    <div id="assetChecklistHost"></div>
+  </div>
+
+  <!-- FLOATING MAC OS DOCK BOTTOM -->
+  <nav id="macDock" aria-label="Navigation principale">
+    <button class="dock-btn active" data-tab="desk" onclick="switchTab(&quot;desk&quot;)" aria-label="Spatial Desk (Raccourci 1)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      <div class="dock-tooltip">Spatial Desk</div>
+    </button>
+    <button class="dock-btn" data-tab="charts" onclick="switchTab(&quot;charts&quot;)" aria-label="Charts et TradingView (Raccourci 3)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <div class="dock-tooltip">Charts</div>
+    </button>
+    <button class="dock-btn" data-tab="journal" onclick="switchTab(&quot;journal&quot;)" aria-label="Ledger et Notion (Raccourci 4)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <div class="dock-tooltip">Ledger</div>
+    </button>
+    <button class="dock-btn" data-tab="strategy" onclick="switchTab(&quot;strategy&quot;)" aria-label="RL Training et Stratégie (Raccourci 5)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      <div class="dock-tooltip">RL Training</div>
+    </button>
+    <div class="dock-sep"></div>
+    <button class="dock-btn" data-tab="chat" onclick="switchTab(&quot;chat&quot;)" aria-label="Salon et Télémétrie Agents (Raccourci 2)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <div class="dock-tooltip">Salon &amp; Télémétrie</div>
+    </button>
+    <button class="dock-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" aria-label="Thèmes et Préférences (Raccourci T)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      <div class="dock-tooltip">Thèmes</div>
+    </button>
+  </nav>
 
   <!-- EMERGENCY CONFIRM MODAL -->
   <div id="panicModal" class="modal-backdrop">
@@ -1694,23 +1545,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div id="deskStatusStrip">
       <div class="badge-chip mono" id="deskRegimeChip">RÉGIME : STANDARD</div>
       <div class="badge-chip mono" id="deskRlChip">IA ÉPISODE #0</div>
+      <div class="badge-chip mono">PROFIT FERMÉ : <span id="heroClosedProfit" class="up">+$0.00</span></div>
       <div class="badge-chip mono" id="deskThemeChip">THÈME : OBSIDIAN</div>
       <div class="badge-chip shield" id="deskShieldChip" style="display:none">VOLATILITY_SHIELD ACTIF (1.5x ATR)</div>
-    </div>
-
-    <div id="deskFloatingBadge">
-      <div class="desk-mini-stat">
-        <span class="pnl-hero-label">Équité Totale</span>
-        <span class="mono" style="font-size:18px;font-weight:800" id="heroEquity">$10,000</span>
-      </div>
-      <div>
-        <div class="pnl-hero-label">PNL Actuel</div>
-        <div class="pnl-hero-value mono" id="heroDayPnl">+$0.00</div>
-      </div>
-      <div class="desk-mini-stat">
-        <span class="pnl-hero-label">Profit Fermé de la journée</span>
-        <span class="mono up" style="font-size:17px;font-weight:800" id="heroClosedProfit">+$0.00</span>
-      </div>
     </div>
 
     <div id="deskNodeInspector"></div>
@@ -2799,80 +2636,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       applyThemeValues(cur, true);
     }
 
-    // ==================== NAVIGATION, FOND D'ÉCRAN VIVANT & PIN PERSISTANT ====================
-    function applyPinState(pinned) {
-      document.body.classList.toggle('nav-pinned', Boolean(pinned));
-      var btn = document.getElementById('btnPinNav');
-      var lbl = document.getElementById('pinNavLabel');
-      if (btn) {
-        btn.classList.toggle('pinned', Boolean(pinned));
-        btn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
-      }
-      if (lbl) lbl.textContent = pinned ? 'Barre Épinglée' : 'Barre Auto';
-      try { localStorage.setItem('tf_v3_nav_pinned', pinned ? '1' : '0'); } catch (e) {}
-    }
-
-    function togglePinNav() {
-      var next = !document.body.classList.contains('nav-pinned');
-      applyPinState(next);
-      if (!next && currentTab === 'desk') {
-        scheduleStealthHide(1200);
-      }
-    }
-
-    function revealStealthNav(stickyMs) {
-      if (currentTab !== 'desk') return;
-      document.body.classList.add('nav-revealed');
-      if (stickyMs) scheduleStealthHide(stickyMs);
-    }
-
-    function scheduleStealthHide(delayMs) {
-      if (stealthHideTimer) clearTimeout(stealthHideTimer);
-      stealthHideTimer = setTimeout(function () {
-        if (currentTab !== 'desk') return;
-        if (document.body.classList.contains('nav-pinned')) return;
-        var navEl = document.getElementById('topNav');
-        var zoneEl = document.getElementById('stealthHoverZone');
-        var assetMenu = document.getElementById('assetDropdownMenu');
-        if (navEl && (navEl.matches(':hover') || navEl.contains(document.activeElement))) return;
-        if (zoneEl && zoneEl.matches(':hover')) return;
-        if (assetMenu && assetMenu.style.display === 'block') return;
-        document.body.classList.remove('nav-revealed');
-      }, delayMs || 2400);
+    // ==================== NAVIGATION, HUD CLEARANCE & RACCOURCIS ====================
+    function syncHudClearance() {
+      var bar = document.getElementById('topHudBar');
+      if (!bar) return;
+      var rect = bar.getBoundingClientRect();
+      var clearance = Math.max(74, Math.ceil(rect.bottom + 10));
+      document.documentElement.style.setProperty('--top-clearance', clearance + 'px');
     }
 
     function setupStealthAndShortcuts() {
-      try {
-        var savedPin = localStorage.getItem('tf_v3_nav_pinned') === '1';
-        applyPinState(savedPin);
-      } catch (e) {}
-
-      var nav = document.getElementById('topNav');
-      var zone = document.getElementById('stealthHoverZone');
-      [nav, zone].forEach(function (el) {
-        if (!el) return;
-        el.addEventListener('pointerenter', function () {
-          if (stealthHideTimer) clearTimeout(stealthHideTimer);
-          revealStealthNav(0);
-        });
-        el.addEventListener('pointerleave', function () { scheduleStealthHide(1800); });
-      });
+      syncHudClearance();
+      window.addEventListener('resize', syncHudClearance);
+      if (typeof ResizeObserver !== 'undefined') {
+        var barEl = document.getElementById('topHudBar');
+        if (barEl) {
+          new ResizeObserver(function () { syncHudClearance(); }).observe(barEl);
+        }
+      }
 
       window.addEventListener('pointermove', function (e) {
         var w = window.innerWidth || 1;
         var h = window.innerHeight || 1;
         targetParallaxX = ((e.clientX / w) - 0.5) * 2;
         targetParallaxY = ((e.clientY / h) - 0.5) * 2;
-        if (currentTab === 'desk' && e.clientY <= 78) {
-          revealStealthNav(2600);
-        }
       });
-
-      window.addEventListener('touchstart', function (e) {
-        if (currentTab === 'desk' && e.touches && e.touches[0] && e.touches[0].clientY <= 110) {
-          revealStealthNav(3200);
-        }
-      }, { passive: true });
 
       window.addEventListener('keydown', function (e) {
         var tag = document.activeElement ? document.activeElement.tagName : '';
@@ -2897,7 +2685,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         }
         var tabs = { '1': 'desk', '2': 'chat', '3': 'charts', '4': 'journal', '5': 'strategy' };
         if (tabs[e.key]) { switchTab(tabs[e.key]); return; }
-        if (e.key.toLowerCase() === 'p') { togglePinNav(); return; }
         if (e.key.toLowerCase() === 't') {
           var td = document.getElementById('themeDrawer');
           if (td && td.classList.contains('open')) closeDrawer('themeDrawer'); else openDrawer('themeDrawer');
@@ -2924,22 +2711,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function switchTab(tab) {
       currentTab = tab;
-      document.querySelectorAll('.tab-btn').forEach(function (b) {
-        b.classList.toggle('active', b.getAttribute('data-tab') === tab);
-      });
       document.querySelectorAll('.dock-btn').forEach(function (b) {
         b.classList.toggle('active', b.getAttribute('data-tab') === tab);
       });
       document.querySelectorAll('.view-panel').forEach(function (v) {
         v.classList.toggle('active', v.id === 'view-' + tab);
       });
+      syncHudClearance();
       if (tab === 'desk') {
-        document.body.classList.add('stealth-desk');
-        document.body.classList.remove('nav-revealed');
         resize3dCanvas();
-      } else {
-        document.body.classList.remove('stealth-desk');
-        document.body.classList.add('nav-revealed');
       }
       if (tab === 'charts') {
         setTimeout(function () { initChartTab(); }, 60);
@@ -5713,10 +5493,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var hDot = document.getElementById('liveHealthDot');
       if (hDot) hDot.classList.toggle('halted', isHalted);
       var haltBtn = document.getElementById('btnPanicHalt');
-      if (haltBtn) {
-        haltBtn.textContent = isHalted ? 'REPRENDRE' : 'ALERTE · HALT DESK';
-        haltBtn.classList.toggle('resuming', isHalted);
-      }
+      if (haltBtn) haltBtn.classList.toggle('resuming', isHalted);
       var emerHaltLbl = document.getElementById('emergencyHaltLabel');
       if (emerHaltLbl) emerHaltLbl.textContent = isHalted ? 'RESUME' : 'HALT DESK';
 
@@ -5747,7 +5524,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           return sum + (t.notional * slDist);
         }, 0);
         var riskPct = eq > 0 ? (totalRiskUsd / eq) * 100 : 0;
-        hudRisk.textContent = riskPct.toFixed(2) + '% ($' + Math.round(totalRiskUsd).toLocaleString() + ')';
+        hudRisk.textContent = riskPct.toFixed(2) + '% (' + fmtUsd(totalRiskUsd, 0) + ')';
         hudRisk.style.color = riskPct > 3 ? '#fbbf24' : '#38bdf8';
       }
 
