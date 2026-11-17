@@ -388,8 +388,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       position: absolute;
       top: 54px;
       right: 0;
-      width: min(410px, calc(100vw - 24px));
-      max-height: 75vh;
+      width: min(460px, calc(100vw - 24px));
+      max-height: 80vh;
       overflow-y: auto;
       z-index: 95;
       display: none;
@@ -400,28 +400,70 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       border: 1px solid var(--ring-2);
       box-shadow: 0 20px 50px rgba(0, 0, 0, 0.72);
     }
-    .asset-cat-title {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      color: var(--accent);
-      text-transform: uppercase;
-      margin: 10px 0 6px;
+    .asset-accordion {
+      margin-bottom: 8px;
+      border: 1px solid var(--ring-1);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      overflow: hidden;
+      transition: border-color 0.15s ease;
     }
-    .asset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .asset-accordion:hover { border-color: var(--ring-2); }
+    .asset-accordion[open] { border-color: rgba(56, 189, 248, 0.35); }
+    .asset-accordion summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: var(--fg-0);
+      user-select: none;
+      background: rgba(255, 255, 255, 0.03);
+      list-style: none;
+    }
+    .asset-accordion summary::-webkit-details-marker { display: none; }
+    .asset-summary-left { display: flex; align-items: center; gap: 8px; }
+    .asset-cat-tag {
+      font-size: 9.5px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--accent);
+      font-weight: 800;
+    }
+    .asset-summary-actions { display: flex; align-items: center; gap: 4px; }
+    .asset-quick-btn {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      border: 1px solid var(--ring-1);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--fg-2);
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+    .asset-quick-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .asset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px; }
     .asset-item {
       display: flex;
       align-items: center;
       gap: 7px;
-      padding: 7px 9px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.03);
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.02);
       border: 1px solid var(--ring-1);
       font-size: 11px;
       cursor: pointer;
-      transition: border-color 0.15s ease;
+      transition: all 0.15s ease;
     }
-    .asset-item:hover { border-color: var(--accent); }
+    .asset-item:hover { border-color: var(--accent); background: rgba(56, 189, 248, 0.05); }
 
     /* ================= VIEWPORT PANELS ================= */
     .view-panel {
@@ -1369,8 +1411,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <div id="assetDropdownMenu">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <strong style="font-size:12px">Univers Multi-Marchés</strong>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--ring-1)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <strong style="font-size:12px;font-weight:800;letter-spacing:0.04em">Univers Multi-Marches</strong>
+          <button type="button" class="asset-quick-btn" onclick="selectAllAssets()" title="Cocher tous les actifs">Tous</button>
+          <button type="button" class="asset-quick-btn" onclick="deselectAllAssets()" title="Tout decocher">Aucun</button>
+        </div>
         <button class="pill-btn primary" onclick="applySelectedAssets()">Appliquer &amp; Scanner</button>
       </div>
       <div id="assetChecklistHost"></div>
@@ -2148,29 +2194,91 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <script>
     var ASSET_CATALOG = [
-      { cat: 'Crypto (Binance / Bybit Live)', items: [
-        { s: 'BTCUSDT', l: 'Bitcoin (BTC)' }, { s: 'ETHUSDT', l: 'Ethereum (ETH)' },
-        { s: 'SOLUSDT', l: 'Solana (SOL)' }, { s: 'BNBUSDT', l: 'BNB (BNB)' },
-        { s: 'XRPUSDT', l: 'XRP (XRP)' }, { s: 'AVAXUSDT', l: 'Avalanche (AVAX)' },
-        { s: 'DOGEUSDT', l: 'Dogecoin (DOGE)' }, { s: 'LINKUSDT', l: 'Chainlink (LINK)' }
-      ]},
-      { cat: 'Futures & Indices', items: [
-        { s: 'NQ1!', l: 'Nasdaq 100 (NQ1!)' }, { s: 'ES1!', l: 'S&P 500 (ES1!)' },
-        { s: 'YM1!', l: 'Dow Jones (YM1!)' }, { s: 'FDAX1!', l: 'DAX 40 (FDAX1!)' }
-      ]},
-      { cat: 'Forex (Devises)', items: [
-        { s: 'EURUSD', l: 'EUR/USD' }, { s: 'GBPUSD', l: 'GBP/USD' },
-        { s: 'USDJPY', l: 'USD/JPY' }, { s: 'USDCHF', l: 'USD/CHF' }
-      ]},
-      { cat: 'Matières Premières', items: [
-        { s: 'XAUUSD', l: 'Or (XAU/USD)' }, { s: 'XAGUSD', l: 'Argent (XAG/USD)' },
-        { s: 'USOIL', l: 'Pétrole WTI (USOIL)' }, { s: 'NGAS', l: 'Gaz Naturel (NGAS)' }
-      ]},
-      { cat: 'Actions US', items: [
-        { s: 'NVDA', l: 'NVIDIA (NVDA)' }, { s: 'AAPL', l: 'Apple (AAPL)' },
-        { s: 'TSLA', l: 'Tesla (TSLA)' }, { s: 'MSFT', l: 'Microsoft (MSFT)' },
-        { s: 'AMZN', l: 'Amazon (AMZN)' }
-      ]}
+      {
+        id: 'crypto_majors',
+        cat: 'Crypto Majors & L1 / L2',
+        tag: 'CRYPTO',
+        items: [
+          { s: 'BTCUSDT', l: 'Bitcoin (BTC)' },
+          { s: 'ETHUSDT', l: 'Ethereum (ETH)' },
+          { s: 'SOLUSDT', l: 'Solana (SOL)' },
+          { s: 'BNBUSDT', l: 'BNB (BNB)' },
+          { s: 'XRPUSDT', l: 'XRP (XRP)' },
+          { s: 'AVAXUSDT', l: 'Avalanche (AVAX)' },
+          { s: 'SUIUSDT', l: 'Sui (SUI)' },
+          { s: 'NEARUSDT', l: 'NEAR Protocol' },
+          { s: 'LINKUSDT', l: 'Chainlink (LINK)' },
+          { s: 'ADAUSDT', l: 'Cardano (ADA)' }
+        ]
+      },
+      {
+        id: 'memecoins',
+        cat: 'Memecoins & Hype Trading Desk',
+        tag: 'MEME',
+        items: [
+          { s: 'DOGEUSDT', l: 'Dogecoin (DOGE)' },
+          { s: '1000PEPEUSDT', l: 'Pepe (1000PEPE)' },
+          { s: '1000SHIBUSDT', l: 'Shiba Inu (1000SHIB)' },
+          { s: '1000BONKUSDT', l: 'Bonk (1000BONK)' },
+          { s: '1000FLOKIUSDT', l: 'Floki (1000FLOKI)' },
+          { s: 'WIFUSDT', l: 'dogwifhat (WIF)' },
+          { s: 'POPCATUSDT', l: 'Popcat (POPCAT)' },
+          { s: 'BOMEUSDT', l: 'Book of Meme (BOME)' },
+          { s: 'MEWUSDT', l: 'Cat in Dogs World (MEW)' },
+          { s: 'BRETTUSDT', l: 'Brett (BRETT)' },
+          { s: 'NEIROUSDT', l: 'First Neiro (NEIRO)' },
+          { s: 'FARTCOINUSDT', l: 'Fartcoin (FARTCOIN)' },
+          { s: 'TRUMPUSDT', l: 'Official Trump (TRUMP)' }
+        ]
+      },
+      {
+        id: 'futures_indices',
+        cat: 'Futures & Indices Mondiaux',
+        tag: 'FUTURES',
+        items: [
+          { s: 'NQ1!', l: 'Nasdaq 100 (NQ1!)' },
+          { s: 'ES1!', l: 'S&P 500 (ES1!)' },
+          { s: 'YM1!', l: 'Dow Jones (YM1!)' },
+          { s: 'FDAX1!', l: 'DAX 40 (FDAX1!)' }
+        ]
+      },
+      {
+        id: 'forex',
+        cat: 'Forex (Devises Majeures)',
+        tag: 'FOREX',
+        items: [
+          { s: 'EURUSD', l: 'EUR/USD' },
+          { s: 'GBPUSD', l: 'GBP/USD' },
+          { s: 'USDJPY', l: 'USD/JPY' },
+          { s: 'USDCHF', l: 'USD/CHF' },
+          { s: 'AUDUSD', l: 'AUD/USD' },
+          { s: 'USDCAD', l: 'USD/CAD' },
+          { s: 'NZDUSD', l: 'NZD/USD' }
+        ]
+      },
+      {
+        id: 'commodities',
+        cat: 'Matieres Premieres (Commodities)',
+        tag: 'RAW',
+        items: [
+          { s: 'XAUUSD', l: 'Or (XAU/USD)' },
+          { s: 'XAGUSD', l: 'Argent (XAG/USD)' },
+          { s: 'USOIL', l: 'Petrole WTI (USOIL)' },
+          { s: 'NGAS', l: 'Gaz Naturel (NGAS)' }
+        ]
+      },
+      {
+        id: 'us_stocks',
+        cat: 'Actions US & Tech Leaders',
+        tag: 'EQUITY',
+        items: [
+          { s: 'NVDA', l: 'NVIDIA (NVDA)' },
+          { s: 'AAPL', l: 'Apple (AAPL)' },
+          { s: 'TSLA', l: 'Tesla (TSLA)' },
+          { s: 'MSFT', l: 'Microsoft (MSFT)' },
+          { s: 'AMZN', l: 'Amazon (AMZN)' }
+        ]
+      }
     ];
 
     var AGENTS = [
@@ -3234,6 +3342,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     function toggleAssetDropdown() {
       var menu = document.getElementById('assetDropdownMenu');
       menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+    }
+
+    function toggleCategoryAssets(catId, select) {
+      var container = document.getElementById('cat-body-' + catId);
+      if (!container) return;
+      var chks = container.querySelectorAll('.asset-chk');
+      chks.forEach(function (c) { c.checked = select; });
+    }
+
+    function selectAllAssets() {
+      document.querySelectorAll('.asset-chk').forEach(function (c) { c.checked = true; });
+    }
+
+    function deselectAllAssets() {
+      document.querySelectorAll('.asset-chk').forEach(function (c) { c.checked = false; });
     }
 
     async function applySelectedAssets() {
@@ -5467,13 +5590,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var chkHost = document.getElementById('assetChecklistHost');
       if (chkHost && !chkHost.dataset.ready) {
         chkHost.innerHTML = ASSET_CATALOG.map(function (grp) {
+          var hasActive = grp.items.some(function (it) { return activeSyms.indexOf(it.s) >= 0; });
+          var openAttr = hasActive ? ' open' : '';
           return (
-            '<div class="asset-cat-title">' + grp.cat + '</div><div class="asset-grid">' +
-            grp.items.map(function (it) {
-              var checked = activeSyms.indexOf(it.s) >= 0 ? ' checked' : '';
-              return '<label class="asset-item"><input type="checkbox" class="asset-chk" value="' + it.s + '"' + checked + ' /><span>' + it.l + '</span></label>';
-            }).join('') +
-            '</div>'
+            '<details class="asset-accordion"' + openAttr + '>' +
+              '<summary>' +
+                '<div class="asset-summary-left">' +
+                  '<span class="asset-cat-tag">' + grp.tag + '</span>' +
+                  '<span>' + grp.cat + ' (' + grp.items.length + ')</span>' +
+                '</div>' +
+                '<div class="asset-summary-actions" onclick="event.stopPropagation()">' +
+                  '<button type="button" class="asset-quick-btn" data-cat="' + grp.id + '" onclick="toggleCategoryAssets(this.dataset.cat, true)">Tous</button>' +
+                  '<button type="button" class="asset-quick-btn" data-cat="' + grp.id + '" onclick="toggleCategoryAssets(this.dataset.cat, false)">Aucun</button>' +
+                '</div>' +
+              '</summary>' +
+              '<div class="asset-grid" id="cat-body-' + grp.id + '">' +
+                grp.items.map(function (it) {
+                  var checked = activeSyms.indexOf(it.s) >= 0 ? ' checked' : '';
+                  return '<label class="asset-item"><input type="checkbox" class="asset-chk" value="' + it.s + '"' + checked + ' /><span>' + it.l + '</span></label>';
+                }).join('') +
+              '</div>' +
+            '</details>'
           );
         }).join('');
         chkHost.dataset.ready = '1';

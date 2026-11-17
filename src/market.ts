@@ -369,7 +369,16 @@ async function fetchBinanceVenue(symbol: string): Promise<VenueSnap> {
   };
 }
 
+const BYBIT_MAP: Record<string, { symbol: string; scale: number }> = {
+  "1000SHIBUSDT": { symbol: "SHIB1000USDT", scale: 1 },
+  NEIROUSDT: { symbol: "1000NEIROCTOUSDT", scale: 0.001 },
+};
+
 async function fetchBybitVenue(symbol: string): Promise<VenueSnap> {
+  const bMap = BYBIT_MAP[symbol];
+  const bSym = bMap?.symbol ?? symbol;
+  const bScale = bMap?.scale ?? 1;
+
   const [tickerRes, depthRes, klines1h, oiRes] = await Promise.all([
     getJson<{
       result?: {
@@ -379,33 +388,33 @@ async function fetchBybitVenue(symbol: string): Promise<VenueSnap> {
           openInterestValue: string;
         }>;
       };
-    }>(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${symbol}`),
+    }>(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${bSym}`),
     getJson<{
       result?: { b?: [string, string][]; a?: [string, string][] };
-    }>(`https://api.bybit.com/v5/market/orderbook?category=linear&symbol=${symbol}&limit=25`),
-    fetchBybitKlines(symbol, "60", 3).catch(() => []),
+    }>(`https://api.bybit.com/v5/market/orderbook?category=linear&symbol=${bSym}&limit=25`),
+    fetchBybitKlines(bSym, "60", 3).catch(() => []),
     getJson<{
       result?: { list?: Array<{ openInterest: string }> };
-    }>(`https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=1h&limit=2`).catch(
+    }>(`https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${bSym}&intervalTime=1h&limit=2`).catch(
       () => ({ result: { list: [] } }),
     ),
   ]);
 
   const item = tickerRes.result?.list?.[0];
   if (!item) throw new Error(`Bybit empty ticker for ${symbol}`);
-  const price = Number(item.lastPrice);
+  const price = Number(item.lastPrice) * bScale;
   const funding = item.fundingRate ? Number(item.fundingRate) : null;
   const oiValue = item.openInterestValue ? Number(item.openInterestValue) : null;
 
-  const numBids: [number, number][] = (depthRes.result?.b ?? []).map(([p, q]) => [Number(p), Number(q)]);
-  const numAsks: [number, number][] = (depthRes.result?.a ?? []).map(([p, q]) => [Number(p), Number(q)]);
+  const numBids: [number, number][] = (depthRes.result?.b ?? []).map(([p, q]) => [Number(p) * bScale, Number(q) / bScale]);
+  const numAsks: [number, number][] = (depthRes.result?.a ?? []).map(([p, q]) => [Number(p) * bScale, Number(q) / bScale]);
   const bidVol = numBids.reduce((s, [p, q]) => s + p * q, 0);
   const askVol = numAsks.reduce((s, [p, q]) => s + p * q, 0);
   const book = bidVol + askVol > 0 ? (bidVol - askVol) / (bidVol + askVol) : null;
 
   let ret1h: number | null = null;
   if (klines1h.length >= 2) {
-    const prev = klines1h[klines1h.length - 2].close;
+    const prev = klines1h[klines1h.length - 2].close * bScale;
     ret1h = prev > 0 ? (price - prev) / prev : null;
   }
 
@@ -476,6 +485,9 @@ const YAHOO_MAP: Record<string, string> = {
   GBPUSD: "GBPUSD=X",
   USDJPY: "USDJPY=X",
   USDCHF: "USDCHF=X",
+  AUDUSD: "AUDUSD=X",
+  USDCAD: "USDCAD=X",
+  NZDUSD: "NZDUSD=X",
   XAUUSD: "GC=F",
   XAGUSD: "SI=F",
   USOIL: "CL=F",
