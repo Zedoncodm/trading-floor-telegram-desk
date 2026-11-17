@@ -1673,7 +1673,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <span class="card-title" id="activeChanTitle"># floor-general</span>
             <span style="font-size:11px;color:var(--fg-2);margin-left:8px">Flux institutionnel des 8 agents</span>
           </div>
-          <div id="pendingActionBanner"></div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <button type="button" id="btnChatAutoScroll" class="pill-btn auto-on" style="font-size:11px;padding:4px 10px" onclick="toggleChatAutoScroll()" title="Activer ou mettre en pause le défilement automatique vers le bas">Auto-défilement : ACTIF</button>
+            <div id="pendingActionBanner"></div>
+          </div>
         </div>
         <div id="chatMessages"></div>
         <div class="chat-input-bar">
@@ -2766,6 +2769,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       syncHudClearance();
       if (tab === 'desk') {
         resize3dCanvas();
+      }
+      if (tab === 'chat') {
+        setTimeout(function () { scrollChatToBottom(true); }, 30);
       }
       if (tab === 'charts') {
         setTimeout(function () { initChartTab(); }, 60);
@@ -4414,7 +4420,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var txt = (inp.value || '').trim();
       if (!txt) return;
       inp.value = '';
+      chatAutoScroll = true;
+      updateChatAutoScrollBtn();
       sendCmd(txt);
+      scrollChatToBottom(true);
     }
 
     function toggleExecutionMode() {
@@ -4474,13 +4483,59 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     // ==================== SALON ET CHAT ====================
+    var chatAutoScroll = true;
+    var lastChatRenderSig = '';
+    var chatScrollListenerAttached = false;
+
+    function updateChatAutoScrollBtn() {
+      var btn = document.getElementById('btnChatAutoScroll');
+      if (!btn) return;
+      btn.textContent = chatAutoScroll ? 'Auto-défilement : ACTIF' : 'Auto-défilement : PAUSE';
+      btn.classList.toggle('auto-on', chatAutoScroll);
+    }
+
+    function scrollChatToBottom(force) {
+      var host = document.getElementById('chatMessages');
+      if (!host) return;
+      if (!force && !chatAutoScroll) return;
+      host.scrollTop = host.scrollHeight;
+      requestAnimationFrame(function () {
+        var h = document.getElementById('chatMessages');
+        if (h && (force || chatAutoScroll)) h.scrollTop = h.scrollHeight;
+      });
+    }
+
+    function toggleChatAutoScroll() {
+      chatAutoScroll = !chatAutoScroll;
+      updateChatAutoScrollBtn();
+      if (chatAutoScroll) scrollChatToBottom(true);
+    }
+
+    function ensureChatScrollWatcher() {
+      if (chatScrollListenerAttached) return;
+      var host = document.getElementById('chatMessages');
+      if (!host) return;
+      chatScrollListenerAttached = true;
+      host.addEventListener('scroll', function () {
+        if (currentTab !== 'chat') return;
+        var distFromBottom = host.scrollHeight - host.scrollTop - host.clientHeight;
+        if (distFromBottom > 90 && chatAutoScroll) {
+          chatAutoScroll = false;
+          updateChatAutoScrollBtn();
+        } else if (distFromBottom <= 32 && !chatAutoScroll) {
+          chatAutoScroll = true;
+          updateChatAutoScrollBtn();
+        }
+      }, { passive: true });
+    }
+
     function selectChatChannel(ch) {
       activeChannel = ch;
       document.querySelectorAll('.chan-btn').forEach(function (b) {
         b.classList.toggle('active', b.getAttribute('data-chan') === ch);
       });
       document.getElementById('activeChanTitle').textContent = '# ' + ch;
-      renderChat();
+      renderChat(true);
     }
 
     function classifyMessageChannel(m) {
@@ -4505,11 +4560,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function toggleAgentFilter(id) {
       agentFilter = agentFilter === id ? null : id;
-      renderChat();
+      renderChat(true);
     }
 
-    function renderChat() {
+    function renderChat(forceScroll) {
       if (!deskState) return;
+      ensureChatScrollWatcher();
       var msgs = deskState.messages || [];
       var counts = { 'floor-general': msgs.length, 'risk-veto': 0, 'macro-alerts': 0, 'rl-optimizer': 0, 'sys-ops': 0, 'liquidity-l2': 0 };
       msgs.forEach(function (m) {
@@ -4550,8 +4606,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var host = document.getElementById('chatMessages');
       if (!host) return;
-      var wasBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 60;
-      host.innerHTML = filtered.slice(-80).map(function (m) {
+      var shown = filtered.slice(-80);
+      var lastItem = shown[shown.length - 1];
+      var sig = activeChannel + '|' + (agentFilter || '') + '|' + shown.length + '|' + (lastItem ? (lastItem.at + ':' + String(lastItem.text || '').length) : '');
+      if (sig === lastChatRenderSig && !forceScroll) return;
+      lastChatRenderSig = sig;
+      host.innerHTML = shown.map(function (m) {
         var ag = AGENTS.find(function (a) { return a.id === m.speaker; });
         var name = m.speaker === 'human' ? 'Opérateur Humain' : (ag ? ag.name : m.speaker);
         var short = m.speaker === 'human' ? 'HU' : (ag ? ag.short : 'AI');
@@ -4571,7 +4631,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           '</div></div>'
         );
       }).join('');
-      if (wasBottom) host.scrollTop = host.scrollHeight;
+      if (chatAutoScroll || forceScroll) {
+        scrollChatToBottom(Boolean(forceScroll));
+      }
     }
 
     // ==================== CHARTS, TRADINGVIEW, TIMEFRAMES & DESSIN (TAB 3) ====================
