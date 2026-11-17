@@ -947,8 +947,15 @@ export class TradingFloorDesk {
           const exitPx = t.mt5CurrentPrice ?? markPriceOf(this.state, t.asset, t.fillPrice ?? t.entry);
           const hitTp = t.direction === "long" ? exitPx >= t.target * 0.9995 : exitPx <= t.target * 1.0005;
           const hitSl = t.direction === "long" ? exitPx <= t.invalidation * 1.0005 : exitPx >= t.invalidation * 0.9995;
-          const reason: CloseReason = hitTp ? "target" : hitSl ? "invalidation" : "flatten";
-          await this.closeOpenTicket(t, exitPx, reason, now);
+          const mt5Loss = (t.mt5Profit !== undefined && t.mt5Profit < -0.5) || ticketPnlAt(t, exitPx) < 0;
+          const reason: CloseReason = hitTp ? "target" : (hitSl || mt5Loss) ? "invalidation" : "flatten";
+          await this.closeOpenTicket(
+            t,
+            reason === "invalidation" && hitSl ? t.invalidation : exitPx,
+            reason,
+            now,
+            t.mt5Profit,
+          );
           structuralChange = true;
         } else if (mt5State.tradeAllowed) {
           const ageMs = now - (t.filledAt ?? t.createdAt);
@@ -2203,16 +2210,12 @@ export class TradingFloorDesk {
         return;
       }
 
-      const allowMultiPositions = activeRegime === "hft_kamikaze" || currentAgg === "lagging_aggressive";
       const notCooledDown = (sym: string) => (this.state.cooldowns?.[sym] ?? 0) <= now;
-      const freeSnaps = snaps.filter((s) => {
-        if (!notCooledDown(s.symbol)) return false;
-        if (allowMultiPositions) return true;
-        return !this.state.tickets.some((t) => t.asset === s.symbol && (t.status === "open" || t.status === "pending"));
-      });
-      const pool = freeSnaps.length ? freeSnaps : snaps.filter((s) => notCooledDown(s.symbol));
+      const hasActiveTicket = (sym: string) =>
+        this.state.tickets.some((t) => t.asset === sym && (t.status === "open" || t.status === "pending"));
+      const pool = snaps.filter((s) => notCooledDown(s.symbol) && !hasActiveTicket(s.symbol));
       if (!pool.length) {
-        await this.say("analyst", "Tous les actifs sont en période de cooldown (5 min) ou déjà en position.");
+        await this.say("analyst", "Tous les actifs sont en période de cooldown ou déjà en position.");
         return;
       }
 
@@ -2248,7 +2251,8 @@ export class TradingFloorDesk {
         if (!idea) continue;
 
         // VÉRIFICATION STRICTE ANTI-DEATH-LOOP DIRECTIONNELLE
-        const dirCool = this.state.directionalCooldowns?.[candidate.symbol];
+        const dirKey = `${candidate.symbol}:${idea.dir}`;
+        const dirCool = this.state.directionalCooldowns?.[dirKey] ?? this.state.directionalCooldowns?.[candidate.symbol];
         if (dirCool && dirCool.until > now && dirCool.bannedDir === idea.dir) {
           const remMin = Math.ceil((dirCool.until - now) / 60_000);
           await this.say(
@@ -2792,11 +2796,16 @@ export class TradingFloorDesk {
     exitPrice: number,
     reason: CloseReason,
     now = Date.now(),
+    realizedOverridePnl?: number,
   ): Promise<void> {
     if (ticket.status !== "open") return;
     const rawPnl = ticketPnlAt(ticket, exitPrice);
     const exitFee = ticket.notional * 0.0004;
-    const netPnl = rawPnl - ticket.fees - exitFee;
+    const computedNet = rawPnl - ticket.fees - exitFee;
+    const netPnl =
+      typeof realizedOverridePnl === "number" && Number.isFinite(realizedOverridePnl) && realizedOverridePnl !== 0
+        ? realizedOverridePnl
+        : computedNet;
     const rMult = ticket.riskUsd > 0 ? netPnl / ticket.riskUsd : 0;
 
     ticket.status = "closed";
@@ -2820,25 +2829,48 @@ export class TradingFloorDesk {
 
     this.state.realizedPnl += netPnl;
     const isFastScalp = (this.state.settings?.regime === "hft_kamikaze") || (this.state.settings?.tradingStyle === "scalping");
-    const cooldownMs = isFastScalp ? 15_000 : 5 * 60_000;
+    const isStopOrLoss = reason === "invalidation" || reason === "adverse_selection" || reason === "drill" || netPnl < 0;
+
+    // Cooldown global de l'actif : 15s seulement sur gain ; minimum 3 min (5 min en swing) sur toute perte / SL
+    const cooldownMs = isStopOrLoss
+      ? (isFastScalp ? 3 * 60_000 : 5 * 60_000)
+      : (isFastScalp ? 15_000 : 5 * 60_000);
     this.state.cooldowns[ticket.asset] = now + cooldownMs;
 
-    // FIX DU DEATH LOOP : Si trade clôturé au Stop Loss (SL) ou perte <= -25€,
-    // interdiction stricte de reprendre dans la MÊME DIRECTION pendant au moins 15 minutes
+    // FIX DU DEATH LOOP : Dès qu'un trade touche un Stop Loss ou clôture en perte (< 0),
+    // interdiction stricte de reprendre dans la MÊME DIRECTION pendant 15 minutes (clé par actif+direction pour éviter le ping-pong)
     if (!this.state.directionalCooldowns) {
       this.state.directionalCooldowns = {};
     }
-    if (reason === "invalidation" || netPnl <= -20) {
-      const dirCooldownMs = 15 * 60_000; // 15 minutes minimum
+    if (isStopOrLoss) {
+      const dirCooldownMs = 15 * 60_000;
       const tDir = ticket.direction;
-      this.state.directionalCooldowns[ticket.asset] = {
+      const oppDir: Direction = tDir === "long" ? "short" : "long";
+      const dirKey = `${ticket.asset}:${tDir}`;
+      this.state.directionalCooldowns[dirKey] = {
         until: now + dirCooldownMs,
         bannedDir: tDir,
-        reason: `Stop Loss touché (${fmtSignedUsd(netPnl, 2)}). Cooldown directionnel ${tDir.toUpperCase()} 15 min actif.`,
+        reason: `Stop Loss / perte touchée (${fmtSignedUsd(netPnl, 2)}). Cooldown directionnel ${tDir.toUpperCase()} 15 min actif.`,
       };
+      // Compatibilité avec l'ancienne clé directe
+      this.state.directionalCooldowns[ticket.asset] = this.state.directionalCooldowns[dirKey];
+
+      // Si >= 2 pertes sur le même actif dans les 30 dernières minutes, verrouiller les deux directions 15 min
+      const recentAssetLosses = this.state.tickets.filter(
+        (t) => t.asset === ticket.asset && t.status === "closed" && (t.pnl ?? 0) < 0 && (t.closedAt ?? 0) >= now - 30 * 60_000,
+      ).length;
+      if (recentAssetLosses >= 2) {
+        this.state.directionalCooldowns[`${ticket.asset}:${oppDir}`] = {
+          until: now + dirCooldownMs,
+          bannedDir: oppDir,
+          reason: `${recentAssetLosses} pertes récentes sur ${ticket.asset}. Quarantaine complète 15 min.`,
+        };
+        this.state.cooldowns[ticket.asset] = now + dirCooldownMs;
+      }
+
       this.say(
         "risk",
-        `[ANTI-DEATH-LOOP] Stop Loss sur ${ticket.asset} (${tDir.toUpperCase()} ${fmtSignedUsd(netPnl, 2)}). Biais ${tDir.toUpperCase()} verrouillé pendant 15 min.`,
+        `[ANTI-DEATH-LOOP] Perte/SL sur ${ticket.asset} (${tDir.toUpperCase()} ${fmtSignedUsd(netPnl, 2)}). Biais ${tDir.toUpperCase()} verrouillé 15 min${recentAssetLosses >= 2 ? " (+ quarantaine totale de l'actif)" : ""}.`,
         "veto",
       ).catch(() => {});
     }

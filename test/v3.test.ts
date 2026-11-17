@@ -519,3 +519,74 @@ test("Phase 2-5: 20 themes, TradingView tools, ATR mini-chart, and dynamic risk/
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Anti-Death-Loop triggers directional & asset cooldowns on any SL or loss close and prevents ping-pong", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-deathloop-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "rl_policy_memory.json"), join(dir, "reviewer_reports.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+    desk.state.settings.regime = "hft_kamikaze";
+
+    const now = Date.now();
+    desk.state.tickets.push({
+      id: "TF-DL-01",
+      asset: "GBPUSD",
+      direction: "long",
+      playbook: "HFT_Kamikaze_FiatTarget",
+      engine: "HFT_Kamikaze_FiatTarget",
+      thesis: "Test SL long",
+      entry: 1.30,
+      invalidation: 1.298,
+      target: 1.305,
+      timeStopHours: 1,
+      notional: 20_000,
+      qty: 15_384,
+      riskUsd: 25,
+      riskPct: 0.0025,
+      exposurePct: 0.02,
+      binding: "risk",
+      producedBy: ["strategist"],
+      backtest: {
+        pass: true,
+        playbook: "HFT_Kamikaze_FiatTarget",
+        rules: "HFT SL/TP",
+        source: "unit-test",
+        inSample: { label: "IS", bars: 200, trades: 20, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.4, var95R: -1.1, maxDrawdownR: 2, deflatedSharpe: 0.7, pass: true },
+        outOfSample: { label: "OOS", bars: 100, trades: 10, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.3, var95R: -1.0, maxDrawdownR: 1.5, deflatedSharpe: 0.7, pass: true },
+      },
+      status: "open",
+      createdAt: now - 30_000,
+      expiresAt: now + 60_000,
+      filledAt: now - 25_000,
+      fillPrice: 1.30,
+      fees: 0,
+      funding: 0,
+    });
+
+    await (desk as unknown as {
+      closeOpenTicket: (t: unknown, exitPx: number, reason: string, ts: number, ov?: number) => Promise<void>;
+    }).closeOpenTicket(desk.state.tickets[0], 1.298, "invalidation", now, -25);
+
+    assert.ok((desk.state.cooldowns.GBPUSD ?? 0) >= now + 170_000, "Asset cooldown must be >= 3 min after SL even in hft_kamikaze");
+    assert.ok((desk.state.directionalCooldowns?.["GBPUSD:long"]?.until ?? 0) >= now + 14 * 60_000, "GBPUSD:long must be locked 15 min");
+
+    // Second loss on short must NOT erase GBPUSD:long ban
+    desk.state.tickets.push({
+      ...desk.state.tickets[0],
+      id: "TF-DL-02",
+      direction: "short",
+      status: "open",
+    });
+    await (desk as unknown as {
+      closeOpenTicket: (t: unknown, exitPx: number, reason: string, ts: number, ov?: number) => Promise<void>;
+    }).closeOpenTicket(desk.state.tickets[1], 1.302, "invalidation", now + 1000, -25);
+
+    assert.ok((desk.state.directionalCooldowns?.["GBPUSD:long"]?.until ?? 0) >= now + 14 * 60_000, "GBPUSD:long ban preserved after short loss");
+    assert.ok((desk.state.directionalCooldowns?.["GBPUSD:short"]?.until ?? 0) >= now + 14 * 60_000, "GBPUSD:short also locked 15 min");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

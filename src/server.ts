@@ -1,9 +1,13 @@
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import type { TradingFloorDesk } from "./desk.ts";
 import { Mt5CloudBridge } from "./mt5.ts";
 import type { AgentId, AgentPromptConfig, DeskRuntimeSettings } from "./types.ts";
 import { DASHBOARD_HTML } from "./ui.ts";
+
+const UI_BUILD_HASH = createHash("sha1").update(DASHBOARD_HTML).digest("hex").slice(0, 12);
+const SERVER_STARTED_AT = Date.now();
 
 function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -61,6 +65,12 @@ export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url
       }
       res.writeHead(404);
       res.end();
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/version") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: true, hash: UI_BUILD_HASH, uiLen: DASHBOARD_HTML.length, startedAt: SERVER_STARTED_AT }));
       return;
     }
 
