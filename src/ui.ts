@@ -1904,7 +1904,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           </div>
         </div>
 
-        <div class="glass-card">
+        <div class="glass-card" style="overflow-x:auto;min-width:0">
           <div class="card-hdr">
             <span class="card-title">Calendrier PnL Journalier</span>
             <div style="display:flex;align-items:center;gap:6px">
@@ -4510,9 +4510,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var sway = prefersReducedMotion ? 0 : Math.sin(clk * 0.14) * 0.08;
         var camAngle = yaw + sway + mouseParallaxX * 0.14;
         var effPitch = Math.max(0.18, Math.min(1.22, pitch + mouseParallaxY * 0.08));
-        camera3d.position.x = Math.sin(camAngle) * Math.cos(effPitch) * zoom;
-        camera3d.position.y = Math.sin(effPitch) * zoom;
-        camera3d.position.z = Math.cos(camAngle) * Math.cos(effPitch) * zoom;
+        var camX = Math.sin(camAngle) * Math.cos(effPitch) * zoom;
+        var camY = Math.sin(effPitch) * zoom;
+        var camZ = Math.cos(camAngle) * Math.cos(effPitch) * zoom;
+        camera3d.position.x = Math.max(-13.2, Math.min(13.2, camX));
+        camera3d.position.y = Math.max(0.8, Math.min(8.6, camY));
+        camera3d.position.z = Math.max(-10.2, Math.min(13.8, camZ));
         camera3d.lookAt(mouseParallaxX * 0.35, 0.25 + mouseParallaxY * -0.2, 0);
 
         if (!prefersReducedMotion) {
