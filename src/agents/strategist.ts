@@ -33,14 +33,15 @@ export class StrategistAgent {
     }
 
     const midPrice = (bestBid + bestAsk) / 2;
-    const expectedMicroMove = atr1m > 0 ? atr1m * 0.2 : midPrice * 0.0005;
+    const expectedMicroMove = atr1m > 0 ? Math.max(atr1m * 0.45, midPrice * 0.0020) : midPrice * 0.0020;
 
     // Combined momentum from L2 orderbook imbalance (-1 to +1), OFI Z-score, and 1-tick/short-term price drift
     const driftSignal = Math.tanh(momentumHint * 120);
     const momentum = orderbookImbalance * 0.5 + Math.tanh(ofiZScore) * 0.35 + driftSignal * 0.35;
 
-    // Long trigger: bid wall / positive imbalance / upward momentum
-    if (orderbookImbalance > 0.12 || ofiZScore > 0.8 || momentum > 0.05) {
+    // Require real orderflow / book edge (no weak noise triggers)
+    const hasLongEdge = momentum >= 0.16 && (orderbookImbalance >= 0.18 || ofiZScore >= 1.0);
+    if (hasLongEdge) {
       return {
         trigger: true,
         side: "long",
@@ -49,12 +50,13 @@ export class StrategistAgent {
         expectedMicroMove,
         imbalance: orderbookImbalance,
         momentumScore: Number(momentum.toFixed(3)),
-        thesis: `[HFT KAMIKAZE BARRAGE] Flux haussier sur ${symbol} (L2=${(orderbookImbalance * 100).toFixed(1)}%, OFI Z=${ofiZScore.toFixed(2)}, Mom=${momentum.toFixed(2)}) -> Tir d'ordre rapide LONG @ ${bestBid}.`,
+        thesis: `[HFT KAMIKAZE BARRAGE] Flux haussier confirmé sur ${symbol} (L2=${(orderbookImbalance * 100).toFixed(1)}%, OFI Z=${ofiZScore.toFixed(2)}, Mom=${momentum.toFixed(2)}) -> Tir d'ordre rapide LONG @ ${bestBid}.`,
       };
     }
 
     // Short trigger: ask wall / negative imbalance / downward momentum
-    if (orderbookImbalance < -0.12 || ofiZScore < -0.8 || momentum < -0.05) {
+    const hasShortEdge = momentum <= -0.16 && (orderbookImbalance <= -0.18 || ofiZScore <= -1.0);
+    if (hasShortEdge) {
       return {
         trigger: true,
         side: "short",
@@ -63,7 +65,7 @@ export class StrategistAgent {
         expectedMicroMove,
         imbalance: orderbookImbalance,
         momentumScore: Number(momentum.toFixed(3)),
-        thesis: `[HFT KAMIKAZE BARRAGE] Flux baissier sur ${symbol} (L2=${(orderbookImbalance * 100).toFixed(1)}%, OFI Z=${ofiZScore.toFixed(2)}, Mom=${momentum.toFixed(2)}) -> Tir d'ordre rapide SHORT @ ${bestAsk}.`,
+        thesis: `[HFT KAMIKAZE BARRAGE] Flux baissier confirmé sur ${symbol} (L2=${(orderbookImbalance * 100).toFixed(1)}%, OFI Z=${ofiZScore.toFixed(2)}, Mom=${momentum.toFixed(2)}) -> Tir d'ordre rapide SHORT @ ${bestAsk}.`,
       };
     }
 

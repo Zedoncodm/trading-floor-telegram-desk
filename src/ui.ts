@@ -1838,6 +1838,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </button>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <button id="btnPresetProPerf" class="pill-btn primary" onclick="applyRiskProfile('performance_pro')" title="Réglage optimal : Levier 20x · Risque 1.5 % · Stop 1.5x ATR · Cible 2.2R · Break-Even 50% ACTIF · Entraînement WFO+GRPO">Performance Pro (IA)</button>
         <button class="pill-btn" onclick="applyRiskProfile('prudent')" title="Levier 2x · Risque 1 % · Perte jour max 3 %">Prudent</button>
         <button class="pill-btn" onclick="applyRiskProfile('equilibre')" title="Levier 5x · Risque 2 % · Perte jour max 5 %">Équilibré</button>
         <button class="pill-btn" onclick="applyRiskProfile('agressif')" title="Levier 25x · Risque 3.5 % · Perte jour max 10 %">Agressif</button>
@@ -5780,7 +5781,49 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function applyRiskProfile(p) {
       markStrategyFormDirty();
-      if (p === 'conservative' || p === 'prudent') {
+      if (p === 'performance_pro') {
+        syncLevFromSlider(20);
+        setRiskMode('pct');
+        var rElP = document.getElementById('cfgRiskPct');
+        if (rElP) rElP.value = '1.5';
+        setSlMode('atr');
+        syncAtrInputs(1.50);
+        var dElP = document.getElementById('cfgDayLossMode');
+        if (dElP) dElP.value = 'pct';
+        toggleDayLossInputs();
+        var dpElP = document.getElementById('cfgDayLossPct');
+        if (dpElP) dpElP.value = '4.0';
+        var mtElP = document.getElementById('cfgMaxTradeLossMode');
+        if (mtElP) mtElP.value = 'pct';
+        var mvElP = document.getElementById('cfgMaxTradeLossVal');
+        if (mvElP) mvElP.value = '0';
+        setTpMode('rr');
+        var tpElP = document.getElementById('cfgTpVal');
+        if (tpElP) tpElP.value = '2.2';
+        var scElP = document.getElementById('cfgAutoStopLossChk');
+        if (scElP) scElP.checked = true;
+        syncProgressiveStopUi(true);
+        saveSettingsToServer({
+          regime: 'standard',
+          tradingStyle: 'daytrade',
+          autoPaperScalp: true,
+          executionMode: 'auto',
+          defaultLeverage: 20,
+          riskMode: 'pct',
+          maxRiskPct: 0.015,
+          slMode: 'atr',
+          fixedStopAtr: 1.50,
+          tpMode: 'rr',
+          tpVal: 2.2,
+          maxDayLossMode: 'pct',
+          maxDayLossPct: 0.04,
+          maxLossPerTradeVal: 0,
+          autoStopOnMaxLoss: true,
+          progressiveStopEnabled: true
+        });
+        fetch('/api/train', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ style: 'daytrade' }) }).catch(function () {});
+        sendCmd('scan');
+      } else if (p === 'conservative' || p === 'prudent') {
         syncLevFromSlider(2);
         setRiskMode('pct');
         var rEl = document.getElementById('cfgRiskPct');

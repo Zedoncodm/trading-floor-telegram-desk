@@ -424,11 +424,11 @@ export function runBacktestOnBars(
   const oosStart = Math.min(total - 10, splitIdx + embargoBars);
 
   const relaxed = Boolean(customParams.scalpRelaxed);
-  const min90 = relaxed ? Math.min(thresholds.minTrades90d ?? 2, 2) : (thresholds.minTrades90d ?? 5);
-  const minOos = relaxed ? Math.min(thresholds.minTradesOos ?? 1, 1) : (thresholds.minTradesOos ?? 2);
-  const minExp = relaxed ? -0.02 : (thresholds.minExpectancyR ?? 0.15);
-  const minPf = relaxed ? 0.92 : (thresholds.minProfitFactor ?? 1.2);
-  const minDsr = relaxed ? 0.2 : (thresholds.minDsr ?? 0.45);
+  const min90 = relaxed ? Math.min(thresholds.minTrades90d ?? 3, 3) : (thresholds.minTrades90d ?? 5);
+  const minOos = relaxed ? Math.min(thresholds.minTradesOos ?? 2, 2) : (thresholds.minTradesOos ?? 2);
+  const minExp = relaxed ? 0.05 : (thresholds.minExpectancyR ?? 0.15);
+  const minPf = relaxed ? 1.15 : (thresholds.minProfitFactor ?? 1.2);
+  const minDsr = relaxed ? 0.30 : (thresholds.minDsr ?? 0.45);
 
   let usedPlaybook = playbook;
   let isRes = evaluateSlice(
@@ -502,11 +502,11 @@ export function runBacktestOnBars(
       isRes = optIs;
       oosRes = optOos;
       pass = true;
-    } else if (relaxed && (optOos.window.trades >= 1 || optIs.window.trades >= 2)) {
+    } else if (relaxed && optIs.window.trades >= 3 && optOos.window.trades >= 2) {
       usedPlaybook = b.playbook;
       isRes = optIs;
       oosRes = optOos;
-      pass = (optIs.window.expectancyR > 0 || optOos.window.expectancyR > 0) && optOos.window.profitFactor >= 0.92;
+      pass = optIs.window.expectancyR >= 0 && optOos.window.expectancyR >= 0.05 && optOos.window.profitFactor >= 1.15;
     }
   }
 

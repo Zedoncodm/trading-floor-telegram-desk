@@ -430,6 +430,7 @@ test("DASHBOARD_HTML compiles inline JS cleanly and renders 8 agents & all 5 V3 
     "makeHumanArm",
     "makeHumanLeg",
     "Simulation par trade",
+    "btnPresetProPerf",
   ]) {
     assert.ok(DASHBOARD_HTML.includes(needle), `Missing UI element: ${needle}`);
   }
@@ -723,6 +724,27 @@ test("Equity curve retains 60+ days of history without wiping on recordEquityPoi
     assert.ok(desk.state.curve.length >= 2880, `Expected full 60-day curve retention, got ${desk.state.curve.length}`);
     const oldestAgeDays = (now - desk.state.curve[0].t) / 86_400_000;
     assert.ok(oldestAgeDays >= 59.5, `Expected oldest retained point >= 59.5 days old, got ${oldestAgeDays.toFixed(1)}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Strict profitability guard: scalpRelaxed never passes negative expectancy and Kamikaze sizing caps excessive fees", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-profit-"));
+  try {
+    const store = new DeskStore(dir);
+    const state = store.loadOrCreate(50_000, "Europe/Paris", ["BTCUSDT"], 15);
+    state.settings.regime = "hft_kamikaze";
+    const hftSized = computeLeveragedSizing(state, 90_000, 89_900, undefined, {
+      side: "long",
+      leverageFactor: 500,
+      playbook: "HFT_Kamikaze_FiatTarget",
+      targetFiatProfit: 75,
+      atr1m: 150,
+    });
+    assert.equal(hftSized.ok, true);
+    const estRoundTripFees = (hftSized.notional ?? 0) * 0.0008;
+    assert.ok(estRoundTripFees <= 75 * 0.40, `Expected fee-safe Kamikaze sizing, got fees $${estRoundTripFees.toFixed(2)} for $75 target`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

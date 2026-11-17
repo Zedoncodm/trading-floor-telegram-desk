@@ -445,14 +445,19 @@ export function computeLeveragedSizing(
       availableMargin,
     );
     if (hftSizing.ok && hftSizing.requiredNotional > 0) {
+      // Garde-fou frais HFT : limite le notionnel pour éviter que les frais aller-retour (0.08%) ne dépassent ~35% de la cible de gain
+      const maxFeeSafeNotional = Math.max(15_000, (targetFiat * 0.35) / 0.0008);
+      const safeNotional = Math.min(hftSizing.requiredNotional, maxFeeSafeNotional);
+      const safeQty = entryPrice > 0 ? Number((safeNotional / entryPrice).toFixed(6)) : hftSizing.lotSize;
+      const safeMargin = safeNotional / Math.max(1, hftSizing.leverage);
       return {
         ok: true,
-        notional: hftSizing.requiredNotional,
-        qty: hftSizing.lotSize,
+        notional: safeNotional,
+        qty: safeQty,
         riskUsd: hftSizing.targetFiatProfit,
-        riskCapital: hftSizing.requiredMargin,
-        riskPct: hftSizing.requiredMargin / Math.max(eq, 1),
-        exposurePct: hftSizing.requiredNotional / Math.max(eq, 1),
+        riskCapital: Number(safeMargin.toFixed(2)),
+        riskPct: safeMargin / Math.max(eq, 1),
+        exposurePct: safeNotional / Math.max(eq, 1),
         binding: "risk",
         stopPct: hftSizing.expectedPriceMovePct,
         leverage: hftSizing.leverage,
@@ -2264,7 +2269,12 @@ export class TradingFloorDesk {
         check: ReturnType<typeof verifySecondSource>;
       } | null = null;
 
+      let bestAlphaScore = -Infinity;
+      const candidatesEvaluatedLimit = Math.min(orderedPool.length, 10);
+      let evaluatedCount = 0;
+
       for (const candidate of orderedPool) {
+        if (evaluatedCount >= candidatesEvaluatedLimit) break;
         if (!candidate || !candidate.primary) continue;
         const check = verifySecondSource(candidate);
         if (!check.verified && trigger === "scheduled" && !isScalp) {
@@ -2312,6 +2322,7 @@ export class TradingFloorDesk {
           }
         }
         if (activeBars.length < 60) continue;
+        evaluatedCount++;
 
         const thresholds = {
           minTrades90d: this.state.settings.minBacktestTrades90d,
@@ -2355,15 +2366,25 @@ export class TradingFloorDesk {
         }
 
         if (bt.pass) {
-          selectedSnap = candidate;
-          selectedBars = activeBars;
-          selectedBt = bt;
-          selectedPlaybook = activePlaybook;
-          selectedDir = idea.dir;
-          selectedThesis = idea.thesis;
-          selectedIdea = idea;
-          selectedCheck = check;
-          break;
+          const curRegime = idea.regime ?? "MEAN_REVERTING";
+          const rlWeight = this.grpo.getStrategyWeight(curRegime, activePlaybook);
+          const alphaScore =
+            bt.outOfSample.expectancyR * 1.4 +
+            Math.min(2, Math.max(0, bt.outOfSample.profitFactor - 1)) * 0.6 +
+            (bt.outOfSample.deflatedSharpe ?? 0.5) * 0.8 +
+            rlWeight * 0.75 +
+            (idea.fomoBoostApplied ?? 0);
+          if (alphaScore > bestAlphaScore) {
+            bestAlphaScore = alphaScore;
+            selectedSnap = candidate;
+            selectedBars = activeBars;
+            selectedBt = bt;
+            selectedPlaybook = activePlaybook;
+            selectedDir = idea.dir;
+            selectedThesis = idea.thesis;
+            selectedIdea = idea;
+            selectedCheck = check;
+          }
         } else if (!fallbackKilled) {
           fallbackKilled = { snap: candidate, bt, playbook: activePlaybook, check };
         }
