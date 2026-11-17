@@ -3100,284 +3100,426 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function buildDistinctAgentAvatar(ag, col, neonMat) {
       var avatar = new THREE.Group();
-      var darkSuit = new THREE.MeshPhysicalMaterial({ color: 0x111827, metalness: 0.45, roughness: 0.28, clearcoat: 0.85 });
-      var secondaryMat = new THREE.MeshPhysicalMaterial({ color: col, metalness: 0.35, roughness: 0.22, clearcoat: 0.9 });
-      var whiteGlow = new THREE.MeshBasicMaterial({ color: 0xf8fafc, transparent: true, opacity: 0.9 });
-      var headGroup = new THREE.Group();
       var armL = null;
       var armR = null;
       var legL = null;
       var legR = null;
+      var headGroup = null;
       var propGroup = null;
 
-      function attachLegs(yBase, spreadX) {
-        var pL = new THREE.Group();
-        pL.position.set(-spreadX, yBase, 0);
-        var mL = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.38, 10), darkSuit);
-        mL.position.y = -0.19;
-        pL.add(mL);
-        var pR = new THREE.Group();
-        pR.position.set(spreadX, yBase, 0);
-        var mR = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.055, 0.38, 10), darkSuit);
-        mR.position.y = -0.19;
-        pR.add(mR);
-        avatar.add(pL);
-        avatar.add(pR);
-        return [pL, pR];
+      // Rich realistic human character configs per agent (each with unique skin, hair, outfit, footwear & handheld prop)
+      var OUTFITS = {
+        analyst: {
+          skin: 0xf3cbb0, hair: 0x4a3121, top: 0x1e293b, shirt: 0xe2e8f0, pants: 0xc2b29b, shoes: 0x4b2e1e,
+          tie: null, style: 'trench', hairStyle: 'tousled', glasses: true, eyeCol: 0x3b82f6
+        },
+        strategist: {
+          skin: 0xe4b28a, hair: 0x1a1a24, top: 0x27272a, shirt: 0xf8fafc, pants: 0x18181b, shoes: 0x111111,
+          tie: 0xdc2626, style: 'suit', hairStyle: 'parted_beard', glasses: false, eyeCol: 0x78350f
+        },
+        lead: {
+          skin: 0xeebfa1, hair: 0x6b3a24, top: 0x0f766e, shirt: 0xfef3c7, pants: 0x1e293b, shoes: 0x2b1d16,
+          tie: null, style: 'vest', hairStyle: 'ponytail_beret', glasses: false, eyeCol: 0x059669
+        },
+        execution: {
+          skin: 0xd99b72, hair: 0x0f172a, top: 0x064e3b, shirt: 0x10b981, pants: 0x111827, shoes: 0x10b981,
+          tie: null, style: 'bomber', hairStyle: 'sport_ponytail', glasses: false, eyeCol: 0x10b981
+        },
+        risk: {
+          skin: 0x9c6442, hair: 0x121216, top: 0x7f1d1d, shirt: 0x334155, pants: 0x1f2937, shoes: 0x292524,
+          tie: null, style: 'utility', hairStyle: 'fade', glasses: false, eyeCol: 0x451a03
+        },
+        reviewer: {
+          skin: 0xf6d5be, hair: 0x334155, top: 0xb45309, shirt: 0xf1f5f9, pants: 0x1e293b, shoes: 0x5c3a21,
+          tie: null, style: 'cardigan', hairStyle: 'bob', glasses: false, eyeCol: 0x4f46e5
+        },
+        hunter: {
+          skin: 0xc68b61, hair: 0xfbbf24, top: 0x312e81, shirt: 0x1e1b4b, pants: 0x0f172a, shoes: 0xf59e0b,
+          tie: null, style: 'hoodie', hairStyle: 'spiky_dj', glasses: false, eyeCol: 0xd97706
+        },
+        sentinel: {
+          skin: 0xe9bfa4, hair: 0x1f2937, top: 0xe2e8f0, shirt: 0x0f766e, pants: 0x334155, shoes: 0x06b6d4,
+          tie: null, style: 'labcoat', hairStyle: 'twin_buns', glasses: false, eyeCol: 0x0d9488
+        }
+      };
+
+      var cfg = OUTFITS[ag.id] || OUTFITS.analyst;
+      var skinMat = new THREE.MeshStandardMaterial({ color: cfg.skin, roughness: 0.62, metalness: 0.04 });
+      var hairMat = new THREE.MeshStandardMaterial({ color: cfg.hair, roughness: 0.72, metalness: 0.08 });
+      var topMat = new THREE.MeshStandardMaterial({ color: cfg.top, roughness: 0.58, metalness: 0.10 });
+      var shirtMat = new THREE.MeshStandardMaterial({ color: cfg.shirt, roughness: 0.68, metalness: 0.05 });
+      var pantsMat = new THREE.MeshStandardMaterial({ color: cfg.pants, roughness: 0.70, metalness: 0.06 });
+      var shoeMat = new THREE.MeshStandardMaterial({ color: cfg.shoes, roughness: 0.45, metalness: 0.15 });
+      var soleMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.6 });
+      var beltMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.4 });
+      var buckleMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.85, roughness: 0.2 });
+      var accentTrimMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.45, roughness: 0.35 });
+
+      var isBroad = ag.id === 'risk' || ag.id === 'strategist';
+      var isSlim = ag.id === 'lead' || ag.id === 'reviewer' || ag.id === 'execution' || ag.id === 'sentinel';
+      var chestW = isBroad ? 0.46 : isSlim ? 0.36 : 0.40;
+      var chestD = isBroad ? 0.26 : 0.21;
+      var hipW = isBroad ? 0.39 : 0.34;
+      var legSpread = isBroad ? 0.125 : 0.105;
+
+      // 1. Pelvis, Belt & Gold/Chrome Buckle
+      var pelvis = new THREE.Mesh(new THREE.BoxGeometry(hipW, 0.15, 0.20), pantsMat);
+      pelvis.position.y = 0.82;
+      pelvis.castShadow = true;
+      avatar.add(pelvis);
+
+      var belt = new THREE.Mesh(new THREE.BoxGeometry(hipW + 0.02, 0.055, 0.215), beltMat);
+      belt.position.y = 0.89;
+      avatar.add(belt);
+      var buckle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.03), buckleMat);
+      buckle.position.set(0, 0.89, 0.11);
+      avatar.add(buckle);
+
+      // 2. Sculpted Human Torso + Tailored Garment Layers
+      var torso = new THREE.Mesh(new THREE.CylinderGeometry(chestW * 0.56, hipW * 0.48, 0.50, 14), topMat);
+      torso.scale.set(1.0, 1.0, chestD / (chestW * 0.55));
+      torso.position.y = 1.15;
+      torso.castShadow = true;
+      avatar.add(torso);
+
+      // Shirt V-front / collar
+      var shirtV = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.26, 0.04), shirtMat);
+      shirtV.position.set(0, 1.24, chestD * 0.48);
+      avatar.add(shirtV);
+
+      var collarRing = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.06, 14), shirtMat);
+      collarRing.position.set(0, 1.40, 0);
+      avatar.add(collarRing);
+
+      // Outfit-specific garment details (lapels, ties, aprons, bomber stripes, lab pockets, hoodie strings)
+      if (cfg.tie) {
+        var tieMesh = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.28, 4), new THREE.MeshStandardMaterial({ color: cfg.tie, roughness: 0.4 }));
+        tieMesh.rotation.x = Math.PI;
+        tieMesh.position.set(0, 1.18, chestD * 0.54);
+        avatar.add(tieMesh);
+      }
+      if (cfg.style === 'suit' || cfg.style === 'trench' || cfg.style === 'cardigan') {
+        var lapelL = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.30, 0.03), topMat);
+        lapelL.position.set(-0.08, 1.23, chestD * 0.51);
+        lapelL.rotation.z = 0.20;
+        var lapelR = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.30, 0.03), topMat);
+        lapelR.position.set(0.08, 1.23, chestD * 0.51);
+        lapelR.rotation.z = -0.20;
+        avatar.add(lapelL);
+        avatar.add(lapelR);
+      }
+      if (cfg.style === 'trench' || cfg.style === 'labcoat') {
+        var coatSkirt = new THREE.Mesh(new THREE.CylinderGeometry(hipW * 0.52, hipW * 0.62, 0.36, 14, 1, true, 0.4, Math.PI * 1.75), topMat);
+        coatSkirt.position.y = 0.72;
+        coatSkirt.material.side = THREE.DoubleSide;
+        avatar.add(coatSkirt);
+      }
+      if (cfg.style === 'vest') {
+        // Barista half-apron sash
+        var apron = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.04), new THREE.MeshStandardMaterial({ color: 0x7c2d12, roughness: 0.7 }));
+        apron.position.set(0, 0.76, 0.11);
+        avatar.add(apron);
+      }
+      if (cfg.style === 'bomber' || cfg.style === 'hoodie') {
+        var pocket = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.11, 0.03), accentTrimMat);
+        pocket.position.set(0, 1.00, chestD * 0.53);
+        avatar.add(pocket);
+        if (cfg.style === 'hoodie') {
+          var backHood = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.16), topMat);
+          backHood.position.set(0, 1.38, -0.14);
+          avatar.add(backHood);
+        }
+      }
+      if (cfg.style === 'utility') {
+        var chestBadge = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.14, 0.03), accentTrimMat);
+        chestBadge.position.set(0.11, 1.24, chestD * 0.53);
+        avatar.add(chestBadge);
       }
 
-      if (ag.id === 'analyst') {
-        // Léo : Chercheur grand et élancé avec manteau flottant, grandes lunettes holo et tablette orbitale
-        var coat = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.34, 0.96, 16), darkSuit);
-        coat.position.y = 0.72;
-        coat.castShadow = true;
-        avatar.add(coat);
-        var scarf = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.055, 10, 20), neonMat);
-        scarf.rotation.x = Math.PI / 2;
-        scarf.position.y = 1.18;
-        avatar.add(scarf);
-        headGroup.position.set(0, 1.42, 0);
-        var hAnal = new THREE.Mesh(new THREE.SphereGeometry(0.22, 22, 22), secondaryMat);
-        headGroup.add(hAnal);
-        // Oversized glowing round glasses
-        var glassL = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.018, 8, 20), whiteGlow);
-        glassL.position.set(-0.08, 0.02, 0.21);
-        var glassR = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.018, 8, 20), whiteGlow);
-        glassR.position.set(0.08, 0.02, 0.21);
-        headGroup.add(glassL);
-        headGroup.add(glassR);
-        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
-        armL.position.set(-0.28, 0.92, 0.05);
-        armL.rotation.z = 0.28;
-        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
-        armR.position.set(0.28, 0.92, 0.10);
-        armR.rotation.z = -0.35;
-        // Orbiting holo-tablet
-        propGroup = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.20, 0.03), neonMat);
-        propGroup.position.set(0.45, 1.05, 0.28);
-        avatar.add(propGroup);
-        var legs = attachLegs(0.36, 0.11);
-        legL = legs[0]; legR = legs[1];
-      } else if (ag.id === 'strategist') {
-        // Marc : Architecte héroïque avec épaulettes géométriques, couronne et pièce d'échecs flottante
-        var chestSt = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.56, 0.28), darkSuit);
-        chestSt.position.y = 0.78;
-        chestSt.castShadow = true;
-        avatar.add(chestSt);
-        var crest = new THREE.Mesh(new THREE.OctahedronGeometry(0.14, 0), neonMat);
-        crest.position.set(0, 0.85, 0.16);
-        avatar.add(crest);
-        headGroup.position.set(0, 1.28, 0);
-        var hStrat = new THREE.Mesh(new THREE.DodecahedronGeometry(0.22, 0), secondaryMat);
-        headGroup.add(hStrat);
-        var crown = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.035, 8, 6), neonMat);
-        crown.rotation.x = Math.PI / 2;
-        crown.position.y = 0.14;
-        headGroup.add(crown);
-        armL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.36, 0.11), secondaryMat);
-        armL.position.set(-0.32, 0.78, 0);
-        armR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.36, 0.11), secondaryMat);
-        armR.position.set(0.32, 0.78, 0);
-        // Floating chess knight/octahedron companion
-        propGroup = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), neonMat);
-        propGroup.position.set(-0.52, 1.32, 0.18);
-        avatar.add(propGroup);
-        var legsSt = attachLegs(0.42, 0.13);
-        legL = legsSt[0]; legR = legsSt[1];
-      } else if (ag.id === 'lead') {
-        // Aria : Capitaine / Barista avec béret incliné, grande cape et tasse d'espresso flottante
-        var dressLead = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.42, 0.88, 20), darkSuit);
-        dressLead.position.y = 0.62;
-        dressLead.castShadow = true;
-        avatar.add(dressLead);
-        headGroup.position.set(0, 1.24, 0);
-        var hLead = new THREE.Mesh(new THREE.SphereGeometry(0.22, 22, 22), secondaryMat);
-        headGroup.add(hLead);
-        var beret = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.21, 0.09, 20), neonMat);
-        beret.position.set(0.05, 0.21, 0);
-        beret.rotation.z = -0.22;
+      // 3. Sculpted Articulated Legs + Knees + Detailed Footwear (trousers + shoes with soles)
+      function makeHumanLeg(xPos) {
+        var hipPivot = new THREE.Group();
+        hipPivot.position.set(xPos, 0.78, 0);
+
+        var thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.066, 0.38, 12), pantsMat);
+        thigh.position.y = -0.19;
+        thigh.castShadow = true;
+        hipPivot.add(thigh);
+
+        var shin = new THREE.Mesh(new THREE.CylinderGeometry(0.064, 0.052, 0.36, 12), pantsMat);
+        shin.position.y = -0.54;
+        shin.castShadow = true;
+        hipPivot.add(shin);
+
+        var shoe = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.075, 0.21), shoeMat);
+        shoe.position.set(0, -0.735, 0.04);
+        shoe.castShadow = true;
+        hipPivot.add(shoe);
+
+        var sole = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.025, 0.22), soleMat);
+        sole.position.set(0, -0.775, 0.04);
+        hipPivot.add(sole);
+
+        avatar.add(hipPivot);
+        return hipPivot;
+      }
+      legL = makeHumanLeg(-legSpread);
+      legR = makeHumanLeg(legSpread);
+
+      // 4. Sculpted Articulated Arms + Sleeves + Skin Hands
+      function makeHumanArm(sideSign) {
+        var shPivot = new THREE.Group();
+        shPivot.position.set(sideSign * (chestW * 0.56 + 0.05), 1.34, 0);
+
+        var shoulderCap = new THREE.Mesh(new THREE.SphereGeometry(0.072, 12, 12), topMat);
+        shPivot.add(shoulderCap);
+
+        var upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.060, 0.052, 0.26, 10), topMat);
+        upperArm.position.y = -0.13;
+        upperArm.castShadow = true;
+        shPivot.add(upperArm);
+
+        var forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.050, 0.042, 0.24, 10), topMat);
+        forearm.position.y = -0.37;
+        forearm.castShadow = true;
+        shPivot.add(forearm);
+
+        var cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.046, 0.035, 10), shirtMat);
+        cuff.position.y = -0.49;
+        shPivot.add(cuff);
+
+        // Human skin hand + thumb silhouette
+        var handPalm = new THREE.Mesh(new THREE.SphereGeometry(0.048, 10, 10), skinMat);
+        handPalm.scale.set(0.85, 1.15, 0.72);
+        handPalm.position.set(0, -0.54, 0.01);
+        shPivot.add(handPalm);
+
+        var thumb = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.045, 0.022), skinMat);
+        thumb.position.set(-sideSign * 0.04, -0.53, 0.03);
+        shPivot.add(thumb);
+
+        avatar.add(shPivot);
+        return shPivot;
+      }
+      armL = makeHumanArm(-1);
+      armR = makeHumanArm(1);
+
+      // 5. Realistic Neck & Human Face (Eyes, Irises, Brows, Nose, Ears, Smile, Distinct Hairstyles)
+      var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.078, 0.13, 12), skinMat);
+      neck.position.y = 1.44;
+      avatar.add(neck);
+
+      headGroup = new THREE.Group();
+      headGroup.position.set(0, 1.62, 0);
+
+      var skull = new THREE.Mesh(new THREE.SphereGeometry(0.175, 24, 24), skinMat);
+      skull.scale.set(0.92, 1.06, 0.96);
+      skull.castShadow = true;
+      headGroup.add(skull);
+
+      // Ears
+      var earGeo = new THREE.SphereGeometry(0.038, 10, 10);
+      var earL = new THREE.Mesh(earGeo, skinMat);
+      earL.scale.set(0.5, 1.1, 0.7);
+      earL.position.set(-0.16, -0.01, 0);
+      var earR = new THREE.Mesh(earGeo, skinMat);
+      earR.scale.set(0.5, 1.1, 0.7);
+      earR.position.set(0.16, -0.01, 0);
+      headGroup.add(earL);
+      headGroup.add(earR);
+
+      // Nose bridge
+      var noseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.048, 0.038), skinMat);
+      noseMesh.position.set(0, -0.015, 0.172);
+      headGroup.add(noseMesh);
+
+      // Eyes (Sclera + Colored Iris + Pupil + Eyebrows)
+      var scleraMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
+      var irisMat = new THREE.MeshBasicMaterial({ color: cfg.eyeCol });
+      var pupilMat = new THREE.MeshBasicMaterial({ color: 0x09090b });
+      [-0.062, 0.062].forEach(function (ex) {
+        var eyeW = new THREE.Mesh(new THREE.SphereGeometry(0.028, 10, 10), scleraMat);
+        eyeW.scale.set(1.0, 0.85, 0.6);
+        eyeW.position.set(ex, 0.025, 0.148);
+        headGroup.add(eyeW);
+
+        var iris = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 10), irisMat);
+        iris.position.set(ex, 0.025, 0.162);
+        headGroup.add(iris);
+
+        var pup = new THREE.Mesh(new THREE.SphereGeometry(0.010, 8, 8), pupilMat);
+        pup.position.set(ex, 0.025, 0.170);
+        headGroup.add(pup);
+
+        var brow = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.014, 0.018), hairMat);
+        brow.position.set(ex, 0.068, 0.155);
+        headGroup.add(brow);
+      });
+
+      // Warm mouth / smile
+      var mouthMesh = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.014, 0.015), new THREE.MeshBasicMaterial({ color: 0xb91c1c }));
+      mouthMesh.position.set(0, -0.075, 0.152);
+      headGroup.add(mouthMesh);
+
+      // Hair Cap & Custom Character Hairstyles / Accessories
+      var hairCap = new THREE.Mesh(
+        new THREE.SphereGeometry(0.184, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.58),
+        hairMat
+      );
+      hairCap.position.y = 0.022;
+      hairCap.rotation.x = -0.22;
+      headGroup.add(hairCap);
+
+      if (cfg.hairStyle === 'tousled') {
+        var bangs = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.065, 0.10), hairMat);
+        bangs.position.set(0, 0.125, 0.10);
+        bangs.rotation.z = -0.08;
+        headGroup.add(bangs);
+      } else if (cfg.hairStyle === 'parted_beard') {
+        var hairTop = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.24), hairMat);
+        hairTop.position.set(0, 0.175, 0.01);
+        headGroup.add(hairTop);
+        var beard = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.08), hairMat);
+        beard.position.set(0, -0.12, 0.10);
+        headGroup.add(beard);
+      } else if (cfg.hairStyle === 'ponytail_beret') {
+        var pTail = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.035, 0.24, 10), hairMat);
+        pTail.position.set(0, 0.02, -0.20);
+        pTail.rotation.x = 0.45;
+        headGroup.add(pTail);
+        var beret = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.17, 0.07, 18), new THREE.MeshStandardMaterial({ color: 0x9f1239, roughness: 0.7 }));
+        beret.position.set(0.03, 0.17, -0.02);
+        beret.rotation.z = -0.18;
         headGroup.add(beret);
-        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.34, 10), neonMat);
-        armL.position.set(-0.33, 0.82, 0.04);
-        armL.rotation.z = 0.32;
-        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.045, 0.34, 10), neonMat);
-        armR.position.set(0.33, 0.82, 0.04);
-        armR.rotation.z = -0.32;
-        // Floating espresso mug
-        propGroup = new THREE.Group();
-        var mug = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.09, 0.16, 14), whiteGlow);
-        var coffeeTop = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.02, 14), neonMat);
-        coffeeTop.position.y = 0.075;
-        propGroup.add(mug);
-        propGroup.add(coffeeTop);
-        propGroup.position.set(0.50, 1.05, 0.20);
-        avatar.add(propGroup);
-        var legsL = attachLegs(0.32, 0.12);
-        legL = legsL[0]; legR = legsL[1];
-      } else if (ag.id === 'execution') {
-        // Kira : Sprinter Cyber-Skate penché en avant, jetpack dorsal double et casque profilé
-        var aeroTorso = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.15, 0.56, 14), secondaryMat);
-        aeroTorso.position.y = 0.72;
-        aeroTorso.rotation.x = 0.22;
-        avatar.add(aeroTorso);
-        // Twin Jetpack cones
-        var jetL = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.34, 12), neonMat);
-        jetL.rotation.x = Math.PI - 0.3;
-        jetL.position.set(-0.14, 0.75, -0.22);
-        var jetR = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.34, 12), neonMat);
-        jetR.rotation.x = Math.PI - 0.3;
-        jetR.position.set(0.14, 0.75, -0.22);
-        avatar.add(jetL);
-        avatar.add(jetR);
-        headGroup.position.set(0, 1.15, 0.08);
-        var hExec = new THREE.Mesh(new THREE.SphereGeometry(0.21, 20, 20), darkSuit);
-        headGroup.add(hExec);
-        var aeroFin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.38), neonMat);
-        aeroFin.position.set(0, 0.18, -0.06);
-        headGroup.add(aeroFin);
-        var speedVisor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.14), neonMat);
-        speedVisor.position.set(0, 0.02, 0.16);
-        headGroup.add(speedVisor);
-        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.32, 10), neonMat);
-        armL.position.set(-0.27, 0.76, 0.06);
-        armL.rotation.x = -0.35;
-        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.32, 10), neonMat);
-        armR.position.set(0.27, 0.76, 0.06);
-        armR.rotation.x = -0.35;
-        var legsEx = attachLegs(0.42, 0.11);
-        legL = legsEx[0]; legR = legsEx[1];
-        // Hover-skates
-        var skL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.05, 0.28), neonMat);
-        skL.position.set(0, -0.37, 0.04);
-        legL.add(skL);
-        var skR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.05, 0.28), neonMat);
-        skR.position.set(0, -0.37, 0.04);
-        legR.add(skR);
-      } else if (ag.id === 'risk') {
-        // Titan : Gardien blindé massif, larges épaulières et bouclier hexagonal lumineux
-        var heavyBody = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.66, 0.38), darkSuit);
-        heavyBody.position.y = 0.78;
-        heavyBody.castShadow = true;
-        avatar.add(heavyBody);
-        var pauldronL = new THREE.Mesh(new THREE.SphereGeometry(0.20, 14, 14), secondaryMat);
-        pauldronL.position.set(-0.38, 1.02, 0);
-        var pauldronR = new THREE.Mesh(new THREE.SphereGeometry(0.20, 14, 14), secondaryMat);
-        pauldronR.position.set(0.38, 1.02, 0);
-        avatar.add(pauldronL);
-        avatar.add(pauldronR);
-        headGroup.position.set(0, 1.28, 0);
-        var hRisk = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.30, 0.32), secondaryMat);
-        headGroup.add(hRisk);
-        var slit = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.05), whiteGlow);
-        slit.position.set(0, 0.02, 0.16);
-        headGroup.add(slit);
-        armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.14), darkSuit);
-        armL.position.set(-0.42, 0.74, 0.06);
-        // Hexagonal glowing shield attached to left arm
-        propGroup = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.05, 6), neonMat);
-        propGroup.rotation.z = Math.PI / 2;
-        propGroup.rotation.y = 0.25;
-        propGroup.position.set(-0.54, 0.78, 0.22);
-        avatar.add(propGroup);
-        armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.14), darkSuit);
-        armR.position.set(0.42, 0.74, 0.06);
-        var legsRk = attachLegs(0.44, 0.18);
-        legL = legsRk[0]; legR = legsRk[1];
-      } else if (ag.id === 'reviewer') {
-        // Sora : Archiviste avec capuche ronde, sacoche dorsale et appareil photo flottant
-        var robe = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.36, 0.80, 16), darkSuit);
-        robe.position.y = 0.64;
-        avatar.add(robe);
-        var backpack = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.34, 0.18), secondaryMat);
-        backpack.position.set(0, 0.76, -0.22);
-        avatar.add(backpack);
-        headGroup.position.set(0, 1.18, 0);
-        var hood = new THREE.Mesh(new THREE.SphereGeometry(0.27, 18, 18), darkSuit);
-        hood.scale.set(1.05, 1.05, 1.1);
-        headGroup.add(hood);
-        var faceInner = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 16), secondaryMat);
-        faceInner.position.set(0, 0, 0.08);
-        headGroup.add(faceInner);
-        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.30, 10), neonMat);
-        armL.position.set(-0.30, 0.76, 0.05);
-        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.30, 10), neonMat);
-        armR.position.set(0.30, 0.76, 0.05);
-        // Floating retro camera rig
-        propGroup = new THREE.Group();
-        var camBody = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.12), secondaryMat);
-        var camLens = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.10, 12), whiteGlow);
-        camLens.rotation.x = Math.PI / 2;
-        camLens.position.z = 0.09;
-        propGroup.add(camBody);
-        propGroup.add(camLens);
-        propGroup.position.set(0.46, 1.12, 0.24);
-        avatar.add(propGroup);
-        var legsRv = attachLegs(0.30, 0.11);
-        legL = legsRv[0]; legR = legsRv[1];
-      } else if (ag.id === 'hunter') {
-        // Vex : DJ nocturne avec grand casque audio lumineux et antennes sonar
-        var jacket = new THREE.Mesh(new THREE.ConeGeometry(0.30, 0.78, 12), darkSuit);
-        jacket.position.y = 0.68;
-        avatar.add(jacket);
-        headGroup.position.set(0, 1.18, 0);
-        var hHunt = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 18), secondaryMat);
-        headGroup.add(hHunt);
-        // Studio Headphones
-        var band = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.032, 8, 24, Math.PI), neonMat);
-        headGroup.add(band);
-        var cupL = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 14), whiteGlow);
-        cupL.rotation.z = Math.PI / 2;
-        cupL.position.set(-0.24, 0, 0);
-        var cupR = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.07, 14), whiteGlow);
-        cupR.rotation.z = Math.PI / 2;
-        cupR.position.set(0.24, 0, 0);
-        headGroup.add(cupL);
-        headGroup.add(cupR);
-        // Spiky DJ radar ears
-        var spL = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.22, 6), neonMat);
-        spL.position.set(-0.15, 0.24, 0);
-        var spR = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.22, 6), neonMat);
-        spR.position.set(0.15, 0.24, 0);
-        headGroup.add(spL);
-        headGroup.add(spR);
-        armL = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
-        armL.position.set(-0.30, 0.74, 0.04);
-        armR = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 10), neonMat);
-        armR.position.set(0.30, 0.74, 0.04);
-        var legsH = attachLegs(0.34, 0.11);
-        legL = legsH[0]; legR = legsH[1];
-      } else {
-        // Nova (Sentinel) : Droïde compagnon flottant à 4 rotors + œil cyclope + petit bonsaï holo flottant
-        var droneCore = new THREE.Mesh(new THREE.SphereGeometry(0.32, 24, 24), darkSuit);
-        droneCore.position.y = 0.96;
-        droneCore.castShadow = true;
-        avatar.add(droneCore);
-        var hoverRing = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.032, 10, 32), neonMat);
-        hoverRing.rotation.x = Math.PI / 2;
-        hoverRing.position.y = 0.72;
-        avatar.add(hoverRing);
-        headGroup.position.set(0, 0.96, 0);
-        var cyclops = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 16), whiteGlow);
-        cyclops.position.set(0, 0.02, 0.28);
-        headGroup.add(cyclops);
-        armL = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.26), neonMat);
-        armL.position.set(-0.42, 0.94, 0);
-        armR = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.26), neonMat);
-        armR.position.set(0.42, 0.94, 0);
-        // Floating glowing mini bonsai pot beside Nova
-        propGroup = new THREE.Group();
-        var pot = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.07, 0.10, 12), secondaryMat);
-        var leaf = new THREE.Mesh(new THREE.DodecahedronGeometry(0.11, 0), new THREE.MeshBasicMaterial({ color: 0x34d399 }));
-        leaf.position.y = 0.14;
-        propGroup.add(pot);
-        propGroup.add(leaf);
-        propGroup.position.set(0.54, 1.15, 0.16);
-        avatar.add(propGroup);
+      } else if (cfg.hairStyle === 'sport_ponytail') {
+        var hiTail = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.28, 10), hairMat);
+        hiTail.position.set(0, 0.12, -0.22);
+        hiTail.rotation.x = -1.1;
+        headGroup.add(hiTail);
+        var hBand = new THREE.Mesh(new THREE.TorusGeometry(0.172, 0.022, 8, 24), accentTrimMat);
+        hBand.rotation.x = Math.PI / 2.2;
+        hBand.position.y = 0.095;
+        headGroup.add(hBand);
+      } else if (cfg.hairStyle === 'bob') {
+        var bobSideL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, 0.18), hairMat);
+        bobSideL.position.set(-0.16, -0.02, -0.02);
+        var bobSideR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.24, 0.18), hairMat);
+        bobSideR.position.set(0.16, -0.02, -0.02);
+        var bobBack = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.26, 0.10), hairMat);
+        bobBack.position.set(0, -0.02, -0.15);
+        headGroup.add(bobSideL);
+        headGroup.add(bobSideR);
+        headGroup.add(bobBack);
+      } else if (cfg.hairStyle === 'spiky_dj') {
+        for (var si = -2; si <= 2; si++) {
+          var spike = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.14, 6), hairMat);
+          spike.position.set(si * 0.055, 0.20, 0.04);
+          spike.rotation.z = -si * 0.15;
+          headGroup.add(spike);
+        }
+        // Studio Over-Ear Headphones
+        var djBand = new THREE.Mesh(new THREE.TorusGeometry(0.198, 0.022, 8, 24, Math.PI), accentTrimMat);
+        djBand.position.y = 0.04;
+        var earCupL = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.055, 14), beltMat);
+        earCupL.rotation.z = Math.PI / 2;
+        earCupL.position.set(-0.19, 0.01, 0);
+        var earCupR = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.055, 14), beltMat);
+        earCupR.rotation.z = Math.PI / 2;
+        earCupR.position.set(0.19, 0.01, 0);
+        headGroup.add(djBand);
+        headGroup.add(earCupL);
+        headGroup.add(earCupR);
+      } else if (cfg.hairStyle === 'twin_buns') {
+        var bunL = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 12), hairMat);
+        bunL.position.set(-0.15, 0.17, -0.03);
+        var bunR = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 12), hairMat);
+        bunR.position.set(0.15, 0.17, -0.03);
+        headGroup.add(bunL);
+        headGroup.add(bunR);
+        // Brass goggles pushed up on forehead
+        var gBand = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.05, 0.06), buckleMat);
+        gBand.position.set(0, 0.11, 0.15);
+        headGroup.add(gBand);
       }
 
+      if (cfg.glasses) {
+        var rimMat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 });
+        var gL = new THREE.Mesh(new THREE.TorusGeometry(0.044, 0.008, 8, 18), rimMat);
+        gL.position.set(-0.062, 0.025, 0.175);
+        var gR = new THREE.Mesh(new THREE.TorusGeometry(0.044, 0.008, 8, 18), rimMat);
+        gR.position.set(0.062, 0.025, 0.175);
+        var bridge = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.008, 0.008), rimMat);
+        bridge.position.set(0, 0.028, 0.175);
+        headGroup.add(gL);
+        headGroup.add(gR);
+        headGroup.add(bridge);
+      }
       avatar.add(headGroup);
-      if (armL) avatar.add(armL);
-      if (armR) avatar.add(armR);
+
+      // 6. Signature Handheld Human Props (Tablet, Chess Knight, Espresso Mug, Bento/Stopwatch, Shield/Notebook, Vintage Camera, Vinyl Sleeve, Mini Bonsai)
+      if (ag.id === 'analyst') {
+        propGroup = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.15, 0.025), neonMat);
+        propGroup.position.set(0.02, -0.56, 0.10);
+        propGroup.rotation.x = -0.5;
+        armR.add(propGroup);
+      } else if (ag.id === 'strategist') {
+        propGroup = new THREE.Group();
+        var kBase = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.10, 12), buckleMat);
+        var kHead = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.07, 0.08), buckleMat);
+        kHead.position.set(0, 0.07, 0.015);
+        propGroup.add(kBase);
+        propGroup.add(kHead);
+        propGroup.position.set(0, -0.54, 0.07);
+        armR.add(propGroup);
+      } else if (ag.id === 'lead') {
+        propGroup = new THREE.Group();
+        var mugBody = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.10, 12), soleMat);
+        var crema = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.015, 12), new THREE.MeshBasicMaterial({ color: 0x78350f }));
+        crema.position.y = 0.048;
+        propGroup.add(mugBody);
+        propGroup.add(crema);
+        propGroup.position.set(0, -0.54, 0.08);
+        armR.add(propGroup);
+      } else if (ag.id === 'risk') {
+        propGroup = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.04, 6), neonMat);
+        propGroup.rotation.z = Math.PI / 2;
+        propGroup.position.set(-0.08, -0.42, 0.06);
+        armL.add(propGroup);
+      } else if (ag.id === 'reviewer') {
+        // Crossbody DSLR camera on chest/hand
+        propGroup = new THREE.Group();
+        var camB = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.11, 0.08), beltMat);
+        var lensB = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.07, 12), buckleMat);
+        lensB.rotation.x = Math.PI / 2;
+        lensB.position.z = 0.06;
+        propGroup.add(camB);
+        propGroup.add(lensB);
+        propGroup.position.set(0, 1.06, 0.17);
+        avatar.add(propGroup);
+      } else if (ag.id === 'hunter') {
+        // Holding vintage vinyl LP sleeve
+        propGroup = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.02), accentTrimMat);
+        propGroup.position.set(-0.04, -0.50, 0.08);
+        armL.add(propGroup);
+      } else if (ag.id === 'sentinel') {
+        // Carrying potted miniature bonsai tree in hands
+        propGroup = new THREE.Group();
+        var potM = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.05, 0.08, 12), new THREE.MeshStandardMaterial({ color: 0xb45309 }));
+        var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.022, 0.11, 8), hairMat);
+        trunk.position.y = 0.08;
+        var canopy = new THREE.Mesh(new THREE.DodecahedronGeometry(0.08, 0), new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.4 }));
+        canopy.position.y = 0.15;
+        propGroup.add(potM);
+        propGroup.add(trunk);
+        propGroup.add(canopy);
+        propGroup.position.set(0, -0.52, 0.08);
+        armR.add(propGroup);
+      } else {
+        // Kira : glowing cyber stopwatch / energy drink in hand
+        propGroup = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.12, 10), neonMat);
+        propGroup.position.set(0, -0.54, 0.06);
+        armR.add(propGroup);
+      }
 
       return {
         avatar: avatar,
@@ -3441,6 +3583,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var nose = new THREE.Mesh(new THREE.SphereGeometry(0.024, 8, 8), noseMat);
       nose.position.set(0, -0.02, 0.205);
       headPivot.add(nose);
+
+      // Feline whiskers & golden collar bell
+      var whiskerMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0, transparent: true, opacity: 0.85 });
+      [-1, 1].forEach(function (wSide) {
+        var w1 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.007, 0.007), whiskerMat);
+        w1.position.set(wSide * 0.11, -0.025, 0.185);
+        w1.rotation.z = wSide * 0.12;
+        var w2 = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.007, 0.007), whiskerMat);
+        w2.position.set(wSide * 0.11, -0.045, 0.18);
+        w2.rotation.z = -wSide * 0.12;
+        headPivot.add(w1);
+        headPivot.add(w2);
+      });
+      var bell = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 10), new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.85, roughness: 0.2 }));
+      bell.position.set(0, 0.34, 0.31);
+      catGroup.add(bell);
 
       var earGeo = new THREE.ConeGeometry(0.065, 0.15, 6);
       var earL = new THREE.Mesh(earGeo, furMat);
@@ -3736,14 +3894,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
         var spTex = makeNameplateTexture(persona.nick.toUpperCase() + ' · ' + ag.name.toUpperCase(), 'EN VEILLE', ag.color);
         var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spTex, transparent: true }));
-        sprite.position.set(0, 2.02, 0);
+        sprite.position.set(0, 2.22, 0);
         sprite.scale.set(2.55, 0.74, 1);
         walker.add(sprite);
 
         // Pop-up Speech Bubble Sprite right above nameplate
         var sbTex = makeSpeechBubbleTexture(persona.nick, persona.lines[0], ag.color);
         var speechSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sbTex, transparent: true, opacity: 0 }));
-        speechSprite.position.set(0, 2.86, 0);
+        speechSprite.position.set(0, 3.04, 0);
         speechSprite.scale.set(0.001, 0.001, 1);
         speechSprite.visible = false;
         walker.add(speechSprite);
@@ -3772,7 +3930,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           hitSphere: hitSphere,
           sprite: sprite,
           speechSprite: speechSprite,
-          bubbleBaseY: 2.86,
+          bubbleBaseY: 3.04,
           bubbleScaleW: 2.85,
           bubbleScaleH: 0.90,
           bubbleAge: 99,
@@ -4031,10 +4189,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               var swing = isWalking ? Math.sin(clk * 8.2 + idx) * 0.55 : Math.sin(clk * (busy ? 5.5 : 1.9) + idx) * 0.20;
               rig.armL.rotation.x = swing;
               rig.armR.rotation.x = -swing;
-            }
-            if (rig.propGroup) {
-              rig.propGroup.rotation.y += 0.02;
-              rig.propGroup.position.y += Math.sin(clk * 2.5 + idx) * 0.0015;
             }
             if (rig.holoScreens && rig.holoScreens.length) {
               rig.holoScreens.forEach(function (hs, si) {
@@ -5593,14 +5747,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       document.querySelectorAll('#tpModeSwitch .mode-switch-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.getAttribute('data-mode') === currentTpMode);
       });
+      var tpInp = document.getElementById('cfgTpVal');
+      if (tpInp) {
+        var curTpNum = Number(tpInp.value || 0);
+        if (currentTpMode === 'rr' && curTpNum > 15) tpInp.value = '2.0';
+        else if (currentTpMode === 'pct' && curTpNum > 20) tpInp.value = '2.5';
+        else if (currentTpMode === 'amount' && curTpNum <= 10) tpInp.value = '100';
+      }
       var exLbl = document.getElementById('cfgTpExampleLbl');
       var presets = document.getElementById('tpAmountPresets');
       if (presets) presets.style.display = currentTpMode === 'amount' ? 'flex' : 'none';
       if (exLbl) {
-        if (currentTpMode === 'rr') exLbl.textContent = 'Ex. : 2.0 = viser 2× le risque';
+        if (currentTpMode === 'rr') exLbl.textContent = 'Ex. : 2.0 = viser 2× le SL';
         else if (currentTpMode === 'amount') exLbl.textContent = 'Ex. : 100 = encaisser dès +100 € de profit';
         else if (currentTpMode === 'pips') exLbl.textContent = 'Ex. : 50 = fermer à +50 pips';
-        else if (currentTpMode === 'pct') exLbl.textContent = 'Ex. : 3.0 = gain de 3 % du compte';
+        else if (currentTpMode === 'pct') exLbl.textContent = 'Ex. : 2.5 = gain de 2.5 % du compte';
       }
       updateLiveRiskCalculator();
     }
@@ -5736,16 +5897,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var slMode = currentSlMode;
       var slAmt = Number(document.getElementById('cfgSlAmount')?.value || rAmt);
+      var slPips = Number(document.getElementById('cfgSlPips')?.value || 25);
+      var slPct = Number(document.getElementById('cfgSlPct')?.value || 2);
 
-      var riskAmountUsd = 0;
+      var riskBaseUsd = 0;
       if (rMode === 'amount') {
-        riskAmountUsd = rAmt;
+        riskBaseUsd = rAmt;
       } else if (rMode === 'pct') {
-        riskAmountUsd = (eq * rPct) / 100;
+        riskBaseUsd = (eq * rPct) / 100;
       } else if (rMode === 'pips') {
-        riskAmountUsd = Math.max(10, rPips * 4.0);
+        riskBaseUsd = Math.max(5, rPips * 4.0);
       } else {
-        riskAmountUsd = slMode === 'amount' ? slAmt : (eq * 0.02);
+        riskBaseUsd = eq * 0.02;
+      }
+
+      var riskAmountUsd = riskBaseUsd;
+      if (slMode === 'amount' && slAmt > 0) {
+        riskAmountUsd = rMode === 'amount' ? Math.min(slAmt, rAmt) : slAmt;
+      } else if (slMode === 'pct' && slPct > 0) {
+        riskAmountUsd = (eq * slPct) / 100;
+      } else if (slMode === 'pips' && slPips > 0) {
+        riskAmountUsd = Math.max(5, slPips * 4.0);
+      }
+
+      var maxTradeLossMode = document.getElementById('cfgMaxTradeLossMode')?.value || 'amount';
+      var maxTradeLossVal = Number(document.getElementById('cfgMaxTradeLossVal')?.value || 0);
+      if (maxTradeLossVal > 0) {
+        var maxCapUsd = maxTradeLossMode === 'pct' ? (eq * maxTradeLossVal) / 100 : maxTradeLossMode === 'pips' ? Math.max(5, maxTradeLossVal * 4.0) : maxTradeLossVal;
+        riskAmountUsd = Math.min(riskAmountUsd, maxCapUsd);
       }
 
       var tpMode = currentTpMode;
@@ -5758,7 +5937,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       } else if (tpMode === 'pct') {
         targetProfitUsd = (eq * tpVal) / 100;
       } else {
-        targetProfitUsd = Math.max(10, tpVal * 4.0);
+        targetProfitUsd = Math.max(5, tpVal * 4.0);
       }
 
       var ratio = riskAmountUsd > 0 ? (targetProfitUsd / riskAmountUsd).toFixed(2) : '1.00';
@@ -5774,18 +5953,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var dailyTpTarget = dailyTpMode === 'pct' ? (eq * dailyTpVal) / 100 : dailyTpVal;
       var progSlOn = Boolean(document.getElementById('cfgProgressiveSlEnabled')?.checked);
 
+      var sanityWarn = '';
+      if (targetProfitUsd > eq * 0.35 || riskAmountUsd > eq * 0.25) {
+        sanityWarn = '<div style="margin-top:4px;padding:4px 7px;border-radius:6px;background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.4);color:var(--amber);font-size:11px">Attention : le mode actuel (' + (tpMode === 'rr' ? 'Ratio R' : tpMode === 'pct' ? '% Capital' : tpMode) + ') produit un objectif très élevé sur ce capital. Sélectionnez <strong>Montant (€/$)</strong> pour fixer une somme exacte (ex: 25 €, 50 €, 100 €).</div>';
+      }
+
       box.innerHTML =
         '<div style="font-size:12.5px;font-weight:700;color:var(--fg-0);margin-bottom:4px">' +
-          ' Simulation en direct (sur capital de ' + Number(eq).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + cur + ' · Débloqué en Euro) :' +
+          ' Simulation par trade (sur capital de ' + Number(eq).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + cur + ') :' +
         '</div>' +
         '<div style="font-size:12px;line-height:1.55;color:var(--fg-1)">' +
           '• <strong>Stop-Loss (Perte max / trade) :</strong> <strong class="down">-' + Number(riskAmountUsd).toFixed(2) + ' ' + cur + '</strong> (coupure automatique garantie si touché)<br>' +
-          '• <strong>Take-Profit (Cible de gain) :</strong> <strong class="up">+' + Number(targetProfitUsd).toFixed(2) + ' ' + cur + '</strong> (clôture automatique dès le montant atteint)<br>' +
-          '• <strong>Ratio R/R :</strong> 1 : ' + ratio + ' (Levier ' + lev + 'x · Débloqué sans bridage arbitraire)<br>' +
+          '• <strong>Take-Profit (Cible / trade) :</strong> <strong class="up">+' + Number(targetProfitUsd).toFixed(2) + ' ' + cur + '</strong> (clôture automatique dès le montant atteint)<br>' +
+          '• <strong>Ratio R/R :</strong> 1 : ' + ratio + ' (Levier ' + lev + 'x · SL mode: ' + slMode.toUpperCase() + ' · TP mode: ' + tpMode.toUpperCase() + ')<br>' +
           '• <strong>Stop-Loss Progressif (Break-Even 50%) :</strong> ' + (progSlOn ? '<strong class="up">ACTIF</strong> (ex: +100 ' + cur + ' latent -> Break-Even verrouillé à +50 ' + cur + ')' : '<span style="color:var(--fg-2)">INACTIF</span>') + '<br>' +
           '• <strong>Coupe-circuit perte max / jour :</strong> <strong class="down">' + Number(dayLossVal).toFixed(2) + ' ' + cur + '</strong>' +
-          (dailyTpOn ? ' · Prise de profit journalière : <strong class="up">+' + Number(dailyTpTarget).toFixed(2) + ' ' + cur + '</strong>' : '') +
-        '</div>';
+          (dailyTpOn ? ' · Clôture globale PnL ouvert : <strong class="up">+' + Number(dailyTpTarget).toFixed(2) + ' ' + cur + '</strong>' : '') +
+        '</div>' + sanityWarn;
     }
 
     function syncProgressiveStopUi(on) {
@@ -5867,6 +6051,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (slPctWrap) slPctWrap.style.display = slM === 'pct' ? 'block' : 'none';
       var slAmtEl = document.getElementById('cfgSlAmount');
       if (slAmtEl) slAmtEl.value = String(slM === 'amount' ? (settings.slVal || settings.riskAmount || 100) : (settings.riskAmount || 100));
+      var slPipsEl = document.getElementById('cfgSlPips');
+      if (slPipsEl && slM === 'pips' && settings.slVal) slPipsEl.value = String(settings.slVal);
+      var slPctEl = document.getElementById('cfgSlPct');
+      if (slPctEl && slM === 'pct' && settings.slVal) slPctEl.value = String(settings.slVal);
 
       var atrVal = Number(settings.fixedStopAtr || 1.35);
       var atrSl = document.getElementById('cfgAtrSlider');
@@ -5940,7 +6128,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var atr = Number(document.getElementById('cfgAtrMult')?.value || 1.35);
 
       var slMode = currentSlMode;
-      var slVal = slMode === 'amount' ? Number(document.getElementById('cfgSlAmount')?.value || rAmt) : atr;
+      var slVal =
+        slMode === 'amount' ? Number(document.getElementById('cfgSlAmount')?.value || rAmt)
+        : slMode === 'pips' ? Number(document.getElementById('cfgSlPips')?.value || 25)
+        : slMode === 'pct' ? Number(document.getElementById('cfgSlPct')?.value || 2)
+        : atr;
+      if (slMode === 'amount' && rMode !== 'amount' && slVal > 0) {
+        rAmt = slVal;
+      }
 
       var dayLossMode = document.getElementById('cfgDayLossMode')?.value || 'pct';
       var dayLossPct = Number(document.getElementById('cfgDayLossPct')?.value || 5) / 100;

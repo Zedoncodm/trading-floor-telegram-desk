@@ -427,6 +427,9 @@ test("DASHBOARD_HTML compiles inline JS cleanly and renders 8 agents & all 5 V3 
     "buildDistinctAgentAvatar",
     "triggerSpeechBubble",
     "AGENT_PERSONAS",
+    "makeHumanArm",
+    "makeHumanLeg",
+    "Simulation par trade",
   ]) {
     assert.ok(DASHBOARD_HTML.includes(needle), `Missing UI element: ${needle}`);
   }
