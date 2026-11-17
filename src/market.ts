@@ -261,30 +261,106 @@ type BinanceKlineRaw = [
   number, // closeTime
 ];
 
+let binanceFapiCooldownUntil = 0;
+const klinesCache = new Map<string, { at: number; bars: Kline[] }>();
+
+function mapIntervalToBybit(interval: string): string {
+  const m: Record<string, string> = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1h": "60",
+    "2h": "120",
+    "4h": "240",
+    "6h": "360",
+    "12h": "720",
+    "1d": "D",
+    "1w": "W",
+    "1M": "M",
+  };
+  return m[interval] ?? "15";
+}
+
+function intervalStepMs(interval: string): number {
+  const m: Record<string, number> = {
+    "1": 60_000,
+    "3": 180_000,
+    "5": 300_000,
+    "15": 900_000,
+    "30": 1800_000,
+    "60": 3600_000,
+    "120": 7200_000,
+    "240": 14_400_000,
+    "360": 21_600_000,
+    "720": 43_200_000,
+    D: 86_400_000,
+    W: 7 * 86_400_000,
+    M: 30 * 86_400_000,
+  };
+  return m[interval] ?? 3600_000;
+}
+
 export async function fetchBinanceKlines(
   symbol: string,
   interval: string,
   limit: number,
+  cacheTtlMs = 0,
 ): Promise<Kline[]> {
-  const url =
-    interval === "1s"
-      ? `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1s&limit=${limit}`
-      : `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const raw = await getJson<BinanceKlineRaw[]>(url, { timeoutMs: 7000 });
-  return raw.map((row) => ({
-    openTime: Number(row[0]),
-    open: Number(row[1]),
-    high: Number(row[2]),
-    low: Number(row[3]),
-    close: Number(row[4]),
-    volume: Number(row[5]),
-    closeTime: Number(row[6]),
-  }));
+  const cacheKey = `${symbol}:${interval}:${limit}`;
+  if (cacheTtlMs > 0) {
+    const hit = klinesCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < cacheTtlMs) return hit.bars;
+  }
+
+  const mapRows = (raw: BinanceKlineRaw[]): Kline[] =>
+    raw.map((row) => ({
+      openTime: Number(row[0]),
+      open: Number(row[1]),
+      high: Number(row[2]),
+      low: Number(row[3]),
+      close: Number(row[4]),
+      volume: Number(row[5]),
+      closeTime: Number(row[6]),
+    }));
+
+  const now = Date.now();
+  let bars: Kline[] = [];
+  if (interval !== "1s" && now >= binanceFapiCooldownUntil) {
+    try {
+      const fapiUrl = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      bars = mapRows(await getJson<BinanceKlineRaw[]>(fapiUrl, { timeoutMs: 5000 }));
+    } catch (e) {
+      const msg = errMsg(e);
+      if (msg.includes("HTTP 418") || msg.includes("HTTP 429")) {
+        binanceFapiCooldownUntil = Date.now() + 300_000;
+      }
+    }
+  }
+
+  if (!bars.length) {
+    try {
+      const spotUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+      bars = mapRows(await getJson<BinanceKlineRaw[]>(spotUrl, { timeoutMs: 5000 }));
+    } catch {
+      bars = [];
+    }
+  }
+
+  if (!bars.length && interval !== "1s") {
+    bars = await fetchBybitKlines(symbol, mapIntervalToBybit(interval), Math.min(1000, limit));
+  }
+
+  if (bars.length && cacheTtlMs > 0) {
+    klinesCache.set(cacheKey, { at: Date.now(), bars });
+  }
+  return bars;
 }
 
 export async function fetchBybitKlines(
   symbol: string,
-  interval: "60" | "240",
+  interval: string,
   limit: number,
 ): Promise<Kline[]> {
   const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${interval}&limit=${limit}`;
@@ -293,6 +369,7 @@ export async function fetchBybitKlines(
     result?: { list?: string[][] };
   }>(url, { timeoutMs: 7000 });
   const list = res.result?.list ?? [];
+  const stepMs = intervalStepMs(interval);
   return list
     .map((r) => ({
       openTime: Number(r[0]),
@@ -301,16 +378,59 @@ export async function fetchBybitKlines(
       low: Number(r[3]),
       close: Number(r[4]),
       volume: Number(r[5]),
-      closeTime: Number(r[0]) + (interval === "60" ? 3600_000 : 14400_000) - 1,
+      closeTime: Number(r[0]) + stepMs - 1,
     }))
     .reverse();
 }
 
 async function fetchBinanceVenue(symbol: string): Promise<VenueSnap> {
+  if (Date.now() < binanceFapiCooldownUntil) {
+    const [ticker24, depth, klines1h] = await Promise.all([
+      getJson<{ lastPrice: string }>(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`),
+      getJson<{ bids: [string, string][]; asks: [string, string][] }>(
+        `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`,
+      ),
+      fetchBinanceKlines(symbol, "1h", 3, 25_000),
+    ]);
+    const price = Number(ticker24.lastPrice);
+    const numBids: [number, number][] = depth.bids.map(([p, q]) => [Number(p), Number(q)]);
+    const numAsks: [number, number][] = depth.asks.map(([p, q]) => [Number(p), Number(q)]);
+    const bidVol = numBids.reduce((s, [p, q]) => s + p * q, 0);
+    const askVol = numAsks.reduce((s, [p, q]) => s + p * q, 0);
+    const book = bidVol + askVol > 0 ? (bidVol - askVol) / (bidVol + askVol) : 0;
+    const top5Bids = numBids.slice(0, 5);
+    const top5Asks = numAsks.slice(0, 5);
+    const ofiRes = computeTop5Ofi(symbol, top5Bids, top5Asks);
+    let ret1h: number | null = null;
+    if (klines1h.length >= 2) {
+      const prev = klines1h[klines1h.length - 2].close;
+      ret1h = prev > 0 ? (price - prev) / prev : null;
+    }
+    return {
+      venue: "Binance",
+      price,
+      ret1h,
+      funding: null,
+      oiChange1h: null,
+      oiValue: null,
+      book,
+      bestBid: top5Bids[0]?.[0],
+      bestAsk: top5Asks[0]?.[0],
+      spreadTicks: ofiRes.spreadTicks,
+      ofi: ofiRes.ofi,
+      top5Bids,
+      top5Asks,
+    };
+  }
   const [ticker24, prem, depth, klines1h, oiHist] = await Promise.all([
     getJson<{ lastPrice: string; priceChangePercent: string }>(
       `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`,
-    ),
+    ).catch((e) => {
+      if (errMsg(e).includes("HTTP 418") || errMsg(e).includes("HTTP 429")) {
+        binanceFapiCooldownUntil = Date.now() + 300_000;
+      }
+      throw e;
+    }),
     getJson<{ markPrice: string; lastFundingRate: string }>(
       `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`,
     ),
@@ -642,9 +762,9 @@ export async function fetchMarketSnapshot(symbol: string, now = Date.now(), fvgM
   const [pRes, sRes, k4Res, k15Res, k1mRes] = await Promise.allSettled([
     fetchBinanceVenue(symbol),
     fetchBybitVenue(symbol),
-    fetchBinanceKlines(symbol, "4h", 720).catch(() => fetchBybitKlines(symbol, "240", 720)),
-    fetchBinanceKlines(symbol, "15m", 120).catch(() => []),
-    fetchBinanceKlines(symbol, "1m", 30).catch(() => []),
+    fetchBinanceKlines(symbol, "4h", 720, 60_000).catch(() => fetchBybitKlines(symbol, "240", 720)),
+    fetchBinanceKlines(symbol, "15m", 120, 25_000).catch(() => []),
+    fetchBinanceKlines(symbol, "1m", 30, 15_000).catch(() => []),
   ]);
 
   const primary = pRes.status === "fulfilled" ? pRes.value : null;

@@ -120,7 +120,7 @@ export class SentinelAgent {
     };
   }
 
-  async measureExchangeHeartbeat(url = "https://fapi.binance.com/fapi/v1/time"): Promise<number> {
+  async measureExchangeHeartbeat(url = "https://api.binance.com/api/v3/time"): Promise<number> {
     const t0 = performance.now();
     try {
       const controller = new AbortController();
