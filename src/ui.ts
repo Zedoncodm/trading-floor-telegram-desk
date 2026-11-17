@@ -1727,6 +1727,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <div id="pendingActionBanner"></div>
           </div>
         </div>
+        <div id="chatReviewerBanner" style="padding:8px 14px;border-bottom:1px solid var(--border);background:rgba(167,139,250,0.08);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"></div>
         <div id="chatMessages"></div>
         <div class="chat-input-bar">
           <input id="chatCmdInput" class="input-dark" style="flex:1" placeholder="Commande (ex: scan, approuver TF-..., mode auto, Passe le levier à 100x)..." onkeydown="if(event.key===&quot;Enter&quot;)submitChatInput()" />
@@ -2629,6 +2630,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (!deskState || !deskState.tape) return fallback;
       var row = deskState.tape.find(function (r) { return r.symbol === sym; });
       return row && row.px > 0 ? row.px : fallback;
+    }
+
+    function escHtml(s) {
+      return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
     }
 
     // ==================== GLOBAL THEME ENGINE (20 THÈMES AA) ====================
@@ -4663,9 +4672,61 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderChat(true);
     }
 
+    function fmtCountdown15m(lastAt) {
+      if (!lastAt) return 'imminent';
+      var remMs = Math.max(0, 15 * 60 * 1000 - (Date.now() - Number(lastAt)));
+      if (remMs <= 1000) return 'imminent';
+      var m = Math.floor(remMs / 60000);
+      var s = Math.floor((remMs % 60000) / 1000);
+      return m + 'm ' + String(s).padStart(2, '0') + 's';
+    }
+
+    async function triggerSelfReflectionNow() {
+      var btns = document.querySelectorAll('.btn-trigger-review15m');
+      btns.forEach(function (b) { b.disabled = true; b.textContent = 'Review en cours...'; });
+      try {
+        var res = await fetch('/api/self-reflection', { method: 'POST' });
+        var out = await res.json();
+        if (out && out.ok && deskState) {
+          deskState.current_market_regime_directive = out.directive;
+          deskState.selfReflectionHistory = out.history || deskState.selfReflectionHistory;
+          deskState.lastSelfReflectionAt = out.lastSelfReflectionAt || Date.now();
+          renderReviewerBanner();
+          renderRlMetrics();
+          renderChat(true);
+        }
+      } catch (e) {
+      } finally {
+        btns.forEach(function (b) { b.disabled = false; b.textContent = 'Lancer Review 15m'; });
+      }
+    }
+
+    function renderReviewerBanner() {
+      var box = document.getElementById('chatReviewerBanner');
+      if (!box || !deskState) return;
+      var hist = deskState.selfReflectionHistory || [];
+      var latest = hist.length ? hist[hist.length - 1] : null;
+      var directive = (latest && latest.directive) || deskState.current_market_regime_directive || 'En attente de la première review 15 min du Trade Reviewer...';
+      var tsLabel = (latest && latest.at) ? new Date(latest.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : (deskState.lastSelfReflectionAt ? new Date(deskState.lastSelfReflectionAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '--:--');
+      var statsTag = latest
+        ? (latest.tradesAnalyzed + ' trades · ' + latest.wins + 'W/' + latest.losses + 'L · PnL ' + (latest.netPnl >= 0 ? '+' : '') + Number(latest.netPnl || 0).toFixed(2) + '€')
+        : 'Initialisation';
+      box.innerHTML =
+        '<div style="flex:1;min-width:240px">' +
+          '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+            '<span class="mono" style="font-size:10px;font-weight:700;color:#c084fc;letter-spacing:.04em">TRADE REVIEWER 15M · MAJ ' + escHtml(tsLabel) + '</span>' +
+            '<span class="mono" style="font-size:10px;color:var(--fg-2)">' + escHtml(statsTag) + '</span>' +
+            '<span class="mono" style="font-size:10px;color:var(--fg-3)">Prochain cycle : ' + escHtml(fmtCountdown15m(deskState.lastSelfReflectionAt)) + '</span>' +
+          '</div>' +
+          '<div style="font-size:11.5px;color:var(--fg-0);margin-top:2px;line-height:1.35">' + escHtml(directive) + '</div>' +
+        '</div>' +
+        '<button type="button" class="pill-btn btn-trigger-review15m" style="font-size:10.5px;padding:4px 10px" onclick="triggerSelfReflectionNow()">Lancer Review 15m</button>';
+    }
+
     function renderChat(forceScroll) {
       if (!deskState) return;
       ensureChatScrollWatcher();
+      renderReviewerBanner();
       var msgs = deskState.messages || [];
       var counts = { 'floor-general': msgs.length, 'risk-veto': 0, 'macro-alerts': 0, 'rl-optimizer': 0, 'sys-ops': 0, 'liquidity-l2': 0 };
       msgs.forEach(function (m) {
@@ -7069,13 +7130,43 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var dsrPct = Math.round(Number(sum.deflatedSharpe || 0.27) * 100);
       var directive15m = (deskState && deskState.current_market_regime_directive) || 'En attente du prochain cycle 15 min (analyse Reviewer -> Stratège).';
+      var reviews15m = (deskState && Array.isArray(deskState.selfReflectionHistory)) ? deskState.selfReflectionHistory.slice().reverse() : [];
+      var lastRevAt = deskState && deskState.lastSelfReflectionAt;
+
+      var reviewsHtml = '';
+      if (reviews15m.length > 0) {
+        reviewsHtml =
+          '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto">' +
+            reviews15m.slice(0, 8).map(function (rv) {
+              var tStr = new Date(rv.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+              var pnlColor = Number(rv.netPnl || 0) >= 0 ? 'var(--up)' : 'var(--down)';
+              return (
+                '<div style="padding:7px 9px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border)">' +
+                  '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:10px">' +
+                    '<span class="mono" style="color:#c084fc;font-weight:700">' + escHtml(tStr) + ' · ' + rv.tradesAnalyzed + ' trades (' + rv.wins + 'W/' + rv.losses + 'L)</span>' +
+                    '<span class="mono" style="color:' + pnlColor + '">' + (rv.netPnl >= 0 ? '+' : '') + Number(rv.netPnl || 0).toFixed(2) + '€ · Range ' + rv.rangeCount + '/' + rv.totalProfiles + '</span>' +
+                  '</div>' +
+                  '<div style="font-size:11px;color:var(--fg-0);margin-top:3px;line-height:1.35">' + escHtml(rv.directive) + '</div>' +
+                  (rv.breakdown ? '<div class="mono" style="font-size:9.5px;color:var(--fg-3);margin-top:2px">' + escHtml(rv.breakdown) + '</div>' : '') +
+                '</div>'
+              );
+            }).join('') +
+          '</div>';
+      } else {
+        reviewsHtml = '<div style="font-size:10.5px;color:var(--fg-3);margin-top:6px">Aucune review enregistrée pour le moment. Cliquez sur « Lancer Review 15m » ou attendez le prochain cycle.</div>';
+      }
 
       var html =
-        '<div class="ai-metric-card" style="border-left:3px solid var(--accent)">' +
-          '<div>' +
-            '<div style="font-weight:700">Auto-Réflexion 15 min (Reviewer -> Stratège)</div>' +
-            '<div style="font-size:11px;color:var(--fg-1);margin-top:3px;line-height:1.35">' + escHtml(directive15m) + '</div>' +
+        '<div class="ai-metric-card" style="border-left:3px solid var(--accent);display:block">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+            '<div style="font-weight:700">Auto-Réflexion 15 min (Trade Reviewer -> Stratège)</div>' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+              '<span class="mono" style="font-size:10px;color:var(--fg-3)">Prochain : ' + escHtml(fmtCountdown15m(lastRevAt)) + '</span>' +
+              '<button type="button" class="pill-btn btn-trigger-review15m" style="font-size:10px;padding:3px 9px" onclick="triggerSelfReflectionNow()">Lancer Review 15m</button>' +
+            '</div>' +
           '</div>' +
+          '<div style="font-size:11.5px;color:var(--fg-0);margin-top:4px;line-height:1.38;font-weight:600">' + escHtml(directive15m) + '</div>' +
+          reviewsHtml +
         '</div>' +
         '<div class="ai-metric-card">' +
           '<div>' +

@@ -270,6 +270,25 @@ export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/self-reflection") {
+      try {
+        const directive = await desk.runAgenticSelfReflection();
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            directive,
+            history: desk.state.selfReflectionHistory ?? [],
+            lastSelfReflectionAt: desk.state.lastSelfReflectionAt ?? Date.now(),
+          }),
+        );
+      } catch (e) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: String(e) }));
+      }
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/rl-memory") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, memory: desk.grpo.memory, summary: desk.state.rlSummary }));

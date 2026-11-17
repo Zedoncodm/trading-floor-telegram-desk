@@ -321,6 +321,20 @@ export type PostMortemLogEntry = {
   summary: string;
 };
 
+export type SelfReflectionReviewEntry = {
+  id: string;
+  at: number;
+  atIso: string;
+  tradesAnalyzed: number;
+  wins: number;
+  losses: number;
+  netPnl: number;
+  rangeCount: number;
+  totalProfiles: number;
+  directive: string;
+  breakdown: string;
+};
+
 export type MarketSnapshot = {
   symbol: string;
   at: number;
@@ -568,6 +582,7 @@ export type DeskState = {
   current_market_regime_directive?: string;
   promptsVersion?: number;
   lastSelfReflectionAt?: number;
+  selfReflectionHistory?: SelfReflectionReviewEntry[];
   executionTraderState?: {
     updatedAt: number;
     openCount: number;

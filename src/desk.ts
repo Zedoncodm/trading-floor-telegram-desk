@@ -62,6 +62,7 @@ import type {
   ParameterOptimizationReport,
   PlayKind,
   PostMortemLogEntry,
+  SelfReflectionReviewEntry,
   Speaker,
   Ticket,
   WakeKind,
@@ -1067,11 +1068,19 @@ export class TradingFloorDesk {
     const now = Date.now();
     this.state.halted = false;
     this.state.haltKind = null;
-    this.state.tickets = [];
-    this.state.killed = [];
+    // Préserver intégralement les tickets clôturés & positions ouvertes (aucune perte d'historique)
+    const preservedTickets = this.state.tickets.filter(
+      (t) => t.status === "closed" || t.status === "open",
+    );
+    this.state.tickets = preservedTickets;
     this.state.wakes = [];
-    this.state.realizedPnl = 0;
-    this.state.seq = 0;
+    const preservedRealized = preservedTickets
+      .filter((t) => t.status === "closed")
+      .reduce((s, t) => s + (t.pnl ?? 0), 0);
+    this.state.realizedPnl =
+      Math.abs(this.state.realizedPnl) > 0 && preservedRealized === 0
+        ? this.state.realizedPnl
+        : Number(preservedRealized.toFixed(2));
 
     this.state.settings.symbols = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "XAUUSD"];
     this.state.settings.executionMode = "auto";
@@ -1082,12 +1091,24 @@ export class TradingFloorDesk {
 
     const mt5State = Mt5CloudBridge.readLocalMt5State();
     const baseEq = mt5State && mt5State.balance > 0 ? mt5State.balance : this.state.startEquity;
-    this.state.startEquity = baseEq;
+    if (!this.state.startEquity || this.state.startEquity <= 0) {
+      this.state.startEquity = baseEq;
+    }
     this.state.dayStartEquity = baseEq;
-    this.state.curve = [
-      { t: now - 60_000, eq: baseEq, realized: 0, unrealized: 0, drawdownPct: 0 },
-      { t: now, eq: mt5State?.equity ?? baseEq, realized: 0, unrealized: mt5State?.profit ?? 0, drawdownPct: 0 },
-    ];
+    if (!Array.isArray(this.state.curve) || this.state.curve.length < 2) {
+      this.state.curve = [
+        { t: now - 60_000, eq: baseEq, realized: this.state.realizedPnl, unrealized: 0, drawdownPct: 0 },
+        { t: now, eq: mt5State?.equity ?? baseEq, realized: this.state.realizedPnl, unrealized: mt5State?.profit ?? 0, drawdownPct: 0 },
+      ];
+    } else {
+      this.state.curve.push({
+        t: now,
+        eq: mt5State?.equity ?? baseEq,
+        realized: this.state.realizedPnl,
+        unrealized: mt5State?.profit ?? 0,
+        drawdownPct: 0,
+      });
+    }
     this.lastKnownEquity = mt5State?.equity ?? baseEq;
 
     await this.syncWithLocalMt5Bridge();
@@ -1096,6 +1117,7 @@ export class TradingFloorDesk {
       await this.runDeskScan("manual");
     }
     this.pushLocalMt5BridgePayload(Date.now());
+    this.store.save(this.state);
     this.broadcast();
 
     return {
@@ -1822,6 +1844,19 @@ export class TradingFloorDesk {
     } else if (!this.state.messages.some((m) => m.text.includes("[REFONTE_AGENTS_V2]"))) {
       await this.announceV2AgentsRoster();
     }
+
+    const now = Date.now();
+    const hasClosedOrPostMortems =
+      this.state.tickets.some((t) => t.status === "closed") || this.readTradePostMortems(1).length > 0;
+    const dueReflection =
+      !this.state.lastSelfReflectionAt ||
+      now - this.state.lastSelfReflectionAt >= 15 * 60_000 ||
+      !(this.state.selfReflectionHistory && this.state.selfReflectionHistory.length > 0);
+    if (dueReflection && (hasClosedOrPostMortems || !(this.state.selfReflectionHistory && this.state.selfReflectionHistory.length > 0))) {
+      await this.runAgenticSelfReflection(now);
+    }
+
+    this.store.save(this.state);
     this.broadcast();
   }
 
@@ -3456,15 +3491,47 @@ export class TradingFloorDesk {
         `${basePrompt}\n[DIRECTIVE_REVIEWER_15M | MAJ ${hhmm} UTC] current_market_regime_directive: ${directive} (RÈGLE STRICTE : obéis impérativement à cette directive et ne prends jamais de LONG > VAH ou SHORT < VAL en range).`;
     }
 
+    const wins = closedFallback.filter((e) => e.pnl > 0).length;
+    const losses = closedFallback.filter((e) => e.pnl < 0).length;
+    const bySetup = new Map<string, { n: number; pnl: number }>();
+    for (const item of closedFallback) {
+      const prev = bySetup.get(item.setup) ?? { n: 0, pnl: 0 };
+      prev.n += 1;
+      prev.pnl += item.pnl;
+      bySetup.set(item.setup, prev);
+    }
+    const breakdown =
+      bySetup.size > 0
+        ? Array.from(bySetup.entries())
+            .map(([setup, st]) => `${setup}: ${st.n}t (${st.pnl >= 0 ? "+" : ""}${st.pnl.toFixed(2)}€)`)
+            .join(" | ")
+        : "Aucun trade clôturé sur la fenêtre — calibration par Market Profile.";
+
+    const reviewEntry: SelfReflectionReviewEntry = {
+      id: `REV-${new Date(now).toISOString().slice(11, 19).replace(/:/g, "")}-${(this.state.selfReflectionHistory?.length ?? 0) + 1}`,
+      at: now,
+      atIso: new Date(now).toISOString(),
+      tradesAnalyzed: closedFallback.length,
+      wins,
+      losses,
+      netPnl: Number(totalPnl.toFixed(2)),
+      rangeCount,
+      totalProfiles,
+      directive,
+      breakdown,
+    };
+    this.state.selfReflectionHistory = [...(this.state.selfReflectionHistory ?? []), reviewEntry].slice(-96);
+
     setAgentActivity(this.state, "reviewer", "logging", `Directive 15m : ${directive.slice(0, 48)}`, now, {
       targetAgent: "strategist",
     });
     emitPulse(this.state, "reviewer", "strategist", "log", "SELF_REFLECTION_15M", undefined, now);
     await this.say(
       "reviewer",
-      `[AUTO-RÉFLEXION 15M] Directive mise à jour pour le Stratège : "${directive}" (${closedFallback.length} trade(s) analysé(s)).`,
+      `[AUTO-RÉFLEXION 15M] ${closedFallback.length} trade(s) (${wins}W/${losses}L, PnL ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}€, Range ${rangeCount}/${totalProfiles}) | Directive Stratège : "${directive}" | Détail : ${breakdown}`,
       "report",
     );
+    this.store.save(this.state);
     this.broadcast();
     return directive;
   }

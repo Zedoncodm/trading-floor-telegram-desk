@@ -1174,3 +1174,95 @@ test("Full System Audit Overhaul: 8 Agent Prompts v2, Store Migration, No Double
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Persistent full_history.json, blotter reconstruction, Chat escHtml & visible 15m Reviewer history", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-full-history-"));
+  try {
+    // 1. UI helper & 15m Reviewer controls present & valid JS
+    assert.ok(DASHBOARD_HTML.includes("function escHtml("));
+    assert.ok(DASHBOARD_HTML.includes("function triggerSelfReflectionNow("));
+    assert.ok(DASHBOARD_HTML.includes("function renderReviewerBanner("));
+    assert.ok(DASHBOARD_HTML.includes("chatReviewerBanner"));
+    const scriptMatch = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+    assert.ok(scriptMatch && scriptMatch[1]);
+    assert.doesNotThrow(() => new Function(scriptMatch[1]));
+
+    // 2. Closed trades + 15m selfReflectionHistory persist into full_history.json & survive state wipe
+    const store = new DeskStore(dir);
+    const cfg = makeTestCfg(dir);
+    const desk = new TradingFloorDesk(cfg, store, new TelegramFloorRoom(cfg), new GrpoEngine(join(dir, "grpo.json")));
+    const btWin = { label: "OOS", bars: 120, trades: 12, winRate: 0.6, expectancyR: 0.35, profitFactor: 1.7, sharpe: 1.2, deflatedSharpe: 0.7, maxDrawdownR: 1.2, var95R: -0.9, pass: true };
+    const closedTicket: Ticket = {
+      id: "TF-HIST-1",
+      createdAt: Date.now() - 120_000,
+      expiresAt: Date.now() - 60_000,
+      asset: "BTCUSDT",
+      direction: "long",
+      entry: 90_000,
+      invalidation: 89_500,
+      target: 91_000,
+      timeStopHours: 4,
+      notional: 5000,
+      qty: 0.055,
+      riskPct: 0.01,
+      riskUsd: 100,
+      exposurePct: 0.05,
+      binding: "risk",
+      leverage: 5,
+      engine: "Session_VWAP_Reversion",
+      playbook: "fade",
+      regime: "MEAN_REVERTING",
+      thesis: "VWAP -2SD reclaim",
+      producedBy: ["analyst", "strategist"],
+      backtest: { playbook: "fade", rules: "VWAP -2SD", source: "Binance", inSample: btWin, outOfSample: btWin, pass: true },
+      status: "closed",
+      decidedAt: Date.now() - 115_000,
+      filledAt: Date.now() - 110_000,
+      fillPrice: 90_000,
+      fees: 1.2,
+      funding: 0,
+      closedAt: Date.now() - 60_000,
+      exitPrice: 90_600,
+      closeReason: "target",
+      pnl: 42.5,
+      rMultiple: 1.4,
+    };
+    desk.state.tickets.push(closedTicket);
+    desk.state.realizedPnl = 42.5;
+    await desk.runAgenticSelfReflection(Date.now());
+    assert.ok((desk.state.selfReflectionHistory?.length ?? 0) >= 1);
+    assert.ok(existsSync(store.historyPath), "full_history.json must be created on save");
+
+    // Simulate restarting when state.json got stripped (0 tickets / empty selfReflectionHistory)
+    const stripped = store.loadOrCreate(10_000, "Europe/Paris", ["BTCUSDT"], 15);
+    stripped.tickets = [];
+    stripped.selfReflectionHistory = [];
+    stripped.messages = [];
+    writeFileSync(store.statePath, JSON.stringify(stripped), "utf8");
+
+    const reloaded = store.loadOrCreate(10_000, "Europe/Paris", ["BTCUSDT"], 15);
+    assert.ok(reloaded.tickets.some((t) => t.id === "TF-HIST-1" && t.status === "closed"));
+    assert.ok((reloaded.selfReflectionHistory?.length ?? 0) >= 1);
+    assert.ok(reloaded.messages.some((m) => m.text.includes("[AUTO-RÉFLEXION 15M]")));
+
+    // 3. Fallback reconstruction from blotter.jsonl even if both state.json and full_history.json are deleted
+    rmSync(store.statePath, { force: true });
+    rmSync(store.historyPath, { force: true });
+    rmSync(`${store.historyPath}.bak`, { force: true });
+    const now = Date.now();
+    const blotterLines = [
+      JSON.stringify({ at: now - 50_000, event: "TICKET_ISSUED", ticketId: "TF-BLOTTER-9", asset: "EURUSD", direction: "short", entry: 1.085, invalidation: 1.09, target: 1.078, notional: 5000 }),
+      JSON.stringify({ at: now - 40_000, event: "POSITION_OPENED", ticketId: "TF-BLOTTER-9", asset: "EURUSD", direction: "short", fillPrice: 1.085, entry: 1.085, notional: 5000 }),
+      JSON.stringify({ at: now - 10_000, event: "POSITION_CLOSED", ticketId: "TF-BLOTTER-9", asset: "EURUSD", closeReason: "target", fillPrice: 1.085, exitPrice: 1.081, pnl: 18.75 }),
+    ];
+    writeFileSync(store.blotterPath, `${blotterLines.join("\n")}\n`, "utf8");
+
+    const fromBlotter = store.loadOrCreate(10_000, "Europe/Paris", ["EURUSD"], 15);
+    const recovered = fromBlotter.tickets.find((t) => t.id === "TF-BLOTTER-9");
+    assert.ok(recovered, "Closed ticket must be reconstructed from blotter.jsonl on cold restart");
+    assert.equal(recovered.status, "closed");
+    assert.equal(recovered.pnl, 18.75);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
