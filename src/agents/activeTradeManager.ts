@@ -127,11 +127,79 @@ export class ActiveTradeManager {
   }
 
   /**
+   * Break-Even Progressif Adaptatif (50% à 90%) décidé par les agents selon la situation :
+   * - Marché en range / proche borne VAH ou VAL -> verrouillage agressif (70% -> 90%)
+   * - Avancée proche du TP (>= 50% / 80%) -> resserrage progressif (+8% / +15%)
+   * - Retournement micro-flux ou Volatility Shield -> sécurisation (+10%)
+   * - Tendance directionnelle propre -> laisse respirer (50%)
+   */
+  static computeAdaptiveBreakEvenRatio(
+    ticket: Ticket,
+    currentPrice: number,
+    ctx?: {
+      tickDeltaPct?: number;
+      marketProfile?: MarketProfileSummary;
+      volatilityShieldActive?: boolean;
+    },
+  ): { ratio: number; reason: string } {
+    let ratio = 0.50;
+    const reasons: string[] = [];
+    const entry = ticket.fillPrice ?? ticket.entry;
+    const isLong = ticket.direction === "long";
+    const mp = ctx?.marketProfile;
+
+    if (mp?.isRange) {
+      ratio += 0.15;
+      reasons.push("Range MP (+15%)");
+    }
+    if (mp && currentPrice > 0) {
+      const nearTargetEdge = isLong ? currentPrice >= mp.vah * 0.998 : currentPrice <= mp.val * 1.002;
+      if (nearTargetEdge) {
+        ratio += 0.15;
+        reasons.push(isLong ? "Proche VAH (+15%)" : "Proche VAL (+15%)");
+      }
+    }
+
+    const totalTpDist = isLong ? ticket.target - entry : entry - ticket.target;
+    const coveredDist = isLong ? currentPrice - entry : entry - currentPrice;
+    const tpProgress = totalTpDist > 0 ? coveredDist / totalTpDist : 0;
+    if (tpProgress >= 0.80) {
+      ratio += 0.15;
+      reasons.push("TP>=80% (+15%)");
+    } else if (tpProgress >= 0.50) {
+      ratio += 0.08;
+      reasons.push("TP>=50% (+8%)");
+    }
+
+    const tickDelta = Number(ctx?.tickDeltaPct ?? 0);
+    const microAgainst = isLong ? tickDelta <= -0.00015 : tickDelta >= 0.00015;
+    if (microAgainst) {
+      ratio += 0.10;
+      reasons.push("Repli micro (+10%)");
+    }
+    if (ctx?.volatilityShieldActive) {
+      ratio += 0.10;
+      reasons.push("Shield Macro (+10%)");
+    }
+
+    if (mp && !mp.isRange && tpProgress < 0.45 && !microAgainst && !ctx?.volatilityShieldActive) {
+      ratio -= 0.05;
+      reasons.push("Tendance propre (-5%)");
+    }
+
+    const clamped = Number(Math.max(0.50, Math.min(0.90, ratio)).toFixed(2));
+    return {
+      ratio: clamped,
+      reason: reasons.length ? reasons.join(" · ") : "Base Équilibrée 50%",
+    };
+  }
+
+  /**
    * Cerveau de Sortie Temps Réel Multi-Agents (Focus HFT) :
    * Les agents décident seconde par seconde quand déplacer le SL au Break-Even ou
    * clôturer au marché afin de sécuriser un maximum de bénéfices :
    * 1) Break-Even ultra-rapide couvrant les frais dès les premiers ticks verts
-   * 2) Ratchet dynamique multi-paliers (55% -> 72% -> 85% du pic de profit)
+   * 2) Ratchet dynamique adaptatif (50% -> 90% du pic de profit selon MP/TP/flux)
    * 3) Récolte immédiate sur retournement micro-tick ou rejet Market Profile (VAH/VAL)
    */
   static evaluateAgentRealtimeProfitExit(
@@ -141,6 +209,7 @@ export class ActiveTradeManager {
     ctx?: {
       tickDeltaPct?: number;
       marketProfile?: MarketProfileSummary;
+      volatilityShieldActive?: boolean;
     },
   ): AgentRealtimeExitDecision {
     const entry = ticket.fillPrice ?? ticket.entry;
@@ -156,13 +225,15 @@ export class ActiveTradeManager {
     const minGreenUsd = Math.max(1.5, fees * 1.8);
     const minRatchetPeak = Math.max(4, (ticket.riskUsd || 20) * 0.15, fees * 3);
 
-    // 1. Calcul du palier de sécurisation selon l'amplitude du pic atteint
-    let lockRatio = 0.55;
+    // 1. Calcul adaptatif du ratio de sécurisation [50% .. 90%] selon la situation du marché & trade
+    const adaptive = ActiveTradeManager.computeAdaptiveBreakEvenRatio(ticket, currentPrice, ctx);
+    let lockRatio = adaptive.ratio;
     if (peakProfitUsd >= Math.max(25, (ticket.riskUsd || 40) * 1.2)) {
-      lockRatio = 0.85;
+      lockRatio = Math.max(lockRatio, 0.85);
     } else if (peakProfitUsd >= Math.max(10, (ticket.riskUsd || 40) * 0.55)) {
-      lockRatio = 0.72;
+      lockRatio = Math.max(lockRatio, 0.72);
     }
+    lockRatio = Number(Math.max(0.50, Math.min(0.90, lockRatio)).toFixed(2));
 
     const prevFloor = Number(ticket.progressiveStopUsd ?? 0);
     let securedFloorUsd = prevFloor;

@@ -3671,10 +3671,11 @@ export class TradingFloorDesk {
 
   /**
    * Boucle Agentic Self-Reflection (toutes les 15 minutes) :
-   * Le Trade Reviewer analyse les N derniers post-mortems, met à jour `current_market_regime_directive`
-   * et injecte dynamiquement cette directive dans le System Prompt du Stratège.
+   * Le Trade Reviewer analyse les N derniers post-mortems, calcule des métriques détaillées
+   * par direction/actif/setup, formule des recommandations concrètes pour améliorer les agents IA,
+   * met à jour `current_market_regime_directive` et l'injecte dans le System Prompt du Stratège.
    */
-  async runAgenticSelfReflection(now = Date.now(), maxTrades = 12): Promise<string> {
+  async runAgenticSelfReflection(now = Date.now(), maxTrades = 25): Promise<string> {
     this.state.lastSelfReflectionAt = now;
     const recent = this.readTradePostMortems(maxTrades);
     const closedFallback =
@@ -3762,21 +3763,116 @@ export class TradingFloorDesk {
         `${basePrompt}\n[DIRECTIVE_REVIEWER_15M | MAJ ${hhmm} UTC] current_market_regime_directive: ${directive} (RÈGLE STRICTE : obéis impérativement à cette directive et ne prends jamais de LONG > VAH ou SHORT < VAL en range).`;
     }
 
-    const wins = closedFallback.filter((e) => e.pnl > 0).length;
-    const losses = closedFallback.filter((e) => e.pnl < 0).length;
-    const bySetup = new Map<string, { n: number; pnl: number }>();
+    const winItems = closedFallback.filter((e) => e.pnl > 0);
+    const lossItems = closedFallback.filter((e) => e.pnl < 0);
+    const wins = winItems.length;
+    const losses = lossItems.length;
+    const winRatePct = closedFallback.length > 0 ? Number(((wins / closedFallback.length) * 100).toFixed(1)) : 0;
+    const avgWin = wins > 0 ? Number((winItems.reduce((a, e) => a + e.pnl, 0) / wins).toFixed(2)) : 0;
+    const avgLoss = losses > 0 ? Number((lossItems.reduce((a, e) => a + e.pnl, 0) / losses).toFixed(2)) : 0;
+
+    const longs = closedFallback.filter((e) => String(e.direction).toLowerCase() === "long");
+    const shorts = closedFallback.filter((e) => String(e.direction).toLowerCase() === "short");
+    const longStats = {
+      n: longs.length,
+      wins: longs.filter((e) => e.pnl > 0).length,
+      pnl: Number(longs.reduce((a, e) => a + e.pnl, 0).toFixed(2)),
+    };
+    const shortStats = {
+      n: shorts.length,
+      wins: shorts.filter((e) => e.pnl > 0).length,
+      pnl: Number(shorts.reduce((a, e) => a + e.pnl, 0).toFixed(2)),
+    };
+
+    const bySetup = new Map<string, { n: number; wins: number; pnl: number }>();
+    const byAsset = new Map<string, { n: number; wins: number; pnl: number }>();
     for (const item of closedFallback) {
-      const prev = bySetup.get(item.setup) ?? { n: 0, pnl: 0 };
-      prev.n += 1;
-      prev.pnl += item.pnl;
-      bySetup.set(item.setup, prev);
+      const prevS = bySetup.get(item.setup) ?? { n: 0, wins: 0, pnl: 0 };
+      prevS.n += 1;
+      if (item.pnl > 0) prevS.wins += 1;
+      prevS.pnl += item.pnl;
+      bySetup.set(item.setup, prevS);
+
+      const prevA = byAsset.get(item.symbol) ?? { n: 0, wins: 0, pnl: 0 };
+      prevA.n += 1;
+      if (item.pnl > 0) prevA.wins += 1;
+      prevA.pnl += item.pnl;
+      byAsset.set(item.symbol, prevA);
     }
+
+    const setupBreakdown = Array.from(bySetup.entries()).map(([setup, st]) => ({
+      setup,
+      n: st.n,
+      wins: st.wins,
+      pnl: Number(st.pnl.toFixed(2)),
+    }));
+    const assetBreakdown = Array.from(byAsset.entries()).map(([symbol, st]) => ({
+      symbol,
+      n: st.n,
+      wins: st.wins,
+      pnl: Number(st.pnl.toFixed(2)),
+    }));
+
     const breakdown =
-      bySetup.size > 0
-        ? Array.from(bySetup.entries())
-            .map(([setup, st]) => `${setup}: ${st.n}t (${st.pnl >= 0 ? "+" : ""}${st.pnl.toFixed(2)}€)`)
+      setupBreakdown.length > 0
+        ? setupBreakdown
+            .map((st) => `${st.setup}: ${st.n}t (${st.wins}W, ${st.pnl >= 0 ? "+" : ""}${st.pnl.toFixed(2)}€)`)
             .join(" | ")
         : "Aucun trade clôturé sur la fenêtre — calibration par Market Profile.";
+
+    // Recommandations concrètes pour améliorer les agents IA
+    const recommendations: string[] = [];
+    if (closedFallback.length === 0) {
+      recommendations.push("Stratège : Aucun historique récent clôturé — privilégier des entrées haute sélectivité sur VA/POC et surveiller la réaction prix.");
+    } else {
+      if (winRatePct < 45) {
+        recommendations.push(`Stratège : WinRate faible (${winRatePct}%) — exiger une confluence stricte Market Profile + Orderflow avant d'émettre un setup.`);
+      } else if (winRatePct >= 60) {
+        recommendations.push(`Stratège : WinRate solide (${winRatePct}%) — maintenir les critères actuels sans sur-filtrer.`);
+      }
+      if (avgLoss < 0 && Math.abs(avgLoss) > Math.max(1, avgWin * 1.15)) {
+        recommendations.push(`Risques & Break-Even : Perte moyenne (${avgLoss.toFixed(2)}€) supérieure au gain moyen (+${avgWin.toFixed(2)}€) — relever le verrouillage Break-Even adaptatif vers 70-85% dès que +0.5R est atteint.`);
+      }
+      if (longStats.n >= 2 && shortStats.n >= 2) {
+        if (longStats.pnl < 0 && shortStats.pnl > 0) {
+          recommendations.push(`Analyste / Stratège : Biais LONG perdant (${longStats.pnl.toFixed(2)}€ sur ${longStats.n}t) vs SHORT gagnant (+${shortStats.pnl.toFixed(2)}€) — freiner les LONG sous résistance/VAH.`);
+        } else if (shortStats.pnl < 0 && longStats.pnl > 0) {
+          recommendations.push(`Analyste / Stratège : Biais SHORT perdant (${shortStats.pnl.toFixed(2)}€ sur ${shortStats.n}t) vs LONG gagnant (+${longStats.pnl.toFixed(2)}€) — freiner les SHORT sur support/VAL.`);
+        }
+      }
+      const worstAsset = [...assetBreakdown].sort((a, b) => a.pnl - b.pnl)[0];
+      if (worstAsset && worstAsset.pnl < -20) {
+        recommendations.push(`Exécution : ${worstAsset.symbol} pèse sur la fenêtre (${worstAsset.pnl.toFixed(2)}€ sur ${worstAsset.n}t) — élargir la marge anti-spread et réduire le levier effectif sur cet actif.`);
+      }
+      const bestAsset = [...assetBreakdown].sort((a, b) => b.pnl - a.pnl)[0];
+      if (bestAsset && bestAsset.pnl > 20) {
+        recommendations.push(`Allocation : ${bestAsset.symbol} est le moteur de performance (+${bestAsset.pnl.toFixed(2)}€) — prioriser ce flux tant que la liquidité reste propre.`);
+      }
+    }
+    if (rangeCount >= Math.max(1, Math.ceil(totalProfiles * 0.6))) {
+      recommendations.push(`Régime (${rangeCount}/${totalProfiles} actifs en Range) : Privilégier le Mean-Reversion aux bornes VAH/VAL avec Break-Even adaptatif agressif (75-90%).`);
+    } else if (totalProfiles > 0) {
+      recommendations.push(`Régime (${totalProfiles - rangeCount}/${totalProfiles} actifs directionnels) : Laisser respirer les runners avec Break-Even progressif 50-65% jusqu'à 75% du TP.`);
+    }
+
+    const avgDurMin =
+      closedFallback.length > 0
+        ? Math.round(closedFallback.reduce((a, e) => a + (e.durationMs || 0), 0) / closedFallback.length / 60_000)
+        : 0;
+    const detailedReportLines = [
+      `=== AUDIT DETAILLE REVIEWER (${new Date(now).toISOString().slice(11, 16)} UTC) ===`,
+      `Fenêtre analysée : ${closedFallback.length} trade(s) clôturé(s) | ${wins}W / ${losses}L (WinRate ${winRatePct}%) | Net : ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}€`,
+      `Espérance : Gain moyen +${avgWin.toFixed(2)}€ | Perte moyenne ${avgLoss.toFixed(2)}€ | Durée moyenne ${avgDurMin} min`,
+      `Répartition directionnelle : LONG ${longStats.n}t (${longStats.wins}W, ${longStats.pnl >= 0 ? "+" : ""}${longStats.pnl.toFixed(2)}€) | SHORT ${shortStats.n}t (${shortStats.wins}W, ${shortStats.pnl >= 0 ? "+" : ""}${shortStats.pnl.toFixed(2)}€)`,
+      `Contexte Market Profile : ${rangeCount}/${totalProfiles} actifs en Range`,
+      assetBreakdown.length > 0
+        ? `Par actif : ${assetBreakdown.map((a) => `${a.symbol} ${a.n}t (${a.wins}W, ${a.pnl >= 0 ? "+" : ""}${a.pnl.toFixed(2)}€)`).join(" · ")}`
+        : `Par actif : aucun trade sur la fenêtre.`,
+      `Directive Stratège injectée : ${directive}`,
+      `Recommandations IA :`,
+      ...recommendations.map((r, idx) => `  ${idx + 1}. ${r}`),
+    ];
+    const detailedReport = detailedReportLines.join("\n");
 
     const reviewEntry: SelfReflectionReviewEntry = {
       id: `REV-${new Date(now).toISOString().slice(11, 19).replace(/:/g, "")}-${(this.state.selfReflectionHistory?.length ?? 0) + 1}`,
@@ -3790,16 +3886,25 @@ export class TradingFloorDesk {
       totalProfiles,
       directive,
       breakdown,
+      detailedReport,
+      recommendations,
+      winRatePct,
+      avgWin,
+      avgLoss,
+      longStats,
+      shortStats,
+      assetBreakdown,
+      setupBreakdown,
     };
     this.state.selfReflectionHistory = [...(this.state.selfReflectionHistory ?? []), reviewEntry].slice(-96);
 
-    setAgentActivity(this.state, "reviewer", "logging", `Directive 15m : ${directive.slice(0, 48)}`, now, {
+    setAgentActivity(this.state, "reviewer", "logging", `Audit 15m : ${wins}W/${losses}L (${winRatePct}%)`, now, {
       targetAgent: "strategist",
     });
     emitPulse(this.state, "reviewer", "strategist", "log", "SELF_REFLECTION_15M", undefined, now);
     await this.say(
       "reviewer",
-      `[AUTO-RÉFLEXION 15M] ${closedFallback.length} trade(s) (${wins}W/${losses}L, PnL ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}€, Range ${rangeCount}/${totalProfiles}) | Directive Stratège : "${directive}" | Détail : ${breakdown}`,
+      `[AUTO-RÉFLEXION 15M] ${closedFallback.length} trade(s) (${wins}W/${losses}L, WR ${winRatePct}%, PnL ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}€, Gain moy +${avgWin.toFixed(2)}€ / Perte moy ${avgLoss.toFixed(2)}€) | LONG ${longStats.n}t (${longStats.pnl >= 0 ? "+" : ""}${longStats.pnl.toFixed(2)}€) vs SHORT ${shortStats.n}t (${shortStats.pnl >= 0 ? "+" : ""}${shortStats.pnl.toFixed(2)}€) | Directive : "${directive}" | Top Reco : ${recommendations[0] ?? "N/A"}`,
       "report",
     );
     this.store.save(this.state);
@@ -4232,7 +4337,7 @@ export class TradingFloorDesk {
         this.broadcast();
       }
 
-      // STOP-LOSS PROGRESSIF (Break-Even 50% dynamique du pic de gain)
+      // STOP-LOSS PROGRESSIF ADAPTATIF (Break-Even 50%..90% piloté par les agents selon le marché)
       if (this.state.settings?.progressiveStopEnabled) {
         const effectiveUnrealized =
           ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)
@@ -4245,7 +4350,17 @@ export class TradingFloorDesk {
         const activePeak = ticket.peakProfitUsd ?? 0;
         const minActivatePeakUsd = Math.max(15, ticket.riskUsd * 0.25, ticket.fees * 1.5);
         if (activePeak >= minActivatePeakUsd) {
-          const floorUsd = Number((activePeak * 0.5).toFixed(2));
+          const tapeRowBe = this.state.tape.find((r) => r.symbol === ticket.asset);
+          const tickDeltaPct = tapeRowBe && tapeRowBe.prev > 0 ? ((mark - tapeRowBe.prev) / tapeRowBe.prev) * 100 : 0;
+          const adaptiveBe = ActiveTradeManager.computeAdaptiveBreakEvenRatio(ticket, mark, {
+            tickDeltaPct,
+            marketProfile: this.state.marketProfiles?.[ticket.asset],
+            volatilityShieldActive: (this.state.volatilityShieldUntil ?? 0) > now,
+          });
+          ticket.progressiveLockRatio = adaptiveBe.ratio;
+          ticket.progressiveLockReason = adaptiveBe.reason;
+          const lockPct = Math.round(adaptiveBe.ratio * 100);
+          const floorUsd = Number((activePeak * adaptiveBe.ratio).toFixed(2));
           if (floorUsd > (ticket.progressiveStopUsd ?? 0)) {
             const firstLock = (ticket.progressiveStopUsd ?? 0) <= 0;
             ticket.progressiveStopUsd = floorUsd;
@@ -4268,7 +4383,7 @@ export class TradingFloorDesk {
             if (firstLock || floorUsd >= 25) {
               this.say(
                 "risk",
-                `[BREAK-EVEN PROGRESSIF 50%] ${ticket.id} (${ticket.asset}) : pic ${fmtSignedUsd(activePeak, 2)} -> plancher de gain sécurisé à ${fmtSignedUsd(floorUsd, 2)}.`,
+                `[BREAK-EVEN ADAPTATIF ${lockPct}%] ${ticket.id} (${ticket.asset}) : pic ${fmtSignedUsd(activePeak, 2)} -> plancher sécurisé à ${fmtSignedUsd(floorUsd, 2)} (${adaptiveBe.reason}).`,
                 "plain",
                 ticket.id,
               ).catch(() => {});
@@ -4280,6 +4395,7 @@ export class TradingFloorDesk {
           effectiveUnrealized <= (ticket.progressiveStopUsd ?? 0) &&
           effectiveUnrealized > 0
         ) {
+          const lockPct = Math.round((ticket.progressiveLockRatio ?? 0.5) * 100);
           await this.closeOpenTicket(
             ticket,
             mark,
@@ -4289,7 +4405,7 @@ export class TradingFloorDesk {
           );
           await this.say(
             "execution",
-            `[BREAK-EVEN PROGRESSIF 50%] Clôture gagnante de ${ticket.id} (${ticket.asset}) : gain sécurisé ${fmtSignedUsd(effectiveUnrealized, 2)} (pic +${fmtUsd(ticket.peakProfitUsd ?? 0, 2)}, seuil 50% +${fmtUsd(ticket.progressiveStopUsd ?? 0, 2)}).`,
+            `[BREAK-EVEN ADAPTATIF ${lockPct}%] Clôture gagnante de ${ticket.id} (${ticket.asset}) : gain sécurisé ${fmtSignedUsd(effectiveUnrealized, 2)} (pic +${fmtUsd(ticket.peakProfitUsd ?? 0, 2)}, seuil ${lockPct}% +${fmtUsd(ticket.progressiveStopUsd ?? 0, 2)} | ${ticket.progressiveLockReason ?? "Standard"}).`,
             "fill",
             ticket.id,
           );

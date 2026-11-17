@@ -1457,3 +1457,105 @@ test("Equity spike sanitizer (174k fix), MT5 closedDeals export/sync, breakout f
   assert.ok(scriptMatch && scriptMatch[1]);
   assert.doesNotThrow(() => new Function(scriptMatch[1]));
 });
+
+test("Adaptive Break-Even 50-90%, dedicated Audit Reviewer tab & closed 3D Quant Room", async () => {
+  // 1. Adaptive Break-Even ratio stays strictly within [0.50, 0.90] and responds to context
+  const baseTicket = {
+    id: "TF-BE-01",
+    asset: "XAUUSD",
+    direction: "long" as const,
+    playbook: "breakout" as const,
+    thesis: "Breakout test",
+    entry: 3800,
+    invalidation: 3780,
+    target: 3850,
+    timeStopHours: 4,
+    notional: 10_000,
+    qty: 2.6,
+    riskUsd: 52,
+    riskPct: 0.01,
+    exposurePct: 0.2,
+    binding: "risk" as const,
+    producedBy: ["strategist" as const],
+    status: "open" as const,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+    fillPrice: 3800,
+    fees: 1,
+    funding: 0,
+    backtest: {
+      playbook: "breakout" as const,
+      rules: "test",
+      source: "test",
+      inSample: { label: "IS", bars: 100, trades: 10, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.2, deflatedSharpe: 0.5, maxDrawdownR: 2, var95R: 1, pass: true },
+      outOfSample: { label: "OOS", bars: 50, trades: 5, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.2, deflatedSharpe: 0.5, maxDrawdownR: 2, var95R: 1, pass: true },
+      pass: true,
+    },
+  };
+
+  const baseMp = {
+    symbol: "XAUUSD",
+    poc: 3810,
+    vah: 3860,
+    val: 3780,
+    sessionHigh: 3865,
+    sessionLow: 3775,
+    totalVolume: 1000,
+    valueAreaPct: 0.7,
+    isRange: false,
+    pricePosition: "inside_va" as const,
+    updatedAt: Date.now(),
+  };
+
+  const trendLow = ActiveTradeManager.computeAdaptiveBreakEvenRatio(baseTicket, 3812, {
+    tickDeltaPct: 0.05,
+    marketProfile: { ...baseMp, isRange: false, vah: 3860, val: 3780 },
+    volatilityShieldActive: false,
+  });
+  assert.ok(trendLow.ratio >= 0.5 && trendLow.ratio <= 0.6, `Expected low lock ratio in clean trend, got ${trendLow.ratio}`);
+
+  const rangeTight = ActiveTradeManager.computeAdaptiveBreakEvenRatio(baseTicket, 3845, {
+    tickDeltaPct: -0.04,
+    marketProfile: { ...baseMp, isRange: true, vah: 3848, val: 3790 },
+    volatilityShieldActive: true,
+  });
+  assert.ok(rangeTight.ratio >= 0.8 && rangeTight.ratio <= 0.9, `Expected high lock ratio in range near VAH + reversal, got ${rangeTight.ratio}`);
+
+  // 2. Rich Reviewer self-reflection populates detailedReport & recommendations
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-rev-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "rl_policy_memory.json"), join(dir, "reviewer_reports.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+    const now = Date.now();
+    desk.state.tickets.push(
+      { ...baseTicket, id: "TF-REV-W", status: "closed", closedAt: now - 30_000, pnl: 140, closeReason: "target" },
+      { ...baseTicket, id: "TF-REV-L", direction: "short", status: "closed", closedAt: now - 10_000, pnl: -60, closeReason: "invalidation" },
+    );
+    await desk.runAgenticSelfReflection(now, 10);
+    const lastRev = desk.state.selfReflectionHistory?.[desk.state.selfReflectionHistory.length - 1];
+    assert.ok(lastRev);
+    assert.equal(lastRev.tradesAnalyzed, 2);
+    assert.equal(lastRev.winRatePct, 50);
+    assert.ok(lastRev.detailedReport && lastRev.detailedReport.includes("AUDIT DETAILLE REVIEWER"));
+    assert.ok(Array.isArray(lastRev.recommendations) && lastRev.recommendations.length > 0);
+    assert.ok(lastRev.longStats && lastRev.longStats.n === 1);
+    assert.ok(lastRev.shortStats && lastRev.shortStats.n === 1);
+    assert.ok(Array.isArray(lastRev.assetBreakdown) && lastRev.assetBreakdown.length === 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 3. Dedicated Reviewer Tab & Closed 3D Quant Room compiled cleanly
+  assert.ok(DASHBOARD_HTML.includes('id="view-reviewer"'));
+  assert.ok(DASHBOARD_HTML.includes("renderReviewerTab()"));
+  assert.ok(DASHBOARD_HTML.includes("Break-Even 50-90% Adaptatif"));
+  assert.ok(DASHBOARD_HTML.includes("backWall"));
+  assert.ok(DASHBOARD_HTML.includes("frontWall"));
+  assert.ok(DASHBOARD_HTML.includes("ceilingMesh"));
+  const scriptMatch2 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(scriptMatch2 && scriptMatch2[1]);
+  assert.doesNotThrow(() => new Function(scriptMatch2[1]));
+});

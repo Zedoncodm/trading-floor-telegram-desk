@@ -336,6 +336,15 @@ export type SelfReflectionReviewEntry = {
   totalProfiles: number;
   directive: string;
   breakdown: string;
+  detailedReport?: string;
+  recommendations?: string[];
+  winRatePct?: number;
+  avgWin?: number;
+  avgLoss?: number;
+  longStats?: { n: number; wins: number; pnl: number };
+  shortStats?: { n: number; wins: number; pnl: number };
+  assetBreakdown?: Array<{ symbol: string; n: number; wins: number; pnl: number }>;
+  setupBreakdown?: Array<{ setup: string; n: number; wins: number; pnl: number }>;
 };
 
 export type MarketSnapshot = {
@@ -475,6 +484,8 @@ export type Ticket = {
   hardSlSyncedAt?: number;
   peakProfitUsd?: number;
   progressiveStopUsd?: number;
+  progressiveLockRatio?: number;
+  progressiveLockReason?: string;
   timeStopMs?: number;
   fvgMidPrice?: number;
   dsrScore?: number;

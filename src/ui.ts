@@ -1642,6 +1642,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       <div class="dock-tooltip">Salon &amp; Télémétrie</div>
     </button>
+    <button class="dock-btn" data-tab="reviewer" onclick="switchTab(&quot;reviewer&quot;)" aria-label="Audit Reviewer 15m (Raccourci 6)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <div class="dock-tooltip">Audit Reviewer</div>
+    </button>
     <button class="dock-btn" onclick="openDrawer(&quot;themeDrawer&quot;)" aria-label="Thèmes et Préférences (Raccourci T)">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
       <div class="dock-tooltip">Thèmes</div>
@@ -1915,6 +1919,104 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
+  <!-- ==================== TAB 6: AUDIT REVIEWER 15M & POST-MORTEMS ==================== -->
+  <section id="view-reviewer" class="view-panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      <div>
+        <div class="card-title" style="font-size:15px">Audit Reviewer IA (Cycle 15 min) &amp; Amélioration Continue</div>
+        <div style="font-size:11.5px;color:var(--fg-2);margin-top:2px">
+          Rapports détaillés des trades passés, biais LONG/SHORT, performance par actif &amp; recommandations directes pour calibrer les agents.
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span id="revTabCountdown" class="chip mono" style="font-size:11px">Prochain audit : --:--</span>
+        <button type="button" class="pill-btn primary btn-trigger-review15m" onclick="triggerSelfReflectionNow()">Lancer Audit Complet Reviewer</button>
+      </div>
+    </div>
+
+    <div class="glass-card" style="padding:14px;margin-bottom:12px;border-left:3px solid #38bdf8">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#38bdf8;margin-bottom:4px">Directive Active Injectée au Stratège</div>
+      <div id="revTabDirective" style="font-size:13px;font-weight:600;color:var(--fg-0);line-height:1.45">En attente du premier audit 15m...</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:10px;margin-bottom:12px">
+      <div class="glass-card" style="padding:12px">
+        <div style="font-size:10.5px;color:var(--fg-3);text-transform:uppercase">WinRate Fenêtre</div>
+        <div id="revKpiWinRate" class="mono" style="font-size:20px;font-weight:800;margin-top:4px">--%</div>
+        <div id="revKpiWlCount" class="mono" style="font-size:11px;color:var(--fg-2);margin-top:2px">0W / 0L</div>
+      </div>
+      <div class="glass-card" style="padding:12px">
+        <div style="font-size:10.5px;color:var(--fg-3);text-transform:uppercase">Gain Moyen</div>
+        <div id="revKpiAvgWin" class="mono up" style="font-size:20px;font-weight:800;margin-top:4px">+0.00€</div>
+        <div style="font-size:11px;color:var(--fg-2);margin-top:2px">Trades gagnants</div>
+      </div>
+      <div class="glass-card" style="padding:12px">
+        <div style="font-size:10.5px;color:var(--fg-3);text-transform:uppercase">Perte Moyenne</div>
+        <div id="revKpiAvgLoss" class="mono down" style="font-size:20px;font-weight:800;margin-top:4px">0.00€</div>
+        <div style="font-size:11px;color:var(--fg-2);margin-top:2px">Trades perdants</div>
+      </div>
+      <div class="glass-card" style="padding:12px">
+        <div style="font-size:10.5px;color:var(--fg-3);text-transform:uppercase">Biais LONG vs SHORT</div>
+        <div id="revKpiDirSplit" class="mono" style="font-size:13px;font-weight:700;margin-top:6px">--</div>
+        <div id="revKpiNetPnl" class="mono" style="font-size:11px;color:var(--fg-2);margin-top:4px">Net : 0.00€</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:12px;margin-bottom:12px">
+      <div class="glass-card" style="padding:14px">
+        <div class="card-hdr" style="margin-bottom:8px">
+          <span class="card-title">Recommandations IA pour Améliorer les Agents</span>
+        </div>
+        <div id="revTabRecommendations" style="display:flex;flex-direction:column;gap:7px;font-size:12px;line-height:1.45;color:var(--fg-1)"></div>
+        <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+          <div style="font-size:11px;font-weight:700;color:var(--fg-2);margin-bottom:6px">Rapport Analytique Complet du Reviewer</div>
+          <pre id="revTabDetailedReport" class="mono" style="margin:0;white-space:pre-wrap;font-size:11px;line-height:1.45;color:var(--fg-2);background:rgba(15,23,42,0.45);padding:10px;border-radius:8px;max-height:240px;overflow-y:auto"></pre>
+        </div>
+      </div>
+
+      <div class="glass-card" style="padding:14px;display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div class="card-hdr" style="margin-bottom:6px"><span class="card-title">Performance par Actif &amp; par Setup</span></div>
+          <div id="revTabBreakdowns" style="font-size:11.5px;color:var(--fg-1);display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px">
+          <div class="card-hdr" style="margin-bottom:6px"><span class="card-title">Historique des Audits 15m</span></div>
+          <div id="revTabTimeline" style="display:flex;flex-direction:column;gap:7px;max-height:230px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:12px">
+      <div class="glass-card" style="padding:14px">
+        <div class="card-hdr" style="margin-bottom:8px">
+          <span class="card-title">Détail des Derniers Trades Clôturés (Post-Mortems)</span>
+        </div>
+        <div style="overflow-x:auto;max-height:290px;overflow-y:auto">
+          <table class="tbl" style="width:100%;font-size:11.5px">
+            <thead>
+              <tr>
+                <th>Heure</th>
+                <th>Actif</th>
+                <th>Sens</th>
+                <th>Setup</th>
+                <th>Motif</th>
+                <th style="text-align:right">PnL</th>
+              </tr>
+            </thead>
+            <tbody id="revTabPostMortemBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="glass-card" style="padding:14px">
+        <div class="card-hdr" style="margin-bottom:8px">
+          <span class="card-title">Journal d'Expression du Reviewer</span>
+        </div>
+        <div id="revTabMessages" style="display:flex;flex-direction:column;gap:7px;max-height:290px;overflow-y:auto;font-size:11.5px"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ==================== TAB 5: STRATÉGIE, RISQUE & ENTRAÎNEMENT IA (BENTO COMPACT) ==================== -->
   <section id="view-strategy" class="view-panel">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
@@ -1940,8 +2042,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <div class="card-hdr" style="margin-bottom:8px">
             <span class="card-title">Gestion du Risque, Stop-Loss &amp; Take Profit</span>
             <div style="display:flex;align-items:center;gap:6px">
-              <button type="button" id="btnToggleProgressiveStop" class="prog-stop-btn" onclick="toggleProgressiveStop()" title="Verrouille un Stop-Loss dynamique à 50% du pic de profit (ex: +100 € -> Break-Even sécurisé à +50 €)">
-                <span>Break-Even 50% Progressif :</span>
+              <button type="button" id="btnToggleProgressiveStop" class="prog-stop-btn" onclick="toggleProgressiveStop()" title="Break-Even adaptatif (50% à 90%) piloté en temps réel par les agents selon la proximité VAH/VAL, Range, TP et micro-retournements">
+                <span>Break-Even 50-90% Adaptatif :</span>
                 <strong id="lblProgStopState">INACTIF</strong>
               </button>
               <input id="cfgProgressiveSlEnabled" type="checkbox" style="display:none" onchange="syncProgressiveStopUi(this.checked)" />
@@ -2982,7 +3084,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           undoDrawing();
           return;
         }
-        var tabs = { '1': 'desk', '2': 'chat', '3': 'charts', '4': 'journal', '5': 'strategy' };
+        var tabs = { '1': 'desk', '2': 'chat', '3': 'charts', '4': 'journal', '5': 'strategy', '6': 'reviewer' };
         if (tabs[e.key]) { switchTab(tabs[e.key]); return; }
         if (e.key.toLowerCase() === 't') {
           var td = document.getElementById('themeDrawer');
@@ -3035,6 +3137,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           populateStrategyForm(deskState.settings, false);
         }
         setTimeout(function () { updateLiveRiskCalculator(); }, 40);
+      }
+      if (tab === 'reviewer') {
+        renderReviewerTab();
       }
     }
 
@@ -3979,8 +4084,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       scene3d.fog = new THREE.FogExp2(0x03060c, 0.022);
 
       camera3d = new THREE.PerspectiveCamera(46, w / h, 0.1, 220);
-      camera3d.position.set(0, 11.2, 19.5);
-      camera3d.lookAt(0, 0.2, 0);
+      camera3d.position.set(0, 7.6, 13.4);
+      camera3d.lookAt(0, 0.0, -1.0);
 
       renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: true });
       renderer3d.setSize(w, h);
@@ -3988,29 +4093,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderer3d.shadowMap.enabled = true;
       renderer3d.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer3d.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer3d.toneMappingExposure = 1.25;
+      renderer3d.toneMappingExposure = 1.28;
       host.innerHTML = '';
       host.appendChild(renderer3d.domElement);
 
-      ambient3d = new THREE.AmbientLight(0x94a3b8, 0.75);
+      ambient3d = new THREE.AmbientLight(0x94a3b8, 0.92);
       scene3d.add(ambient3d);
 
-      spot3d = new THREE.SpotLight(0x38bdf8, 3.0, 56, Math.PI / 2.8, 0.45, 1.1);
-      spot3d.position.set(0, 17, 6);
+      spot3d = new THREE.SpotLight(0x38bdf8, 3.2, 56, Math.PI / 2.6, 0.45, 1.0);
+      spot3d.position.set(0, 8.6, 4.0);
       spot3d.castShadow = true;
       spot3d.shadow.mapSize.width = 1024;
       spot3d.shadow.mapSize.height = 1024;
       scene3d.add(spot3d);
 
-      var warmRim = new THREE.PointLight(0x10b981, 1.6, 36);
-      warmRim.position.set(9, 7, 7);
+      var warmRim = new THREE.PointLight(0x10b981, 1.7, 36);
+      warmRim.position.set(9, 6.2, 6);
       scene3d.add(warmRim);
 
-      var coolRim = new THREE.PointLight(0xa855f7, 1.7, 36);
-      coolRim.position.set(-9, 7, -8);
+      var coolRim = new THREE.PointLight(0xa855f7, 1.8, 36);
+      coolRim.position.set(-9, 6.2, -7);
       scene3d.add(coolRim);
 
-      // Open Architectural Studio Deck (NO central gyroscope/orb/circular ring)
+      // Closed Institutional Quant Trading Room (all 8 agents inside one shared room)
       coreMesh3d = null;
       ring1_3d = null;
       ring2_3d = null;
@@ -4020,16 +4125,93 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       profitBursts3d = [];
 
       var studioDeck = new THREE.Mesh(
-        new THREE.BoxGeometry(24, 0.34, 18.5),
+        new THREE.BoxGeometry(28.0, 0.36, 26.0),
         new THREE.MeshPhysicalMaterial({ color: 0x070d18, metalness: 0.68, roughness: 0.28, clearcoat: 0.65 })
       );
-      studioDeck.position.set(0, -1.68, 0);
+      studioDeck.position.set(0, -1.68, 1.8);
       studioDeck.receiveShadow = true;
       scene3d.add(studioDeck);
 
-      var grid = new THREE.GridHelper(32, 32, 0x1e3a5f, 0x0b1526);
-      grid.position.y = -1.50;
+      var grid = new THREE.GridHelper(27, 27, 0x1e3a5f, 0x0b1526);
+      grid.position.set(0, -1.49, 1.8);
       scene3d.add(grid);
+
+      // ==================== PIÈCE FERMÉE QUANT DESK (4 MURS + PLAFOND + ÉCRAN WALL STREET) ====================
+      var roomWallMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.72, metalness: 0.28 });
+      var roomPanelMat = new THREE.MeshStandardMaterial({ color: 0x162238, roughness: 0.55, metalness: 0.42 });
+      var glassPanelMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, roughness: 0.12, metalness: 0.85 });
+      var ledBarMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 });
+
+      // Plinthe lumineuse périphérique
+      var trimMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(27.8, 0.08, 25.8),
+        new THREE.MeshBasicMaterial({ color: 0x1e3a8a, transparent: true, opacity: 0.35 })
+      );
+      trimMesh.position.set(0, -1.48, 1.8);
+      scene3d.add(trimMesh);
+
+      // Mur du fond (z = -11.0) + Écran géant Wall Street
+      var backWall = new THREE.Mesh(new THREE.BoxGeometry(28.2, 11.2, 0.4), roomWallMat);
+      backWall.position.set(0, 3.9, -11.0);
+      scene3d.add(backWall);
+
+      var tickerFrame = new THREE.Mesh(new THREE.BoxGeometry(16.8, 4.4, 0.18), roomPanelMat);
+      tickerFrame.position.set(0, 4.3, -10.72);
+      scene3d.add(tickerFrame);
+      var tickerScreen = new THREE.Mesh(new THREE.BoxGeometry(16.0, 3.8, 0.08), new THREE.MeshBasicMaterial({ color: 0x091a30 }));
+      tickerScreen.position.set(0, 4.3, -10.60);
+      scene3d.add(tickerScreen);
+      var tickerTopLed = new THREE.Mesh(new THREE.BoxGeometry(16.2, 0.08, 0.08), ledBarMat);
+      tickerTopLed.position.set(0, 6.26, -10.58);
+      scene3d.add(tickerTopLed);
+      var tickerBotLed = new THREE.Mesh(new THREE.BoxGeometry(16.2, 0.08, 0.08), ledBarMat);
+      tickerBotLed.position.set(0, 2.34, -10.58);
+      scene3d.add(tickerBotLed);
+
+      // Murs latéraux gauche/droit (x = ±14.0) avec piliers acoustiques & baies vitrées
+      [-14.0, 14.0].forEach(function (wallX) {
+        var sideWall = new THREE.Mesh(new THREE.BoxGeometry(0.4, 11.2, 26.2), roomWallMat);
+        sideWall.position.set(wallX, 3.9, 1.8);
+        scene3d.add(sideWall);
+        var sign = wallX < 0 ? 1 : -1;
+        for (var p = -6; p <= 6; p += 6) {
+          var pillar = new THREE.Mesh(new THREE.BoxGeometry(0.24, 10.6, 0.45), roomPanelMat);
+          pillar.position.set(wallX + sign * 0.25, 3.9, p);
+          scene3d.add(pillar);
+        }
+        var winGlass = new THREE.Mesh(new THREE.BoxGeometry(0.08, 5.0, 18.0), glassPanelMat);
+        winGlass.position.set(wallX + sign * 0.24, 3.6, 0.5);
+        scene3d.add(winGlass);
+        var sideLed = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 22.0), ledBarMat);
+        sideLed.position.set(wallX + sign * 0.28, 8.4, 1.5);
+        scene3d.add(sideLed);
+      });
+
+      // Mur avant derrière la caméra (z = +14.8) pour fermer complètement la salle
+      var frontWall = new THREE.Mesh(new THREE.BoxGeometry(28.2, 11.2, 0.4), roomWallMat);
+      frontWall.position.set(0, 3.9, 14.8);
+      scene3d.add(frontWall);
+
+      // Plafond fermé avec poutres LED encastrées (y = 9.4)
+      var ceilingMesh = new THREE.Mesh(new THREE.BoxGeometry(28.4, 0.4, 26.4), roomWallMat);
+      ceilingMesh.position.set(0, 9.4, 1.8);
+      scene3d.add(ceilingMesh);
+      [-5.5, 0, 5.5].forEach(function (beamZ) {
+        var ceilingBeam = new THREE.Mesh(new THREE.BoxGeometry(24.0, 0.14, 0.42), roomPanelMat);
+        ceilingBeam.position.set(0, 9.15, beamZ);
+        scene3d.add(ceilingBeam);
+        var beamLed = new THREE.Mesh(new THREE.BoxGeometry(22.0, 0.06, 0.12), ledBarMat);
+        beamLed.position.set(0, 9.06, beamZ);
+        scene3d.add(beamLed);
+      });
+
+      // Table centrale de briefing Quant au centre de la pièce
+      var centerTable = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.14, 2.2), roomPanelMat);
+      centerTable.position.set(0, -0.58, 0.2);
+      scene3d.add(centerTable);
+      var tableBase = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.9, 1.2), roomWallMat);
+      tableBase.position.set(0, -1.08, 0.2);
+      scene3d.add(tableBase);
 
       // Asymmetric Spatial Zones where each Agent builds its own custom environment & roams freely
       var STUDIO_ZONES = {
@@ -7880,9 +8062,151 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderJournalView();
       renderRlMetrics();
       renderAgentPromptsEditor();
+      renderReviewerTab();
       if (currentTab === 'journal') {
         if (!eqChart) renderEquityChart();
         else updateLiveEquityChart();
+      }
+    }
+
+    function renderReviewerTab() {
+      if (!deskState) return;
+      var hist = Array.isArray(deskState.selfReflectionHistory) ? deskState.selfReflectionHistory : [];
+      var latest = hist.length > 0 ? hist[hist.length - 1] : null;
+
+      var nextAt = deskState.lastSelfReflectionAt ? (deskState.lastSelfReflectionAt + 15 * 60 * 1000) : 0;
+      var remSec = nextAt > 0 ? Math.max(0, Math.round((nextAt - Date.now()) / 1000)) : 0;
+      var cdEl = document.getElementById('revTabCountdown');
+      if (cdEl) {
+        var mm = String(Math.floor(remSec / 60)).padStart(2, '0');
+        var ss = String(remSec % 60).padStart(2, '0');
+        cdEl.textContent = nextAt > 0 ? ('Prochain audit : ' + mm + ':' + ss) : 'Premier audit en attente';
+      }
+
+      var dirEl = document.getElementById('revTabDirective');
+      if (dirEl) {
+        dirEl.textContent = (latest && latest.directive) || deskState.current_market_regime_directive || 'En attente du premier audit 15m...';
+      }
+
+      var wrEl = document.getElementById('revKpiWinRate');
+      var wlEl = document.getElementById('revKpiWlCount');
+      var awEl = document.getElementById('revKpiAvgWin');
+      var alEl = document.getElementById('revKpiAvgLoss');
+      var dsEl = document.getElementById('revKpiDirSplit');
+      var npEl = document.getElementById('revKpiNetPnl');
+
+      if (latest) {
+        var wr = latest.winRatePct != null ? latest.winRatePct : (latest.tradesAnalyzed > 0 ? Math.round((latest.wins / latest.tradesAnalyzed) * 1000) / 10 : 0);
+        if (wrEl) {
+          wrEl.textContent = wr.toFixed(1) + '%';
+          wrEl.className = 'mono ' + (wr >= 50 ? 'up' : 'down');
+        }
+        if (wlEl) wlEl.textContent = (latest.wins || 0) + 'W / ' + (latest.losses || 0) + 'L (' + (latest.tradesAnalyzed || 0) + ' trades)';
+        if (awEl) awEl.textContent = '+' + Number(latest.avgWin || 0).toFixed(2) + '€';
+        if (alEl) alEl.textContent = Number(latest.avgLoss || 0).toFixed(2) + '€';
+        if (dsEl) {
+          var ls = latest.longStats || { n: 0, wins: 0, pnl: 0 };
+          var ss2 = latest.shortStats || { n: 0, wins: 0, pnl: 0 };
+          dsEl.textContent = 'L ' + (ls.n || 0) + 't (' + (ls.pnl >= 0 ? '+' : '') + Number(ls.pnl || 0).toFixed(1) + '€) · S ' + (ss2.n || 0) + 't (' + (ss2.pnl >= 0 ? '+' : '') + Number(ss2.pnl || 0).toFixed(1) + '€)';
+        }
+        if (npEl) {
+          npEl.textContent = 'Net : ' + (latest.netPnl >= 0 ? '+' : '') + Number(latest.netPnl || 0).toFixed(2) + '€ · Range ' + (latest.rangeCount || 0) + '/' + (latest.totalProfiles || 0);
+        }
+      }
+
+      var recHost = document.getElementById('revTabRecommendations');
+      if (recHost) {
+        var recs = (latest && Array.isArray(latest.recommendations) && latest.recommendations.length > 0)
+          ? latest.recommendations
+          : ["Cliquez sur 'Lancer Audit Complet Reviewer' pour générer une analyse détaillée des derniers trades et des recommandations pour chaque agent."];
+        recHost.innerHTML = recs.map(function (r, idx) {
+          return '<div style="padding:7px 9px;border-radius:7px;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.22)"><strong>#' + (idx + 1) + '</strong> · ' + escHtml(r) + '</div>';
+        }).join('');
+      }
+
+      var detHost = document.getElementById('revTabDetailedReport');
+      if (detHost) {
+        detHost.textContent = (latest && latest.detailedReport) ? latest.detailedReport : (latest ? (latest.breakdown + '\\n\\nDirective : ' + latest.directive) : 'Aucun rapport généré pour le moment.');
+      }
+
+      var bdHost = document.getElementById('revTabBreakdowns');
+      if (bdHost) {
+        var assets = (latest && Array.isArray(latest.assetBreakdown)) ? latest.assetBreakdown : [];
+        var setups = (latest && Array.isArray(latest.setupBreakdown)) ? latest.setupBreakdown : [];
+        var htmlParts = [];
+        if (assets.length > 0) {
+          htmlParts.push('<div style="font-weight:700;color:var(--fg-2)">Actifs</div>' + assets.map(function (a) {
+            var cls = a.pnl >= 0 ? 'up' : 'down';
+            return '<div style="display:flex;justify-content:space-between"><span>' + escHtml(a.symbol) + ' (' + (a.n || 0) + 't, ' + a.wins + 'W)</span><span class="mono ' + cls + '">' + (a.pnl >= 0 ? '+' : '') + Number(a.pnl).toFixed(2) + '€</span></div>';
+          }).join(''));
+        }
+        if (setups.length > 0) {
+          htmlParts.push('<div style="font-weight:700;color:var(--fg-2);margin-top:6px">Setups</div>' + setups.map(function (st) {
+            var cls = st.pnl >= 0 ? 'up' : 'down';
+            return '<div style="display:flex;justify-content:space-between"><span>' + escHtml(st.setup) + ' (' + (st.n || 0) + 't, ' + st.wins + 'W)</span><span class="mono ' + cls + '">' + (st.pnl >= 0 ? '+' : '') + Number(st.pnl).toFixed(2) + '€</span></div>';
+          }).join(''));
+        }
+        if (!htmlParts.length) {
+          htmlParts.push('<span style="color:var(--fg-3)">' + escHtml((latest && latest.breakdown) || 'Aucune ventilation disponible.') + '</span>');
+        }
+        bdHost.innerHTML = htmlParts.join('');
+      }
+
+      var tlHost = document.getElementById('revTabTimeline');
+      if (tlHost) {
+        if (!hist.length) {
+          tlHost.innerHTML = '<div style="color:var(--fg-3);font-size:11px">Aucun cycle 15m enregistré.</div>';
+        } else {
+          tlHost.innerHTML = hist.slice().reverse().slice(0, 12).map(function (ev) {
+            var hh = String(ev.atIso || '').slice(11, 16) || '--:--';
+            var cls = ev.netPnl >= 0 ? 'up' : 'down';
+            return '<div style="padding:7px 9px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid var(--border)">' +
+              '<div style="display:flex;justify-content:space-between;font-size:11px"><strong class="mono">' + hh + ' UTC</strong><span class="mono ' + cls + '">' + ev.wins + 'W/' + ev.losses + 'L · ' + (ev.netPnl >= 0 ? '+' : '') + Number(ev.netPnl).toFixed(2) + '€</span></div>' +
+              '<div style="font-size:11px;color:var(--fg-2);margin-top:3px">' + escHtml(ev.directive || '') + '</div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      var pmBody = document.getElementById('revTabPostMortemBody');
+      if (pmBody) {
+        var closedTickets = (deskState.tickets || []).filter(function (t) { return t.status === 'closed'; }).slice(-25).reverse();
+        if (!closedTickets.length) {
+          pmBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--fg-3)">Aucun trade clôturé.</td></tr>';
+        } else {
+          pmBody.innerHTML = closedTickets.map(function (t) {
+            var ts = t.closedAt ? new Date(t.closedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '--:--';
+            var pnl = Number(t.pnl || 0);
+            var cls = pnl >= 0 ? 'up' : 'down';
+            var dirCls = t.direction === 'long' ? 'up' : 'down';
+            var reason = t.closeReason || 'closed';
+            if (t.progressiveLockRatio) reason += ' (BE ' + Math.round(t.progressiveLockRatio * 100) + '%)';
+            return '<tr>' +
+              '<td class="mono">' + ts + '</td>' +
+              '<td><strong>' + escHtml(t.asset) + '</strong></td>' +
+              '<td class="mono ' + dirCls + '">' + String(t.direction || '').toUpperCase() + '</td>' +
+              '<td>' + escHtml(t.engine || t.playbook || '-') + '</td>' +
+              '<td style="color:var(--fg-2)">' + escHtml(reason) + '</td>' +
+              '<td class="mono ' + cls + '" style="text-align:right">' + (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '€</td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+
+      var msgHost = document.getElementById('revTabMessages');
+      if (msgHost) {
+        var revMsgs = (deskState.messages || []).filter(function (m) { return m.agentId === 'reviewer'; }).slice(-20).reverse();
+        if (!revMsgs.length) {
+          msgHost.innerHTML = '<div style="color:var(--fg-3)">Aucun message du Reviewer pour le moment.</div>';
+        } else {
+          msgHost.innerHTML = revMsgs.map(function (m) {
+            var ts = m.at ? new Date(m.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+            return '<div style="padding:7px 9px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid var(--border)">' +
+              '<div class="mono" style="font-size:10px;color:var(--fg-3);margin-bottom:3px">' + ts + ' · ' + escHtml(m.kind || 'report') + '</div>' +
+              '<div style="color:var(--fg-1);line-height:1.4">' + escHtml(m.text || '') + '</div>' +
+            '</div>';
+          }).join('');
+        }
       }
     }
 
