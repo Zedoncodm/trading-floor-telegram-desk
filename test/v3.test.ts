@@ -427,6 +427,7 @@ test("DASHBOARD_HTML compiles inline JS cleanly and renders 8 agents & all 5 V3 
   ]) {
     assert.ok(DASHBOARD_HTML.includes(needle), `Missing UI element: ${needle}`);
   }
+  assert.ok(!DASHBOARD_HTML.includes("CapsuleGeometry"), "Must not use Three.js r139+ CapsuleGeometry");
   const m = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
   assert.ok(m && m[1], "Expected main inline script tag");
   assert.doesNotThrow(() => new Function(m[1]));

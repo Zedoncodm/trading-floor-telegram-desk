@@ -1012,12 +1012,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* ================= TAB 5: ENTRAINEMENT IA & BENTO COMPACT ================= */
     .strat-bento-layout {
       display: grid;
-      grid-template-columns: minmax(0, 1.38fr) minmax(320px, 1fr);
+      grid-template-columns: minmax(0, 1.38fr) minmax(300px, 1fr);
       gap: 12px;
       align-items: start;
       padding-bottom: 16px;
     }
-    @media (max-width: 1120px) {
+    @media (max-width: 880px) {
       .strat-bento-layout { grid-template-columns: 1fr; }
     }
     .strat-col-stack {
@@ -2931,7 +2931,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var noseMat = new THREE.MeshBasicMaterial({ color: 0xf472b6 });
 
       // Body (sleek stretched oval silhouette)
-      var torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.46, 8, 16), furMat);
+      var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.19, 0.56, 16), furMat);
       torso.rotation.x = Math.PI / 2;
       torso.position.set(0, 0.34, 0);
       torso.castShadow = true;
@@ -3276,12 +3276,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         avatar.add(headGroup);
 
         // Expressive articulated holographic hands/fins that gesture when trading/analyzing
-        var armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.28, 6, 10), neonMat);
+        var armL = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.34, 10), neonMat);
         armL.position.set(-0.36, 0.74, 0.08);
         armL.rotation.z = 0.35;
         avatar.add(armL);
 
-        var armR = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.28, 6, 10), neonMat);
+        var armR = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.34, 10), neonMat);
         armR.position.set(0.36, 0.74, 0.08);
         armR.rotation.z = -0.35;
         avatar.add(armR);
