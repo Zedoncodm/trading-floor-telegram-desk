@@ -2089,3 +2089,26 @@ test("Quantitative Governance Modules 1-4: strict TCA, XAI Disagree-or-Commit PI
   assert.ok(scriptMatchGov && scriptMatchGov[1]);
   assert.doesNotThrow(() => new Function(scriptMatchGov[1]));
 });
+
+test("Non-Crypto calibration: tight 3-pip FX stops accepted, EA sets cryptoSupported=false, and UI ASSET_CATALOG excludes Crypto", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-fxonly-"));
+  try {
+    const store = new DeskStore(dir);
+    const state = store.loadOrCreate(85_000, "Europe/Paris", ["NZDUSD", "EURUSD", "XAUUSD"], 15);
+    // NZDUSD @ 0.54929 with 3.5-pip ATR stop (0.54894) -> 0.0637% distance MUST pass Risk sizing (never vetoed by 0.4% crypto floor)
+    const fxSized = computeLeveragedSizing(state, 0.54929, 0.54894, undefined, {
+      side: "long",
+      leverageFactor: 20,
+    });
+    assert.equal(fxSized.ok, true, `Expected 3.5-pip NZDUSD ATR stop to pass Risk sizing, got: ${fxSized.ok ? "ok" : fxSized.reason}`);
+    assert.ok((createDefaultSettings(["EURUSD"], 15).stopMinPct) <= 0.0002, "Default stopMinPct must be FX-calibrated <= 0.02%");
+
+    const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor("http://127.0.0.1:4080");
+    assert.ok(mq5.includes('cryptoSupported\\":false'));
+    assert.ok(mq5.includes('"NZDUSD"'));
+    assert.ok(!DASHBOARD_HTML.includes("id: 'crypto_majors'"));
+    assert.ok(!DASHBOARD_HTML.includes("id: 'memecoins'"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

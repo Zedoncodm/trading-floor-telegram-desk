@@ -97,7 +97,7 @@ export class DeskStore {
         }
         const base: Ticket = (!supersededClosed && prev) ? prev : {
           id,
-          asset: String(row.asset ?? "BTCUSDT"),
+          asset: String(row.asset ?? "EURUSD"),
           direction: row.direction === "short" ? "short" : "long",
           playbook: "breakout",
           engine: "breakout",
@@ -151,7 +151,7 @@ export class DeskStore {
   loadOrCreate(
     startEquity: number,
     tz: string,
-    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+    symbols = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD"],
     scanIntervalMin = 15,
     now = Date.now(),
   ): DeskState {

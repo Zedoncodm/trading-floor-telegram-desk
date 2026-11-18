@@ -493,10 +493,10 @@ export function computeLeveragedSizing(
   const requestedLev = Math.max(1, Math.min(500, Math.round(options.leverageFactor ?? state.settings?.defaultLeverage ?? 1)));
   const stopMin =
     requestedLev >= 25
-      ? 0.0002
+      ? 0.0001
       : isScalp
-        ? Math.min(state.settings?.stopMinPct ?? 0.004, 0.0003)
-        : Math.min(state.settings?.stopMinPct ?? 0.004, 0.0004);
+        ? Math.min(state.settings?.stopMinPct ?? 0.00015, 0.00015)
+        : Math.min(state.settings?.stopMinPct ?? 0.0002, 0.0002);
   const stopMax = state.settings?.stopMaxPct ?? 0.25;
 
   const rMode = state.settings?.riskMode ?? "pct";
@@ -1134,28 +1134,25 @@ export class TradingFloorDesk {
         leverage: mt5State.leverage,
         tradeAllowed: mt5State.tradeAllowed,
         positionsCount: mt5State.positions.length,
-        cryptoSupported: mt5State.cryptoSupported,
-        availableCryptos: mt5State.availableCryptos,
+        cryptoSupported: false,
+        availableCryptos: [],
         rejectedOrders: mt5State.rejectedOrders,
       };
       this.state.settings.mt5Connected = true;
       this.state.settings.mt5Login = String(mt5State.login);
       this.state.settings.mt5Server = mt5State.server;
-      const cryptoTag =
-        mt5State.cryptoSupported === false
-          ? ` · Crypto: indisponible sur ${mt5State.server}`
-          : mt5State.availableCryptos?.length
-            ? ` · ${mt5State.availableCryptos.length} crypto(s) MT5`
-            : "";
-      this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${mt5State.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s)${cryptoTag})`;
+      this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${mt5State.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s) · Forex/Métaux/Indices)`;
 
-      if (mt5State.cryptoSupported === false && this.lastCryptoNoticeServer !== serverKey) {
-        this.lastCryptoNoticeServer = serverKey;
-        await this.say(
-          "execution",
-          `[MT5 BROKER] Le serveur connecté (${mt5State.server}) ne propose aucun symbole Crypto. Les paires USDT non cotées par ce broker sont filtrées pour éviter les ordres fantômes ; connectez un compte MT5 Crypto (Exness, ICMarkets, Vantage, Eightcap ou FTMO) pour exécuter BTC/ETH/SOL/XRP sur MT5.`,
-          "veto",
-        );
+      const nonCryptoSyms = (this.state.settings.symbols ?? []).filter((s) => !s.toUpperCase().endsWith("USDT"));
+      if (nonCryptoSyms.length !== (this.state.settings.symbols ?? []).length) {
+        this.state.settings.symbols = nonCryptoSyms.length
+          ? nonCryptoSyms
+          : ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD"];
+        this.state.tape = this.state.tape.filter((r) => !r.symbol.toUpperCase().endsWith("USDT"));
+        if ((this.state.settings.focusSymbol ?? "").toUpperCase().endsWith("USDT")) {
+          this.state.settings.focusSymbol = "";
+        }
+        structuralChange = true;
       }
 
       // 1. Synchronisation stricte du Capital avec le compte MT5 réel (sans jamais effacer l'historique multi-mois)
@@ -3042,7 +3039,7 @@ export class TradingFloorDesk {
     const fvg = snap.fvgZone;
     if (fvg && fvg.bosConfirmed && style === "longtrade") {
       const entryLim = fvg.midPrice;
-      const risk = Math.max(Math.abs(entryLim - fvg.stopLevel), px * 0.008);
+      const risk = Math.max(Math.abs(entryLim - fvg.stopLevel), snap.atr || px * 0.0004);
       const stop = fvg.direction === "long" ? entryLim - risk : entryLim + risk;
       const target = fvg.direction === "long" ? entryLim + 2.5 * risk : entryLim - 2.5 * risk;
       return withConfluence({
@@ -3118,7 +3115,7 @@ export class TradingFloorDesk {
         });
       }
     }
-    if (Math.abs(ret1h) >= 0.003) {
+    if (Math.abs(ret1h) >= 0.0007) {
       const impDir: Direction = ret1h >= 0 ? "long" : "short";
       if ((impDir === "long" && tech.trendBias !== "bear") || (impDir === "short" && tech.trendBias !== "bull")) {
         return withConfluence({
@@ -3130,7 +3127,7 @@ export class TradingFloorDesk {
     }
     if (directiveForcesMeanRev && mp.vah > mp.val) {
       const mrDir: Direction = px >= mp.poc ? "short" : "long";
-      const minPocDist = Math.max(snap.atr || px * 0.001, (mp.vah - mp.val) * 0.25) * 1.5;
+      const minPocDist = Math.max(snap.atr || px * 0.0004, (mp.vah - mp.val) * 0.25) * 1.5;
       const nearBoundary = mrDir === "short" ? px >= mp.poc + (mp.vah - mp.poc) * 0.55 : px <= mp.poc - (mp.poc - mp.val) * 0.55;
       if (nearBoundary && Math.abs(px - mp.poc) >= minPocDist) {
         return withConfluence({
@@ -3143,7 +3140,7 @@ export class TradingFloorDesk {
     }
     // Pas de fallback aléatoire sur marché plat/sans confluence : exiger une impulsion et l'alignement EMA
     const socialBias = sentimentScore + (fomoLong - fomoShort);
-    const hasImpulse = Math.abs(ret1h) >= 0.0015 || ((snap.bars4h?.length ?? 0) > 0 && Math.abs(tech.momentum3Bars) >= 0.002);
+    const hasImpulse = Math.abs(ret1h) >= 0.0004 || ((snap.bars4h?.length ?? 0) > 0 && Math.abs(tech.momentum3Bars) >= 0.0006);
     if (!hasImpulse && Math.abs(socialBias) < 0.25) {
       return null;
     }
@@ -3276,22 +3273,12 @@ export class TradingFloorDesk {
       const hasActiveTicket = (sym: string) =>
         this.state.tickets.some((t) => t.asset === sym && (t.status === "open" || t.status === "pending"));
       const mt5AllowsSymbol = (sym: string) => {
+        const symUpper = sym.toUpperCase();
+        if (symUpper.endsWith("USDT")) return false;
         const mt5Live = this.state.mt5Live;
         if (!mt5Live?.connected) return true;
-        const symUpper = sym.toUpperCase();
         const unsup = this.mt5UnsupportedSymbols.get(symUpper);
         if (unsup && now - unsup.at < 600_000) return false;
-        if (symUpper.endsWith("USDT")) {
-          if (mt5Live.cryptoSupported === false) return false;
-          if (mt5Live.cryptoSupported === true && mt5Live.availableCryptos && mt5Live.availableCryptos.length > 0) {
-            const base = symUpper.replace(/USDT$/, "").replace(/^1000/, "");
-            const aliases = base === "BTC" ? ["BTC", "XBT", "BITCOIN"] : [base];
-            return mt5Live.availableCryptos.some((c) => {
-              const cu = c.toUpperCase().replace(/[^A-Z0-9]/g, "");
-              return aliases.some((a) => cu.includes(a));
-            });
-          }
-        }
         return true;
       };
       const focusSym = (this.state.settings?.focusSymbol ?? "").trim().toUpperCase();
@@ -3609,8 +3596,7 @@ export class TradingFloorDesk {
       const macroShieldApplied = this.isVolatilityShieldActive(now);
       let stopDist: number;
       let rewardMult: number;
-      const isCrypto = chosen.symbol.endsWith("USDT");
-      const minFloorPct = isCrypto ? 0.0015 : 0.00045;
+      const minPipFloor = 2 * pipSizeForAsset(chosen.symbol, entry);
       if (slMode === "pips" && rawSlVal > 0) {
         stopDist = rawSlVal * pipSizeForAsset(chosen.symbol, entry);
         rewardMult = this.state.settings.trainedRewardR || 2.0;
@@ -3618,17 +3604,17 @@ export class TradingFloorDesk {
         stopDist = entry * (rawSlVal / 100);
         rewardMult = this.state.settings.trainedRewardR || 2.0;
       } else if (isScalp) {
-        const fallbackDist = localAtr ? localAtr * Math.min(atrMult, 1.35) : entry * (isCrypto ? 0.0025 : 0.0009);
-        stopDist = Math.min(entry * 0.0045, Math.max(entry * minFloorPct, fallbackDist));
+        const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * Math.min(atrMult, 1.35) : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * Math.min(atrMult, 1.35) : entry * 0.0004);
+        stopDist = Math.min(entry * 0.006, Math.max(minPipFloor, rawAtrDist));
         rewardMult = Math.max(this.state.settings.trainedRewardR || 1.8, 1.5);
       } else {
-        const rawDist = localAtr ? localAtr * atrMult : entry * (isCrypto ? 0.025 : 0.0015);
-        stopDist = Math.min(entry * 0.06, Math.max(entry * (isCrypto ? 0.008 : 0.0006), rawDist));
+        const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * atrMult : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * atrMult : entry * 0.0005);
+        stopDist = Math.min(entry * 0.012, Math.max(minPipFloor, rawAtrDist));
         rewardMult = this.state.settings.trainedRewardR || (activePlaybook === "breakout" ? 2.0 : 1.6);
       }
       if (macroShieldApplied) {
-        const shieldAtrPad = (localAtr || chosen.atr || entry * 0.008) * 1.5;
-        stopDist = Math.min(entry * 0.2, stopDist + shieldAtrPad);
+        const shieldAtrPad = (localAtr || chosen.atr || entry * 0.0005) * 1.25;
+        stopDist = Math.min(entry * 0.02, stopDist + shieldAtrPad);
       }
       const invalidation =
         selectedIdea?.customStop && !macroShieldApplied
@@ -4763,14 +4749,14 @@ export class TradingFloorDesk {
         const tpMode = this.state.settings?.tpMode ?? "rr";
         const tpVal = Number(this.state.settings?.tpVal ?? 1.6);
 
-        let stopPct = 0.0018;
+        let stopPct = 0.0004;
         if (slMode === "pct" && Number(this.state.settings?.slVal ?? 0) > 0) {
-          stopPct = Math.max(0.0005, Math.min(0.05, Number(this.state.settings.slVal) / 100));
+          stopPct = Math.max(0.00015, Math.min(0.05, Number(this.state.settings.slVal) / 100));
         } else if (slMode === "pips" && Number(this.state.settings?.slVal ?? 0) > 0) {
-          stopPct = Math.max(0.0004, (Number(this.state.settings.slVal) * pipSizeForAsset(focusSym, livePx)) / livePx);
+          stopPct = Math.max(0.00015, (Number(this.state.settings.slVal) * pipSizeForAsset(focusSym, livePx)) / livePx);
         } else if (bars.length >= 14) {
           const atrAvg = bars.slice(-14).reduce((s, k) => s + (k.high - k.low), 0) / 14;
-          if (atrAvg > 0) stopPct = Math.max(0.0008, Math.min(0.004, (atrAvg * 0.65) / livePx));
+          if (atrAvg > 0) stopPct = Math.max(0.00015, Math.min(0.0020, (atrAvg * 0.85) / livePx));
         }
         const stopDist = livePx * stopPct;
         const stopPrice = dir === "long" ? livePx - stopDist : livePx + stopDist;
@@ -4780,7 +4766,7 @@ export class TradingFloorDesk {
             ? Math.min(eq * 0.1, Number(this.state.settings.riskAmount))
             : eq * Math.min(0.02, Math.max(0.001, (this.state.settings?.maxRiskPct ?? 0.01) * 0.5));
         const slotBudgetCap = (eq * Math.min(targetLev, 25)) / Math.max(4, Math.min(20, tpm * 0.5));
-        const rawNotional = Math.min(slotBudgetCap, Math.max(150, riskUsdBudget / Math.max(stopPct, 0.0008)));
+        const rawNotional = Math.min(slotBudgetCap, Math.max(150, riskUsdBudget / Math.max(stopPct, 0.00015)));
         const notional = Number(Math.max(100, rawNotional).toFixed(2));
         const qty = Number((notional / Math.max(livePx, 1e-9)).toFixed(6));
 
@@ -5682,10 +5668,14 @@ export class TradingFloorDesk {
         nextScalpSec = Math.max(1, Math.min(300, Math.round(Number(payload.settings.scalpIntervalSec) || 15)));
         nextTpm = Math.max(1, Math.min(60, Math.round(60 / nextScalpSec)));
       }
-      const nextFocusSym =
+      const rawFocusSym =
         payload.settings.focusSymbol !== undefined
           ? String(payload.settings.focusSymbol || "").trim().toUpperCase()
           : (this.state.settings.focusSymbol ?? "");
+      const nextFocusSym = rawFocusSym.endsWith("USDT") ? "" : rawFocusSym;
+      const sanitizedSymbols = payload.settings.symbols !== undefined
+        ? payload.settings.symbols.map((x) => x.trim().toUpperCase()).filter((x) => x && !x.endsWith("USDT"))
+        : undefined;
       const nextStrictQuota =
         payload.settings.strictQuotaMode !== undefined
           ? Boolean(payload.settings.strictQuotaMode)
@@ -5694,6 +5684,9 @@ export class TradingFloorDesk {
       this.state.settings = {
         ...this.state.settings,
         ...payload.settings,
+        ...(sanitizedSymbols !== undefined
+          ? { symbols: sanitizedSymbols.length ? sanitizedSymbols : ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD"] }
+          : {}),
         defaultLeverage: nextLev,
         tradesPerMinute: nextTpm,
         scalpIntervalSec: nextScalpSec,

@@ -2662,40 +2662,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <script>
     var ASSET_CATALOG = [
       {
-        id: 'crypto_majors',
-        cat: 'Crypto Majors & L1 / L2',
-        tag: 'CRYPTO',
+        id: 'forex',
+        cat: 'Forex (Devises Majeures)',
+        tag: 'FOREX',
         items: [
-          { s: 'BTCUSDT', l: 'Bitcoin (BTC)' },
-          { s: 'ETHUSDT', l: 'Ethereum (ETH)' },
-          { s: 'SOLUSDT', l: 'Solana (SOL)' },
-          { s: 'BNBUSDT', l: 'BNB (BNB)' },
-          { s: 'XRPUSDT', l: 'XRP (XRP)' },
-          { s: 'AVAXUSDT', l: 'Avalanche (AVAX)' },
-          { s: 'SUIUSDT', l: 'Sui (SUI)' },
-          { s: 'NEARUSDT', l: 'NEAR Protocol' },
-          { s: 'LINKUSDT', l: 'Chainlink (LINK)' },
-          { s: 'ADAUSDT', l: 'Cardano (ADA)' }
-        ]
-      },
-      {
-        id: 'memecoins',
-        cat: 'Memecoins & Hype Trading Desk',
-        tag: 'MEME',
-        items: [
-          { s: 'DOGEUSDT', l: 'Dogecoin (DOGE)' },
-          { s: '1000PEPEUSDT', l: 'Pepe (1000PEPE)' },
-          { s: '1000SHIBUSDT', l: 'Shiba Inu (1000SHIB)' },
-          { s: '1000BONKUSDT', l: 'Bonk (1000BONK)' },
-          { s: '1000FLOKIUSDT', l: 'Floki (1000FLOKI)' },
-          { s: 'WIFUSDT', l: 'dogwifhat (WIF)' },
-          { s: 'POPCATUSDT', l: 'Popcat (POPCAT)' },
-          { s: 'BOMEUSDT', l: 'Book of Meme (BOME)' },
-          { s: 'MEWUSDT', l: 'Cat in Dogs World (MEW)' },
-          { s: 'BRETTUSDT', l: 'Brett (BRETT)' },
-          { s: 'NEIROUSDT', l: 'First Neiro (NEIRO)' },
-          { s: 'FARTCOINUSDT', l: 'Fartcoin (FARTCOIN)' },
-          { s: 'TRUMPUSDT', l: 'Official Trump (TRUMP)' }
+          { s: 'EURUSD', l: 'EUR/USD' },
+          { s: 'GBPUSD', l: 'GBP/USD' },
+          { s: 'USDJPY', l: 'USD/JPY' },
+          { s: 'USDCHF', l: 'USD/CHF' },
+          { s: 'AUDUSD', l: 'AUD/USD' },
+          { s: 'USDCAD', l: 'USD/CAD' },
+          { s: 'NZDUSD', l: 'NZD/USD' }
         ]
       },
       {
@@ -5221,13 +5198,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function getActiveChartSymbol() {
       var el = document.getElementById('chartSymbolSelect');
-      return (el && el.value) || 'BTCUSDT';
+      return (el && el.value) || 'EURUSD';
     }
 
     function mapSymbolToTradingView(sym) {
-      var s = String(sym || 'BTCUSDT').toUpperCase();
-      if (s.endsWith('USDT')) return 'BINANCE:' + s;
-      if (/^(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|EURGBP|EURJPY)$/.test(s)) return 'FX:' + s;
+      var s = String(sym || 'EURUSD').toUpperCase();
+      if (/^(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD|EURGBP|EURJPY)$/.test(s)) return 'FX:' + s;
       if (s === 'XAUUSD' || s === 'XAGUSD') return 'OANDA:' + s;
       if (s === 'USOIL') return 'TVC:USOIL';
       if (s === 'NGAS') return 'NYMEX:NG1!';
@@ -7559,7 +7535,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     async function runOneClickAutopilot() {
       var btn = document.getElementById('btnAutoPilot1Click');
-      var sym = document.getElementById('grpoSymbolSelect').value || 'BTCUSDT';
+      var sym = document.getElementById('grpoSymbolSelect').value || 'EURUSD';
       var st = document.getElementById('grpoLiveStatus');
       var bar = document.getElementById('grpoProgressBar');
       btn.disabled = true;
@@ -8008,14 +7984,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
       var focusSel = document.getElementById('cfgFocusSymbol');
       if (focusSel) {
-        var symPool = (s.symbols && s.symbols.length ? s.symbols : (deskState.tape || []).map(function (r) { return r.symbol; }));
-        var cryptoDisabled = Boolean(deskState.mt5Live && deskState.mt5Live.connected && deskState.mt5Live.cryptoSupported === false);
-        var symsKey = symPool.join(',') + '|' + (cryptoDisabled ? 'nocryp' : 'all');
+        var symPool = (s.symbols && s.symbols.length ? s.symbols : (deskState.tape || []).map(function (r) { return r.symbol; }))
+          .filter(function (sym) { return !String(sym || '').toUpperCase().endsWith('USDT'); });
+        if (!symPool.length) symPool = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD', 'XAUUSD'];
+        var symsKey = symPool.join(',') + '|fx';
         if (focusSel.dataset.syms !== symsKey) {
           var prevVal = focusSel.value || focusLive;
           focusSel.innerHTML = '<option value="">Multi-Actifs (Analyse générale)</option>' + symPool.map(function (sym) {
             var u = String(sym).toUpperCase();
-            var tag = (cryptoDisabled && u.endsWith('USDT')) ? ' (Paper · hors MT5 Demo)' : (deskState.mt5Live && deskState.mt5Live.connected ? ' (MT5 Live)' : '');
+            var tag = (deskState.mt5Live && deskState.mt5Live.connected) ? ' (MT5 Live)' : '';
             return '<option value="' + u + '">' + u + tag + '</option>';
           }).join('');
           focusSel.dataset.syms = symsKey;
@@ -8168,7 +8145,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         }
       }
 
-      var activeSyms = s.symbols || ['BTCUSDT', 'ETHUSDT'];
+      var activeSyms = (s.symbols || ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'NZDUSD', 'XAUUSD']).filter(function (sym) {
+        return !String(sym || '').toUpperCase().endsWith('USDT');
+      });
+      if (!activeSyms.length) activeSyms = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'NZDUSD', 'XAUUSD'];
       var chkHost = document.getElementById('assetChecklistHost');
       if (chkHost && !chkHost.dataset.ready) {
         chkHost.innerHTML = ASSET_CATALOG.map(function (grp) {

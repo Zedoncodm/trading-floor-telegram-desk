@@ -985,18 +985,6 @@ void WriteMt5StateToFile() {
 
    string availCryptos = "";
    int cryptoFound = 0;
-   int totalSyms = SymbolsTotal(false);
-   for(int c = 0; c < totalSyms && cryptoFound < 30; c++) {
-      string cName = SymbolName(c, false);
-      string cPath = SymbolInfoString(cName, SYMBOL_PATH);
-      if(IsCryptoSymbolCandidate(cName, cPath)) {
-         if(SymbolSelect(cName, true)) {
-            if(cryptoFound > 0) availCryptos += ",";
-            availCryptos += "\\"" + JsonEscape(cName) + "\\"";
-            cryptoFound++;
-         }
-      }
-   }
 
    string json = "{";
    json += "\\"connected\\":true,";
@@ -1011,8 +999,8 @@ void WriteMt5StateToFile() {
    json += "\\"freeMargin\\":" + DoubleToString(freeM, 2) + ",";
    json += "\\"leverage\\":" + IntegerToString(lev) + ",";
    json += "\\"tradeAllowed\\":" + (allowed ? "true" : "false") + ",";
-   json += "\\"cryptoSupported\\":" + (cryptoFound > 0 ? "true" : "false") + ",";
-   json += "\\"availableCryptos\\":[" + availCryptos + "],";
+   json += "\\"cryptoSupported\\":false,";
+   json += "\\"availableCryptos\\":[],";
 
    json += "\\"positions\\":[";
    int posCount = PositionsTotal();
@@ -1052,7 +1040,7 @@ void WriteMt5StateToFile() {
    }
    json += "],";
 
-   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "XAUUSD", "BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD" };
+   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY", "XAUUSD", "XAGUSD" };
    json += "\\"quotes\\":[";
    bool firstQ = true;
    for(int q = 0; q < ArraySize(quoteSyms); q++) {

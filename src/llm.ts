@@ -124,7 +124,7 @@ export function createDefaultSettings(symbols: string[], scanIntervalMin: number
     maxRiskPct: 0.03,
     maxExposurePct: 0.10,
     maxDayLossPct: 0.05,
-    stopMinPct: 0.004,
+    stopMinPct: 0.00015,
     stopMaxPct: 0.25,
     minBacktestTrades90d: 6,
     minOosTrades30d: 3,

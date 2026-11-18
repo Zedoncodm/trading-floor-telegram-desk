@@ -187,7 +187,7 @@ function simulateEngineSlice(
 
     let dir: 1 | -1 | 0 = 0;
     let isMakerEntry = false;
-    let risk = Math.max(atr * atrMult, cur.close * (style === "scalping" ? 0.002 : 0.006));
+    let risk = Math.max(atr * atrMult, cur.close * (style === "scalping" ? 0.00015 : 0.0003));
     let entryRef = bars[i + 1].open;
 
     if (playbook === "breakout") {
@@ -198,7 +198,7 @@ function simulateEngineSlice(
     } else if (playbook === "fade") {
       const base = bars[Math.max(0, i - lookback)].close;
       const stretch = (cur.close - base) / Math.max(base, 1e-9);
-      const thresh = style === "scalping" ? 0.012 : 0.032;
+      const thresh = Math.max((atr * 2.2) / Math.max(base, 1e-9), style === "scalping" ? 0.0015 : 0.0035);
       if (stretch > thresh) dir = -1;
       else if (stretch < -thresh) dir = 1;
     } else if (playbook === "HFT_OrderFlow_Imbalance") {
@@ -210,7 +210,7 @@ function simulateEngineSlice(
       const pseudoZOfi = bodyImb * Math.min(3.5, Math.sqrt(Math.max(1, volRatio)) * 1.9);
       if (pseudoZOfi > ofiThresh && volRatio >= 2.0) dir = 1;
       else if (pseudoZOfi < -ofiThresh && volRatio >= 2.0) dir = -1;
-      risk = Math.max(atr * Math.min(atrMult, 0.7), cur.close * 0.002);
+      risk = Math.max(atr * Math.min(atrMult, 0.7), cur.close * 0.00015);
     } else if (playbook === "Session_VWAP_Reversion") {
       // VWAP glissant de session sur les ~20 dernières barres + SD + RSI(14) sans look-ahead
       const ses = slice;
@@ -225,12 +225,12 @@ function simulateEngineSlice(
         p2v += tp * tp * v;
       }
       const vwap = vv > 0 ? pv / vv : cur.close;
-      const sd = Math.max(Math.sqrt(Math.max(0, p2v / Math.max(vv, 1e-6) - vwap * vwap)), vwap * 0.002);
+      const sd = Math.max(Math.sqrt(Math.max(0, p2v / Math.max(vv, 1e-6) - vwap * vwap)), vwap * 0.0003);
       const rsi = computeRsi14(bars.slice(Math.max(0, i - 20), i + 1));
       const prev = bars[i - 1];
       if (prev.high >= vwap + 1.8 * sd && cur.close < vwap + 2.0 * sd && rsi > 65) dir = -1;
       else if (prev.low <= vwap - 1.8 * sd && cur.close > vwap - 2.0 * sd && rsi < 35) dir = 1;
-      risk = Math.max(atr * 1.5, cur.close * 0.004);
+      risk = Math.max(atr * 1.5, cur.close * 0.0003);
     } else if (playbook === "Macro_FVG_Mitigation") {
       const cPrev2 = bars[i - 2];
       const hi = Math.max(...bars.slice(i - 22, i - 2).map((b) => b.high));
@@ -259,10 +259,10 @@ function simulateEngineSlice(
       continue;
     }
 
-    // Coûts de friction réels : Frais Maker (0.02%) / Taker (0.04%) + Slippage dynamique proportionnel à l'ATR
-    const entryFeePct = isMakerEntry ? 0.0002 : 0.0004;
-    const exitFeePct = 0.0004;
-    const slippagePct = isMakerEntry ? 0 : Math.min(0.0015, 0.05 * (atr / entryRef));
+    // Coûts de friction Forex / CFD réalistes (0.2 à 0.4 bps + slippage ATR)
+    const entryFeePct = isMakerEntry ? 0.00002 : 0.00004;
+    const exitFeePct = 0.00004;
+    const slippagePct = isMakerEntry ? 0 : Math.min(0.0002, 0.03 * (atr / entryRef));
     const entrySlipPx = dir === 1 ? entryRef * (1 + slippagePct) : entryRef * (1 - slippagePct);
 
     const stop = dir === 1 ? entrySlipPx - risk : entrySlipPx + risk;

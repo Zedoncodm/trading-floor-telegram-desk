@@ -34,10 +34,10 @@ export class ActiveTradeManager {
     let takeProfit = ticket.target;
 
     if (!Number.isFinite(stopLoss) || stopLoss <= 0 || (isLong ? stopLoss >= entry : stopLoss <= entry)) {
-      stopLoss = isLong ? entry * 0.992 : entry * 1.008;
+      stopLoss = isLong ? entry * 0.999 : entry * 1.001;
     }
     if (!Number.isFinite(takeProfit) || takeProfit <= 0 || (isLong ? takeProfit <= entry : takeProfit >= entry)) {
-      const riskDist = Math.abs(entry - stopLoss) || entry * 0.008;
+      const riskDist = Math.abs(entry - stopLoss) || entry * 0.0004;
       takeProfit = isLong ? entry + riskDist * 2 : entry - riskDist * 2;
     }
     ticket.invalidation = stopLoss;

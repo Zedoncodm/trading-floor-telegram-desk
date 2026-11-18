@@ -81,12 +81,12 @@ export function loadConfig(argv: string[]): Config {
     if (!/^\d+$/.test(humanRaw)) throw new ConfigError("TG_HUMAN_USER_ID manquant ou invalide. Lancez npm run chat-id.");
   }
 
-  const symbols = (env("SYMBOLS") || "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT")
+  const symbols = (env("SYMBOLS") || "EURUSD,GBPUSD,USDJPY,USDCHF,AUDUSD,USDCAD,NZDUSD,XAUUSD")
     .split(",")
     .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+    .filter((s) => s && !s.endsWith("USDT"));
   for (const s of symbols) {
-    if (!/^[A-Z0-9]{2,20}USDT$/.test(s)) throw new ConfigError(`Symbole invalide : ${s} (format attendu : BTCUSDT).`);
+    if (!/^[A-Z0-9!./_-]{2,20}$/.test(s)) throw new ConfigError(`Symbole invalide : ${s}.`);
   }
 
   const timeZone = env("TZ_NAME") || "Europe/Paris";

@@ -110,7 +110,7 @@ const WHALE_13F_CONVICTIONS: Record<string, { holder: string; weightPct: number;
   MSFT: { holder: "Institutional 13F", weightPct: 7.8, bias: "bull" },
   NVDA: { holder: "Congrès PTR / 13F", weightPct: 9.2, bias: "bull" },
   TSLA: { holder: "Momentum 13F", weightPct: 4.1, bias: "bull" },
-  BTCUSDT: { holder: "ETF Spot Inflow", weightPct: 8.5, bias: "bull" },
+  EURUSD: { holder: "Institutional FX Flow", weightPct: 14.5, bias: "bull" },
   XAUUSD: { holder: "Central Banks / Hedge 13F", weightPct: 11.2, bias: "bull" },
 };
 
@@ -213,7 +213,7 @@ export class TraderSkillsEngine {
       return { state: "WAITING", reason: "Clôture de bougie pas encore confirmée hors de l'Opening Range." };
     }
     const distPastOr = orb.direction === "long" ? currentPx - orb.orHigh : orb.orLow - currentPx;
-    const maxChaseDist = Math.max(atr * 1.6, currentPx * 0.008);
+    const maxChaseDist = Math.max(atr * 1.6, currentPx * 0.0006);
     if (distPastOr > maxChaseDist) {
       return {
         state: "EXPIRED",
@@ -234,8 +234,8 @@ export class TraderSkillsEngine {
     atr: number,
     now = Date.now(),
   ): ExitPlanResult {
-    const minRisk = entryPrice * 0.002;
-    const maxRisk = entryPrice * 0.025;
+    const minRisk = Math.max(atr * 0.5, entryPrice * 0.00015);
+    const maxRisk = Math.max(atr * 3.5, entryPrice * 0.01);
     let stopPrice =
       direction === "long"
         ? Math.min(orb.orMid, entryPrice - Math.max(minRisk, atr * 1.1))
@@ -624,7 +624,7 @@ export class TraderSkillsEngine {
         ema20: refPrice,
         ema50: refPrice,
         rsi14: 50,
-        atr14: refPrice * 0.002,
+        atr14: refPrice * 0.0004,
         trendBias: "neutral",
         lastCandleBull: false,
         lastCandleBear: false,
@@ -670,14 +670,14 @@ export class TraderSkillsEngine {
       ema20,
       ema50,
       rsi14,
-      atr14: atr14 > 0 ? atr14 : close * 0.002,
+      atr14: atr14 > 0 ? atr14 : close * 0.0004,
       trendBias,
       lastCandleBull: last.close > last.open,
       lastCandleBear: last.close < last.open,
     };
   }
 
-  /** Formatteur lisible adapté Forex/Crypto */
+  /** Formatteur lisible adapté Forex / Métaux / Indices */
   private static fmtPrice(v: number): string {
     if (!Number.isFinite(v)) return "0";
     if (Math.abs(v) < 5) return v.toFixed(5);
@@ -711,7 +711,7 @@ export class TraderSkillsEngine {
     const now = params.now ?? Date.now();
     const entry = ticket.fillPrice ?? ticket.entry;
     const tech = TraderSkillsEngine.computeQuickTech(bars, exitPrice);
-    const atr = Math.max(tech.atr14, entry * 0.0012);
+    const atr = Math.max(tech.atr14, entry * 0.0004);
 
     const isManualCut =
       netPnl < 0 && (mt5DealReason === "MANUAL" || reason === "flatten");
