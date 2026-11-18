@@ -3613,15 +3613,15 @@ export class TradingFloorDesk {
               try { addTfSet("15m", await fetchBinanceKlines(candidate.symbol, "15m", 300)); } catch {}
             }
           } else if (pTf === "1h") {
-            if (bars1hFrom15m.length >= 60) {
-              addTfSet("1h", bars1hFrom15m);
-            } else if (!candidate.symbol.endsWith("USDT") && bars4h.length >= 60) {
+            if (!candidate.symbol.endsWith("USDT") && bars4h.length >= Math.max(60, bars1hFrom15m.length)) {
               addTfSet("1h", bars4h);
+            } else if (bars1hFrom15m.length >= 60) {
+              addTfSet("1h", bars1hFrom15m);
             } else if (candidate.symbol.endsWith("USDT")) {
               try { addTfSet("1h", await fetchBinanceKlines(candidate.symbol, "1h", 300)); } catch {}
             }
           } else if (pTf === "4h") {
-            addTfSet("4h", bars4hFrom1h.length >= 60 ? bars4hFrom1h : bars4h);
+            addTfSet("4h", bars4hFrom1h.length >= 220 ? bars4hFrom1h : bars4h);
           } else if (pTf === "1m") {
             addTfSet("1m", bars1m);
           }
@@ -3685,8 +3685,12 @@ export class TradingFloorDesk {
                 now,
                 idea,
               );
+              const tmBars =
+                idea.customStop !== undefined && bars15m.length >= 60
+                  ? bars15m
+                  : tfSet.bars;
               const candTm = TraderSkillsEngine.runTimeMachineSimulation(
-                tfSet.bars,
+                tmBars,
                 idea.dir,
                 candLevels.entry,
                 candLevels.finalStop,
@@ -3694,7 +3698,7 @@ export class TradingFloorDesk {
                 2500,
               );
               if (!candTm.pass) {
-                if (!bestFailedForCand) {
+                if (!bestFailedForCand || !/TimeMachine/i.test(bestFailedForCand.bt.killReason ?? "")) {
                   bestFailedForCand = {
                     bt: { ...bt, pass: false, killReason: candTm.verdict },
                     playbook: activePlaybook,
