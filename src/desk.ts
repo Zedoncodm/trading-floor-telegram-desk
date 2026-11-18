@@ -490,8 +490,8 @@ export function computeLeveragedSizing(
     requestedLev >= 25
       ? 0.0002
       : isScalp
-        ? Math.min(state.settings?.stopMinPct ?? 0.004, 0.001)
-        : (state.settings?.stopMinPct ?? 0.004);
+        ? Math.min(state.settings?.stopMinPct ?? 0.004, 0.0003)
+        : Math.min(state.settings?.stopMinPct ?? 0.004, 0.0004);
   const stopMax = state.settings?.stopMaxPct ?? 0.25;
 
   const rMode = state.settings?.riskMode ?? "pct";
@@ -2625,7 +2625,11 @@ export class TradingFloorDesk {
         const rel = (z.price - px) / Math.max(px, 1e-9);
         return dir === "long" ? rel >= 0.002 && rel <= 0.045 : rel <= -0.002 && rel >= -0.045;
       });
-      return directionalZones[0]?.price ?? fallbackTarget;
+      const mag = directionalZones[0]?.price;
+      if (mag && fallbackTarget && Math.abs(mag - px) < Math.abs(fallbackTarget - px)) {
+        return fallbackTarget;
+      }
+      return mag ?? fallbackTarget;
     };
 
     const withConfluence = (
@@ -2923,14 +2927,18 @@ export class TradingFloorDesk {
         });
       }
     }
-    if (directiveForcesMeanRev) {
+    if (directiveForcesMeanRev && mp.vah > mp.val) {
       const mrDir: Direction = px >= mp.poc ? "short" : "long";
-      return withConfluence({
-        dir: mrDir,
-        playbook: "fade",
-        thesis: `Directive Reviewer Mean-Reversion (${fmtPx(px)} vs POC ${fmtPx(mp.poc)}) : retour à la moyenne dans Value Area [${fmtPx(mp.val)} - ${fmtPx(mp.vah)}].`,
-        customTarget: mp.poc,
-      });
+      const minPocDist = Math.max(snap.atr || px * 0.001, (mp.vah - mp.val) * 0.25) * 1.5;
+      const nearBoundary = mrDir === "short" ? px >= mp.poc + (mp.vah - mp.poc) * 0.55 : px <= mp.poc - (mp.poc - mp.val) * 0.55;
+      if (nearBoundary && Math.abs(px - mp.poc) >= minPocDist) {
+        return withConfluence({
+          dir: mrDir,
+          playbook: "fade",
+          thesis: `Directive Reviewer Mean-Reversion (${fmtPx(px)} vs POC ${fmtPx(mp.poc)}) : retour à la moyenne depuis borne VA [${fmtPx(mp.val)} - ${fmtPx(mp.vah)}].`,
+          customTarget: mp.poc,
+        });
+      }
     }
     // Pas de fallback aléatoire sur marché plat/sans confluence : exiger une impulsion et l'alignement EMA
     const socialBias = sentimentScore + (fomoLong - fomoShort);
@@ -3355,6 +3363,8 @@ export class TradingFloorDesk {
       const macroShieldApplied = this.isVolatilityShieldActive(now);
       let stopDist: number;
       let rewardMult: number;
+      const isCrypto = chosen.symbol.endsWith("USDT");
+      const minFloorPct = isCrypto ? 0.0015 : 0.00045;
       if (slMode === "pips" && rawSlVal > 0) {
         stopDist = rawSlVal * pipSizeForAsset(chosen.symbol, entry);
         rewardMult = this.state.settings.trainedRewardR || 2.0;
@@ -3362,12 +3372,12 @@ export class TradingFloorDesk {
         stopDist = entry * (rawSlVal / 100);
         rewardMult = this.state.settings.trainedRewardR || 2.0;
       } else if (isScalp) {
-        const rawDist = localAtr ? localAtr * Math.min(atrMult, 0.85) : entry * 0.0025;
-        stopDist = Math.min(entry * 0.0045, Math.max(entry * 0.0015, rawDist));
-        rewardMult = Math.min(Math.max(this.state.settings.trainedRewardR || 1.5, 1.3), 1.8);
+        const fallbackDist = localAtr ? localAtr * Math.min(atrMult, 1.35) : entry * (isCrypto ? 0.0025 : 0.0009);
+        stopDist = Math.min(entry * 0.0045, Math.max(entry * minFloorPct, fallbackDist));
+        rewardMult = Math.max(this.state.settings.trainedRewardR || 1.8, 1.5);
       } else {
-        const rawDist = localAtr ? localAtr * atrMult : entry * 0.025;
-        stopDist = Math.min(entry * 0.06, Math.max(entry * 0.008, rawDist));
+        const rawDist = localAtr ? localAtr * atrMult : entry * (isCrypto ? 0.025 : 0.0015);
+        stopDist = Math.min(entry * 0.06, Math.max(entry * (isCrypto ? 0.008 : 0.0006), rawDist));
         rewardMult = this.state.settings.trainedRewardR || (activePlaybook === "breakout" ? 2.0 : 1.6);
       }
       if (macroShieldApplied) {
@@ -3381,12 +3391,17 @@ export class TradingFloorDesk {
             ? entry - stopDist
             : entry + stopDist;
       const actualStopDist = Math.abs(entry - invalidation);
-      const target =
-        selectedIdea?.customTarget && !macroShieldApplied
-          ? selectedIdea.customTarget
-          : activeDir === "long"
-            ? entry + actualStopDist * rewardMult
-            : entry - actualStopDist * rewardMult;
+      const minTargetDist = actualStopDist * Math.max(1.5, rewardMult);
+      const rawCustomTarget = selectedIdea?.customTarget;
+      const customTargetValid =
+        rawCustomTarget !== undefined &&
+        !macroShieldApplied &&
+        Math.abs(rawCustomTarget - entry) >= minTargetDist;
+      const target = customTargetValid
+        ? rawCustomTarget
+        : activeDir === "long"
+          ? entry + actualStopDist * Math.max(1.8, rewardMult)
+          : entry - actualStopDist * Math.max(1.8, rewardMult);
 
       emitPulse(this.state, "strategist", "risk", "backtest_pass", `${selectedTf} + WFO Purgé validés (${chosen.symbol})`, chosen.symbol, now);
 
