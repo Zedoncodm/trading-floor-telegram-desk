@@ -12,6 +12,7 @@ import { GrpoEngine } from "../src/rl/grpo.ts";
 import { DeskStore } from "../src/store.ts";
 import { TelegramFloorRoom } from "../src/telegram.ts";
 import { ActiveTradeManager } from "../src/agents/activeTradeManager.ts";
+import { INSTALLED_TRADER_SKILLS, TraderSkillsEngine } from "../src/agents/traderSkills.ts";
 import { LiquidityHunterAgent } from "../src/agents/liquidityHunter.ts";
 import { MarketProfileAnalyzer } from "../src/agents/marketProfile.ts";
 import { SentinelAgent, TokenBucketRateLimiter } from "../src/agents/sentinel.ts";
@@ -1604,4 +1605,82 @@ test("Audit Overhaul: asset-class fees, net PnL BE lock, technical confluence, c
   const scriptMatch3 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
   assert.ok(scriptMatch3 && scriptMatch3[1]);
   assert.doesNotThrow(() => new Function(scriptMatch3[1]));
+});
+
+test("Jakeschincariol 15 Trader Skills pack installed & integrated across all 8 agents + Reviewer UI", () => {
+  assert.equal(INSTALLED_TRADER_SKILLS.length, 15);
+  assert.equal(PROMPT_SCHEMA_VERSION, 3);
+  for (const agentId of ["lead", "analyst", "strategist", "risk", "execution", "reviewer", "sentinel", "hunter"] as const) {
+    assert.ok(
+      DEFAULT_AGENT_PROMPTS[agentId].systemPrompt.includes("SKILLS ACTIFS"),
+      `Expected SKILLS ACTIFS block in prompt for ${agentId}`,
+    );
+  }
+
+  // Build intraday ORB breakout bars
+  const now = Date.now();
+  const orbBars: Kline[] = Array.from({ length: 30 }, (_, i) => {
+    const inOpeningRange = i >= 10 && i <= 12;
+    const base = inOpeningRange ? 100 : i > 26 ? 101.2 : 100.1;
+    return {
+      openTime: now - (30 - i) * 300_000,
+      closeTime: now - (29 - i) * 300_000 - 1,
+      open: base - 0.1,
+      high: inOpeningRange ? 100.8 : base + 0.3,
+      low: inOpeningRange ? 99.4 : base - 0.3,
+      close: base + (i > 26 ? 0.25 : 0),
+      volume: i > 26 ? 2500 : 1000,
+    };
+  });
+
+  // 1. Scanner ORB & Entry Timer & Exit Plan
+  const scan = TraderSkillsEngine.scanOpeningRangeBreakout("NVDA", orbBars, 101.35);
+  assert.equal(scan.hasOrb, true);
+  assert.equal(scan.setup, "ORB_LONG");
+  const entry = TraderSkillsEngine.evaluateEntryTimer(scan, orbBars, 101.35, 0.6);
+  assert.equal(entry.state, "TRIGGERED");
+  const exitPlan = TraderSkillsEngine.buildStructuredExitPlan("long", 101.35, scan, 0.6, now);
+  assert.ok(exitPlan.stopPrice < 101.35 && exitPlan.target2R > exitPlan.target1R);
+
+  // 2. TimeMachine 2500 Monte Carlo replays
+  const tm = TraderSkillsEngine.runTimeMachineSimulation(orbBars, "long", 101.35, exitPlan.stopPrice, exitPlan.target2R, 2500);
+  assert.equal(tm.simulations, 2500);
+  assert.ok(tm.targetFirstPct >= 0 && tm.stopFirstPct >= 0);
+
+  // 3. Budget & 7-Point Risk & Portfolio Intel
+  const budget = TraderSkillsEngine.computeBudgetPositionSize(10_000, 101.35, exitPlan.stopPrice, 100);
+  assert.equal(budget.reservedCashUsd, 1000); // 10% buffer
+  assert.ok(budget.recommendedNotional > 0);
+
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-skills-"));
+  try {
+    const store = new DeskStore(dir);
+    const st = store.loadOrCreate(10_000, "Europe/Paris", ["NVDA", "BTCUSDT"], 15, now);
+    const risk7 = TraderSkillsEngine.runSevenPointRiskCheck({
+      state: st,
+      symbol: "NVDA",
+      entry: 101.35,
+      stop: exitPlan.stopPrice,
+      target: exitPlan.target2R,
+      notional: 2000,
+      riskUsd: 100,
+      leverage: 5,
+    });
+    assert.equal(risk7.status, "PASS");
+    assert.equal(risk7.passedChecks.length, 7);
+
+    const intel = TraderSkillsEngine.computePortfolioIntelligence(st, "NVDA", "long", orbBars, now);
+    assert.equal(intel.copycatConviction, "bull");
+    assert.equal(intel.pelosiBias, "bull");
+    assert.ok(intel.screenerScore >= 15);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 4. UI Reviewer 15-skills card compiles cleanly
+  assert.ok(DASHBOARD_HTML.includes("revSkillsGrid"));
+  assert.ok(DASHBOARD_HTML.includes("Pack 15 Skills Actifs"));
+  const scriptMatch4 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(scriptMatch4 && scriptMatch4[1]);
+  assert.doesNotThrow(() => new Function(scriptMatch4[1]));
 });

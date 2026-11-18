@@ -2023,6 +2023,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div id="revTabMessages" style="display:flex;flex-direction:column;gap:7px;max-height:290px;overflow-y:auto;font-size:11.5px"></div>
       </div>
     </div>
+
+    <div class="glass-card" style="padding:14px;margin-top:12px">
+      <div class="card-hdr" style="margin-bottom:8px">
+        <span class="card-title">Pack 15 Skills Actifs — Jakeschincariol Trader-Skill &amp; Day-Trader-Skill</span>
+        <span id="revSkillsBadge" class="chip mono" style="font-size:10.5px">15 / 15 ACTIFS</span>
+      </div>
+      <div id="revSkillsGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;font-size:11.5px"></div>
+    </div>
   </section>
 
   <!-- ==================== TAB 5: STRATÉGIE, RISQUE & ENTRAÎNEMENT IA (BENTO COMPACT) ==================== -->
@@ -8380,6 +8388,55 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               '<div style="color:var(--fg-1);line-height:1.4">' + escHtml(m.text || '') + '</div>' +
             '</div>';
           }).join('');
+        }
+      }
+
+      var skBadge = document.getElementById('revSkillsBadge');
+      var skHost = document.getElementById('revSkillsGrid');
+      var tsData = deskState.traderSkills;
+      if (skBadge && tsData) {
+        skBadge.textContent = (tsData.installedCount || 15) + ' / 15 SKILLS ACTIFS';
+      }
+      if (skHost) {
+        if (!tsData) {
+          skHost.innerHTML = '<div style="color:var(--fg-3)">Initialisation des 15 skills en cours...</div>';
+        } else {
+          var tm = tsData.lastTimeMachine;
+          var rp = tsData.lastSevenPointRisk;
+          var bg = tsData.budgetStatus || { cashBufferPct: 10, maxPositionCapPct: 25, freeBufferUsd: 0, largestWeightPct: 0 };
+          var cards = [];
+          cards.push(
+            '<div style="padding:9px;border-radius:8px;background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.2)">' +
+              '<div style="font-weight:700;color:#38bdf8;margin-bottom:4px">TimeMachine (2 500 Replays)</div>' +
+              '<div style="color:var(--fg-1)">' + (tm ? escHtml(tm.verdict) : 'En attente du prochain setup validé') + '</div>' +
+            '</div>'
+          );
+          cards.push(
+            '<div style="padding:9px;border-radius:8px;background:rgba(16,185,129,0.07);border:1px solid rgba(16,185,129,0.2)">' +
+              '<div style="font-weight:700;color:#10b981;margin-bottom:4px">Risk 7-Points &amp; Budget 10%</div>' +
+              '<div style="color:var(--fg-1)">' + (rp ? (escHtml(rp.symbol) + ' · ' + rp.status + ' (' + (rp.passedChecks || []).length + '/7)') : 'Prêt') + ' · Buffer ' + Number(bg.freeBufferUsd || 0).toFixed(0) + '€ (Cap ' + bg.maxPositionCapPct + '%)</div>' +
+            '</div>'
+          );
+          cards.push(
+            '<div style="padding:9px;border-radius:8px;background:rgba(167,139,250,0.07);border:1px solid rgba(167,139,250,0.2)">' +
+              '<div style="font-weight:700;color:#a78bfa;margin-bottom:4px">Scanner ORB &amp; Entry/Exit</div>' +
+              '<div style="color:var(--fg-1)">' + ((tsData.scannerSignals && tsData.scannerSignals.length) ? tsData.scannerSignals.map(function (s) { return escHtml(s.symbol + ' ' + s.setup + ' (' + s.entryState + ', RVOL ' + s.rvol + 'x)'); }).join(' · ') : 'Surveillance Opening Range active') + '</div>' +
+            '</div>'
+          );
+          cards.push(
+            '<div style="padding:9px;border-radius:8px;background:rgba(251,191,36,0.07);border:1px solid rgba(251,191,36,0.2)">' +
+              '<div style="font-weight:700;color:#fbbf24;margin-bottom:4px">Tax Wash-Sale 30j &amp; Rebalance</div>' +
+              '<div style="color:var(--fg-1)">Wash-Sale : ' + ((tsData.washSaleWarnings && tsData.washSaleWarnings.length) ? escHtml(tsData.washSaleWarnings.join(', ')) : 'Aucun') + ' | Concentration : ' + ((tsData.overConcentratedSymbols && tsData.overConcentratedSymbols.length) ? escHtml(tsData.overConcentratedSymbols.join(', ')) : 'Équilibrée') + '</div>' +
+            '</div>'
+          );
+          cards.push(
+            '<div style="padding:9px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border);grid-column:1 / -1">' +
+              '<div style="font-weight:700;color:var(--fg-2);margin-bottom:4px">Skills Chargés (' + (tsData.installedCount || 15) + ') &amp; Alertes Live</div>' +
+              '<div class="mono" style="font-size:10.5px;color:var(--fg-2)">' + escHtml((tsData.installedSkills || []).join(' · ')) + '</div>' +
+              ((tsData.activeAlerts && tsData.activeAlerts.length) ? ('<div class="mono" style="font-size:10.5px;color:#facc15;margin-top:4px">' + escHtml(tsData.activeAlerts.join(' | ')) + '</div>') : '') +
+            '</div>'
+          );
+          skHost.innerHTML = cards.join('');
         }
       }
     }

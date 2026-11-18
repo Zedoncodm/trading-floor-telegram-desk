@@ -12,6 +12,7 @@ import { MarketAnalystAgent } from "./agents/analyst.ts";
 import { ReviewerAgent } from "./agents/reviewer.ts";
 import { MarketProfileAnalyzer } from "./agents/marketProfile.ts";
 import { ActiveTradeManager } from "./agents/activeTradeManager.ts";
+import { TraderSkillsEngine } from "./agents/traderSkills.ts";
 import { Mt5CloudBridge, type LocalMt5Position, type LocalMt5State } from "./mt5.ts";
 import { GrpoEngine, type GrpoCandidateOutcome, type MarketRegime } from "./rl/grpo.ts";
 import {
@@ -778,6 +779,7 @@ export class TradingFloorDesk {
     }
     this.syncMobileSettingsToState();
     this.syncRlSummaryToState();
+    this.state.traderSkills = TraderSkillsEngine.buildDeskSkillsTelemetry(this.state);
   }
 
   private async updateSessionGoal(now = Date.now()): Promise<void> {
@@ -2894,6 +2896,23 @@ export class TradingFloorDesk {
         thesis: `Continuation tendance EMA20<EMA50 baissière (RSI=${tech.rsi14.toFixed(0)}, 1h ${fmtSignedPct(ret1h)}).`,
       });
     }
+    // Skill trader-scanner + trader-entry + trader-exit : Opening Range Breakout (ORH/ORL/ORMid)
+    const orbBars = (snap.bars15m?.length ?? 0) >= 20 ? snap.bars15m! : (snap.bars4h ?? []);
+    const orbScan = TraderSkillsEngine.scanOpeningRangeBreakout(snap.symbol, orbBars, px);
+    if (orbScan.hasOrb && orbScan.direction) {
+      const entryTimer = TraderSkillsEngine.evaluateEntryTimer(orbScan, orbBars, px, snap.atr || px * 0.005);
+      if (entryTimer.state === "TRIGGERED") {
+        const exitPlan = TraderSkillsEngine.buildStructuredExitPlan(orbScan.direction, px, orbScan, snap.atr || px * 0.005, now);
+        return withConfluence({
+          dir: orbScan.direction,
+          playbook: "breakout",
+          thesis: `[SKILL ORB] ${entryTimer.reason} · ${exitPlan.rationale}`,
+          customEntry: px,
+          customStop: exitPlan.stopPrice,
+          customTarget: exitPlan.target2R,
+        });
+      }
+    }
     if (Math.abs(ret1h) >= 0.003) {
       const impDir: Direction = ret1h >= 0 ? "long" : "short";
       if ((impDir === "long" && tech.trendBias !== "bear") || (impDir === "short" && tech.trendBias !== "bull")) {
@@ -3455,6 +3474,73 @@ export class TradingFloorDesk {
         finalStop = activeDir === "long" ? entry - d : entry + d;
       }
 
+      // Pipeline Skills Jakeschincariol : TimeMachine (2 500 replays) + Budget (Buffer 10%) + Risk 7-Points + Tax/Copycat
+      const tmSim = TraderSkillsEngine.runTimeMachineSimulation(selectedBars, activeDir, entry, finalStop, finalTarget, 2500);
+      const sevenPtRisk = TraderSkillsEngine.runSevenPointRiskCheck({
+        state: this.state,
+        symbol: chosen.symbol,
+        entry,
+        stop: finalStop,
+        target: finalTarget,
+        notional: sized.notional,
+        riskUsd: sized.riskUsd,
+        leverage: sized.leverage ?? 1,
+      });
+      const portIntel = TraderSkillsEngine.computePortfolioIntelligence(this.state, chosen.symbol, activeDir, selectedBars, now);
+      const orbBarsScan = (chosen.bars15m?.length ?? 0) >= 20 ? chosen.bars15m! : selectedBars;
+      const orbSummary = TraderSkillsEngine.scanOpeningRangeBreakout(chosen.symbol, orbBarsScan, entry);
+      const orbTimer = TraderSkillsEngine.evaluateEntryTimer(orbSummary, orbBarsScan, entry, localAtr || chosen.atr || entry * 0.005);
+
+      this.state.traderSkills = TraderSkillsEngine.buildDeskSkillsTelemetry(
+        this.state,
+        {
+          scannerSignals: [
+            {
+              symbol: chosen.symbol,
+              setup: orbSummary.setup,
+              orHigh: orbSummary.orHigh,
+              orLow: orbSummary.orLow,
+              orMid: orbSummary.orMid,
+              entryState: orbTimer.state,
+              rvol: orbSummary.rvol,
+            },
+          ],
+          lastTimeMachine: {
+            symbol: chosen.symbol,
+            direction: activeDir,
+            simulations: tmSim.simulations,
+            targetFirstPct: tmSim.targetFirstPct,
+            stopFirstPct: tmSim.stopFirstPct,
+            openAtClosePct: tmSim.openAtClosePct,
+            historicalWinPct: tmSim.historicalWinPct,
+            pass: tmSim.pass,
+            verdict: tmSim.verdict,
+            at: now,
+          },
+          lastSevenPointRisk: {
+            symbol: chosen.symbol,
+            status: sevenPtRisk.status,
+            passedChecks: sevenPtRisk.passedChecks,
+            blockedReasons: sevenPtRisk.blockedReasons,
+            at: now,
+          },
+        },
+        now,
+      );
+
+      if (!tmSim.pass) {
+        setAgentActivity(this.state, "strategist", "killed", `TimeMachine Veto (${chosen.symbol})`, now, { asset: chosen.symbol });
+        emitPulse(this.state, "strategist", "reviewer", "backtest_kill", `TIMEMACHINE VETO ${chosen.symbol}`, chosen.symbol, now);
+        await this.say("strategist", tmSim.verdict, "kill");
+        return;
+      }
+      if (sevenPtRisk.status === "BLOCK") {
+        setAgentActivity(this.state, "risk", "veto", `Risk 7-Points BLOCK (${chosen.symbol})`, now, { asset: chosen.symbol });
+        emitPulse(this.state, "risk", "lead", "veto", `RISK BLOCK ${chosen.symbol}`, chosen.symbol, now);
+        await this.say("risk", `[TRADER-RISK 7-POINTS BLOCK] ${chosen.symbol} bloqué : ${sevenPtRisk.blockedReasons.join(" | ")}`, "veto");
+        return;
+      }
+
       const id = this.nextTicketId(now);
       const currentRegime = selectedIdea?.regime ?? this.grpo.classifyRegime({
         ret24h: chosen.ret24h ?? 0,
@@ -3467,7 +3553,7 @@ export class TradingFloorDesk {
         direction: activeDir,
         playbook: activePlaybook,
         engine: activePlaybook,
-        thesis: activeThesis,
+        thesis: `${activeThesis} | ${tmSim.verdict}${portIntel.copycatConviction !== "neutral" ? ` | 13F: ${portIntel.copycatNote}` : ""}${portIntel.washSaleWarning ? ` | ⚠️ WashSale 30j` : ""}`,
         entry,
         invalidation: finalStop,
         target: finalTarget,
@@ -3483,6 +3569,9 @@ export class TradingFloorDesk {
         timeStopMs: selectedIdea?.timeStopMs,
         partialTpPrice: selectedIdea?.partialTpPrice,
         trailingStop: selectedIdea?.trailingAtr1m ? invalidation : undefined,
+        timeMachineWinPct: tmSim.targetFirstPct,
+        orbSetup: orbSummary.hasOrb,
+        washSaleFlag: portIntel.washSaleWarning,
         leverage: sized.leverage ?? 1,
         liqPrice: sized.liqPrice,
         maxAdverseExcursion: 0,
@@ -4826,6 +4915,7 @@ export class TradingFloorDesk {
 
     await this.enforceDailyLossLimit(now);
     this.recordEquityPoint(now);
+    this.state.traderSkills = TraderSkillsEngine.buildDeskSkillsTelemetry(this.state, undefined, now);
     if (this.state.settings?.progressiveStopEnabled && this.state.tickets.some((t) => t.status === "open" && (t.progressiveStopUsd ?? 0) > 0)) {
       this.pushLocalMt5BridgePayload(now);
     }

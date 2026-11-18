@@ -501,6 +501,10 @@ export type Ticket = {
   mt5Lots?: number;
   mt5Profit?: number;
   mt5CurrentPrice?: number;
+  /** Pack 15 Skills (Jakeschincariol trader-skill + day-trader-skill) */
+  timeMachineWinPct?: number;
+  orbSetup?: boolean;
+  washSaleFlag?: boolean;
 };
 
 export type WakeKind = "invalidation" | "conflict" | "halt";
@@ -634,6 +638,51 @@ export type DeskState = {
     availableCryptos?: string[];
     rejectedOrders?: Array<{ id: string; symbol: string; reason: string }>;
   };
+  traderSkills?: TraderSkillsSummary;
+};
+
+export type TraderSkillsSummary = {
+  installedCount: number;
+  installedSkills: string[];
+  scannerSignals: Array<{
+    symbol: string;
+    setup: "ORB_LONG" | "ORB_SHORT" | "FLAT";
+    orHigh: number;
+    orLow: number;
+    orMid: number;
+    entryState: "WAITING" | "TRIGGERED" | "EXPIRED";
+    rvol: number;
+  }>;
+  lastTimeMachine?: {
+    symbol: string;
+    direction: Direction;
+    simulations: number;
+    targetFirstPct: number;
+    stopFirstPct: number;
+    openAtClosePct: number;
+    historicalWinPct: number;
+    pass: boolean;
+    verdict: string;
+    at: number;
+  };
+  lastSevenPointRisk?: {
+    symbol: string;
+    status: "PASS" | "BLOCK";
+    passedChecks: string[];
+    blockedReasons: string[];
+    at: number;
+  };
+  budgetStatus?: {
+    cashBufferPct: number;
+    maxPositionCapPct: number;
+    freeBufferUsd: number;
+    largestWeightPct: number;
+  };
+  washSaleWarnings: string[];
+  overConcentratedSymbols: string[];
+  activeAlerts: string[];
+  copycatTopConvictions: Array<{ symbol: string; conviction: string; bias: "bull" | "bear" }>;
+  updatedAt: number;
 };
 
 export type LiquidityMagnetZone = {
