@@ -2593,6 +2593,9 @@ export class TradingFloorDesk {
             snap.fvgZone.midPrice += basis;
             snap.fvgZone.stopLevel += basis;
           }
+          if (snap.marketProfile) {
+            snap.marketProfile = undefined;
+          }
         }
         snap.primary.price = mt5Px;
         snap.primary.venue = "MT5";
@@ -2758,6 +2761,126 @@ export class TradingFloorDesk {
     return retScore + fundScore * 0.8 + oiScore * 0.7 + bookScore * 0.6;
   }
 
+  /** Calcule les niveaux exacts Entrée / Invalidation / Cible pour un couple (candidat, timeframe, moteur). */
+  private resolveCandidateTradeLevels(
+    chosen: MarketSnapshot,
+    selectedBars: MarketSnapshot["bars4h"],
+    activePlaybook: PlayKind,
+    activeDir: Direction,
+    isScalp: boolean,
+    now: number,
+    selectedIdea?: {
+      customEntry?: number;
+      customStop?: number;
+      customTarget?: number;
+    } | null,
+    notionalForAmountMode?: number,
+  ): {
+    entry: number;
+    localAtr: number | null;
+    atrMult: number;
+    macroShieldApplied: boolean;
+    actualStopDist: number;
+    invalidation: number;
+    target: number;
+    finalStop: number;
+    finalTarget: number;
+  } {
+    const p = chosen.primary!;
+    const entry = selectedIdea?.customEntry ?? p.price;
+    const recentAtrBars = selectedBars.slice(-15, -1);
+    const localAtr = recentAtrBars.length
+      ? recentAtrBars.reduce((sum, b) => sum + (b.high - b.low), 0) / recentAtrBars.length
+      : chosen.atr;
+    const slMode = this.state.settings?.slMode ?? "atr";
+    const rawSlVal = Number(this.state.settings?.slVal ?? 0);
+    const effectiveAtrSetting =
+      slMode === "atr" && rawSlVal > 0 && rawSlVal < 10
+        ? rawSlVal
+        : (this.state.settings.fixedStopAtr || this.state.settings.trainedAtrMult || (isScalp ? 0.85 : 1.4));
+    const atrMult = isScalp ? effectiveAtrSetting : Math.max(0.75, effectiveAtrSetting);
+    const macroShieldApplied = this.isVolatilityShieldActive(now);
+    let stopDist: number;
+    let rewardMult: number;
+    const minPipFloor = 2 * pipSizeForAsset(chosen.symbol, entry);
+    if (slMode === "pips" && rawSlVal > 0) {
+      stopDist = rawSlVal * pipSizeForAsset(chosen.symbol, entry);
+      rewardMult = this.state.settings.trainedRewardR || 2.0;
+    } else if (slMode === "pct" && rawSlVal > 0) {
+      stopDist = entry * (rawSlVal / 100);
+      rewardMult = this.state.settings.trainedRewardR || 2.0;
+    } else if (isScalp) {
+      const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * Math.min(atrMult, 1.35) : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * Math.min(atrMult, 1.35) : entry * 0.0004);
+      stopDist = Math.min(entry * 0.006, Math.max(minPipFloor, rawAtrDist));
+      rewardMult = Math.max(this.state.settings.trainedRewardR || 1.8, 1.5);
+    } else {
+      const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * atrMult : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * atrMult : entry * 0.0005);
+      stopDist = Math.min(entry * 0.012, Math.max(minPipFloor, rawAtrDist));
+      rewardMult = this.state.settings.trainedRewardR || (activePlaybook === "breakout" ? 2.0 : 1.6);
+    }
+    if (macroShieldApplied) {
+      const shieldAtrPad = (localAtr || chosen.atr || entry * 0.0005) * 1.25;
+      stopDist = Math.min(entry * 0.02, stopDist + shieldAtrPad);
+    }
+    const invalidation =
+      selectedIdea?.customStop && !macroShieldApplied
+        ? selectedIdea.customStop
+        : activeDir === "long"
+          ? entry - stopDist
+          : entry + stopDist;
+    const actualStopDist = Math.abs(entry - invalidation);
+    const minTargetDist = actualStopDist * Math.max(1.5, rewardMult);
+    const rawCustomTarget = selectedIdea?.customTarget;
+    const customTargetDirValid =
+      rawCustomTarget !== undefined &&
+      (activeDir === "long" ? rawCustomTarget > entry : rawCustomTarget < entry);
+    const customTargetValid =
+      customTargetDirValid &&
+      !macroShieldApplied &&
+      Math.abs(rawCustomTarget - entry) >= minTargetDist;
+    const target = customTargetValid
+      ? rawCustomTarget
+      : activeDir === "long"
+        ? entry + actualStopDist * Math.max(1.8, rewardMult)
+        : entry - actualStopDist * Math.max(1.8, rewardMult);
+
+    let finalTarget = target;
+    const tpMode = this.state.settings?.tpMode ?? "rr";
+    const tpVal = Number(this.state.settings?.tpVal ?? 0);
+    if (!macroShieldApplied && !selectedIdea?.customTarget && tpVal > 0) {
+      if (tpMode === "rr") {
+        finalTarget = activeDir === "long" ? entry + actualStopDist * tpVal : entry - actualStopDist * tpVal;
+      } else if (tpMode === "pct") {
+        const d = entry * (tpVal / 100);
+        finalTarget = activeDir === "long" ? entry + d : entry - d;
+      } else if (tpMode === "pips") {
+        const d = tpVal * pipSizeForAsset(chosen.symbol, entry);
+        finalTarget = activeDir === "long" ? entry + d : entry - d;
+      } else if (tpMode === "amount" && (notionalForAmountMode ?? 0) > 0) {
+        const d = (tpVal / (notionalForAmountMode as number)) * entry;
+        finalTarget = activeDir === "long" ? entry + d : entry - d;
+      }
+    }
+
+    let finalStop = invalidation;
+    if (!macroShieldApplied && !selectedIdea?.customStop && slMode === "amount" && rawSlVal > 0 && (notionalForAmountMode ?? 0) > 0) {
+      const d = (rawSlVal / (notionalForAmountMode as number)) * entry;
+      finalStop = activeDir === "long" ? entry - d : entry + d;
+    }
+
+    return {
+      entry,
+      localAtr,
+      atrMult,
+      macroShieldApplied,
+      actualStopDist,
+      invalidation,
+      target,
+      finalStop,
+      finalTarget,
+    };
+  }
+
   private choosePlay(
     snap: MarketSnapshot,
   ): {
@@ -2795,11 +2918,12 @@ export class TradingFloorDesk {
     const squeezeSig = this.hunter.computeSqueezeSignal(funding, p.oiChange1h ?? 0, ret1h);
     const magnetZones = this.hunter.computeLiquidityMagnetZones(snap.bars4h ?? [], px, snap.symbol);
 
-    // Calcul temps réel du Market Profile (POC, VAH, VAL) et confluence technique (EMA20/50, RSI14, ATR14)
+    // Calcul temps réel du Market Profile intraday (bars15m en priorité) et confluence technique (EMA20/50, RSI14, ATR14)
     const tech = computeTechnicalConfluence(snap.bars4h ?? [], px);
+    const mpBars = (snap.bars15m?.length ?? 0) >= 24 ? snap.bars15m! : (snap.bars4h ?? []);
     const mp: MarketProfileSummary =
       snap.marketProfile ??
-      MarketProfileAnalyzer.computeSessionProfile(snap.symbol, snap.bars4h ?? [], px, now);
+      MarketProfileAnalyzer.computeSessionProfile(snap.symbol, mpBars, px, now);
     snap.marketProfile = mp;
     if (!this.state.marketProfiles) this.state.marketProfiles = {};
     this.state.marketProfiles[snap.symbol] = mp;
@@ -2876,28 +3000,32 @@ export class TradingFloorDesk {
       };
     };
 
-    // Filtre Mean-Reversion prioritaire sur bords Value Area en range (uniquement si R:R vers POC >= 1.25)
+    // Filtre Mean-Reversion prioritaire au contact des bords Value Area en range (exclusivement près de VAH/VAL, R:R plafonné <= 2.2R)
     if (isRangeMarket && mp.vah > mp.val) {
       const stopBand = Math.max((snap.atr || px * 0.01) * 1.1, (mp.vah - mp.val) * 0.35);
       const rewardToPoc = Math.abs(px - mp.poc);
-      if (px >= mp.vah && rewardToPoc >= stopBand * 1.25) {
+      if (px >= mp.vah && px <= mp.vah + stopBand * 1.15 && rewardToPoc >= stopBand * 1.25) {
+        const cappedTarget = Math.max(mp.poc, px - stopBand * 2.2);
+        const targetLabel = cappedTarget === mp.poc ? fmtPx(mp.poc) : `${fmtPx(cappedTarget)} (vers POC ${fmtPx(mp.poc)})`;
         return withConfluence({
           dir: "short",
           playbook: "fade",
-          thesis: `Market Profile Mean-Reversion : prix (${fmtPx(px)}) >= VAH (${fmtPx(mp.vah)}) en range -> retour ciblé sur POC (${fmtPx(mp.poc)}).`,
+          thesis: `Market Profile Mean-Reversion : prix (${fmtPx(px)}) >= VAH (${fmtPx(mp.vah)}) en range -> retour ciblé sur ${targetLabel}.`,
           customEntry: px,
           customStop: px + stopBand,
-          customTarget: mp.poc,
+          customTarget: cappedTarget,
         });
       }
-      if (px <= mp.val && rewardToPoc >= stopBand * 1.25) {
+      if (px <= mp.val && px >= mp.val - stopBand * 1.15 && rewardToPoc >= stopBand * 1.25) {
+        const cappedTarget = Math.min(mp.poc, px + stopBand * 2.2);
+        const targetLabel = cappedTarget === mp.poc ? fmtPx(mp.poc) : `${fmtPx(cappedTarget)} (vers POC ${fmtPx(mp.poc)})`;
         return withConfluence({
           dir: "long",
           playbook: "fade",
-          thesis: `Market Profile Mean-Reversion : prix (${fmtPx(px)}) <= VAL (${fmtPx(mp.val)}) en range -> rebond ciblé sur POC (${fmtPx(mp.poc)}).`,
+          thesis: `Market Profile Mean-Reversion : prix (${fmtPx(px)}) <= VAL (${fmtPx(mp.val)}) en range -> rebond ciblé sur ${targetLabel}.`,
           customEntry: px,
           customStop: Math.max(px * 0.5, px - stopBand),
-          customTarget: mp.poc,
+          customTarget: cappedTarget,
         });
       }
     }
@@ -3425,8 +3553,13 @@ export class TradingFloorDesk {
           minTradesOos: this.state.settings.minOosTrades30d,
           minExpectancyR: this.state.settings.minExpectancyR,
         };
-        const playbooksToTest: PlayKind[] =
-          idea.playbook === "breakout" ? ["breakout", "fade"] : [idea.playbook, "breakout"];
+        const lockPlaybook =
+          idea.customTarget !== undefined || idea.customStop !== undefined || idea.playbook !== "breakout";
+        const directiveForcesMeanRev =
+          /mean[- ]?reversion|équilibre|equilibre|value area|range|breakouts échouent/i.test(
+            this.current_market_regime_directive || "",
+          );
+        const playbooksToTest: PlayKind[] = lockPlaybook ? [idea.playbook] : ["breakout", "fade"];
         let bestFailedForCand: { bt: ReturnType<typeof runBacktestOnBars>; playbook: PlayKind } | null = null;
 
         for (const tfSet of tfSets) {
@@ -3454,7 +3587,36 @@ export class TradingFloorDesk {
               customParams,
             );
             const activePlaybook = bt.playbook;
-            if (bt.pass) {
+            const playbookMismatch =
+              (lockPlaybook && activePlaybook !== idea.playbook) ||
+              (directiveForcesMeanRev && activePlaybook === "breakout");
+            if (bt.pass && !playbookMismatch) {
+              const candLevels = this.resolveCandidateTradeLevels(
+                candidate,
+                tfSet.bars,
+                activePlaybook,
+                idea.dir,
+                isScalp,
+                now,
+                idea,
+              );
+              const candTm = TraderSkillsEngine.runTimeMachineSimulation(
+                tfSet.bars,
+                idea.dir,
+                candLevels.entry,
+                candLevels.finalStop,
+                candLevels.finalTarget,
+                2500,
+              );
+              if (!candTm.pass) {
+                if (!bestFailedForCand) {
+                  bestFailedForCand = {
+                    bt: { ...bt, pass: false, killReason: candTm.verdict },
+                    playbook: activePlaybook,
+                  };
+                }
+                continue;
+              }
               const curRegime = idea.regime ?? "MEAN_REVERTING";
               const rlWeight = this.grpo.getStrategyWeight(curRegime, activePlaybook);
               const alphaScore =
@@ -3562,93 +3724,16 @@ export class TradingFloorDesk {
         asset: chosen.symbol,
       });
 
-      const analystFallback = `[${chosen.symbol}] ${p.venue} ${fmtPx(p.price)} (1h ${fmtSignedPct(p.ret1h)}, 24h ${fmtSignedPct(chosen.ret24h)}) · Funding ${fmtFunding(p.funding)} · OI ${fmtCompactUsd(p.oiValue)} (${fmtSignedPct(p.oiChange1h)}) · Déséquilibre carnet ${(p.book ?? 0).toFixed(2)}${s ? ` | 2e source ${s.venue} : ${fmtPx(s.price)} (funding ${fmtFunding(s.funding)})` : ""}. ${chosen.onchain ?? ""} — Données et contexte uniquement, je ne propose aucun trade.`;
-
-      await this.speakWithAgentPrompt(
-        "analyst",
-        `Actif=${chosen.symbol}, Prix1=${p.venue} ${fmtPx(p.price)}, Variation1h=${fmtSignedPct(p.ret1h)}, Variation24h=${fmtSignedPct(chosen.ret24h)}, Funding=${fmtFunding(p.funding)}, OpenInterest=${fmtCompactUsd(p.oiValue)} (${fmtSignedPct(p.oiChange1h)}), Carnet=${(p.book ?? 0).toFixed(2)}, Source2=${s ? `${s.venue} ${fmtPx(s.price)}` : "indisponible"}, Verification2eSource=${check.reason}. Rappel obligatoire : ne propose aucun trade.`,
-        analystFallback,
-      );
-
-      emitPulse(this.state, "analyst", "strategist", "confirm", `${chosen.symbol} vérifié 2 sources`, chosen.symbol, now);
-
-      setAgentActivity(
-        this.state,
-        "strategist",
-        "backtesting",
-        `Backtest ${selectedTf} + OOS sur ${chosen.symbol}`,
+      const baseLevels = this.resolveCandidateTradeLevels(
+        chosen,
+        selectedBars,
+        activePlaybook,
+        activeDir,
+        isScalp,
         now,
-        { targetAgent: "risk", asset: chosen.symbol },
+        selectedIdea,
       );
-
-      const entry = selectedIdea?.customEntry ?? p.price;
-      const recentAtrBars = selectedBars.slice(-15, -1);
-      const localAtr = recentAtrBars.length
-        ? recentAtrBars.reduce((sum, b) => sum + (b.high - b.low), 0) / recentAtrBars.length
-        : chosen.atr;
-      const slMode = this.state.settings?.slMode ?? "atr";
-      const rawSlVal = Number(this.state.settings?.slVal ?? 0);
-      const effectiveAtrSetting =
-        slMode === "atr" && rawSlVal > 0 && rawSlVal < 10
-          ? rawSlVal
-          : (this.state.settings.fixedStopAtr || this.state.settings.trainedAtrMult || (isScalp ? 0.85 : 1.4));
-      const atrMult = isScalp ? effectiveAtrSetting : Math.max(0.75, effectiveAtrSetting);
-      const macroShieldApplied = this.isVolatilityShieldActive(now);
-      let stopDist: number;
-      let rewardMult: number;
-      const minPipFloor = 2 * pipSizeForAsset(chosen.symbol, entry);
-      if (slMode === "pips" && rawSlVal > 0) {
-        stopDist = rawSlVal * pipSizeForAsset(chosen.symbol, entry);
-        rewardMult = this.state.settings.trainedRewardR || 2.0;
-      } else if (slMode === "pct" && rawSlVal > 0) {
-        stopDist = entry * (rawSlVal / 100);
-        rewardMult = this.state.settings.trainedRewardR || 2.0;
-      } else if (isScalp) {
-        const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * Math.min(atrMult, 1.35) : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * Math.min(atrMult, 1.35) : entry * 0.0004);
-        stopDist = Math.min(entry * 0.006, Math.max(minPipFloor, rawAtrDist));
-        rewardMult = Math.max(this.state.settings.trainedRewardR || 1.8, 1.5);
-      } else {
-        const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * atrMult : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * atrMult : entry * 0.0005);
-        stopDist = Math.min(entry * 0.012, Math.max(minPipFloor, rawAtrDist));
-        rewardMult = this.state.settings.trainedRewardR || (activePlaybook === "breakout" ? 2.0 : 1.6);
-      }
-      if (macroShieldApplied) {
-        const shieldAtrPad = (localAtr || chosen.atr || entry * 0.0005) * 1.25;
-        stopDist = Math.min(entry * 0.02, stopDist + shieldAtrPad);
-      }
-      const invalidation =
-        selectedIdea?.customStop && !macroShieldApplied
-          ? selectedIdea.customStop
-          : activeDir === "long"
-            ? entry - stopDist
-            : entry + stopDist;
-      const actualStopDist = Math.abs(entry - invalidation);
-      const minTargetDist = actualStopDist * Math.max(1.5, rewardMult);
-      const rawCustomTarget = selectedIdea?.customTarget;
-      const customTargetValid =
-        rawCustomTarget !== undefined &&
-        !macroShieldApplied &&
-        Math.abs(rawCustomTarget - entry) >= minTargetDist;
-      const target = customTargetValid
-        ? rawCustomTarget
-        : activeDir === "long"
-          ? entry + actualStopDist * Math.max(1.8, rewardMult)
-          : entry - actualStopDist * Math.max(1.8, rewardMult);
-
-      emitPulse(this.state, "strategist", "risk", "backtest_pass", `${selectedTf} + WFO Purgé validés (${chosen.symbol})`, chosen.symbol, now);
-
-      const dsrPct = ((bt.outOfSample.deflatedSharpe ?? 0.5) * 100).toFixed(0);
-      const stratPassFallback = `Setup validé [${activePlaybook}] : ${chosen.symbol} ${activeDir.toUpperCase()} (${selectedTf}). ${activeThesis} Entrée ${fmtPx(entry)} · Invalidation ${fmtPx(invalidation)} (${fmtPct(actualStopDist / entry, 2)}) · Cible ${fmtPx(target)}. WFO Purgé IS : ${bt.inSample.trades} tr (${fmtR(bt.inSample.expectancyR)}) | OOS : ${bt.outOfSample.trades} tr (${fmtR(bt.outOfSample.expectancyR)}, PF ${bt.outOfSample.profitFactor.toFixed(2)}, DSR ${dsrPct}%).`;
-
-      const chosenMp = chosen.marketProfile;
-      const mpFact = chosenMp ? `, MarketProfile=(POC=${fmtPx(chosenMp.poc)}, VAH=${fmtPx(chosenMp.vah)}, VAL=${fmtPx(chosenMp.val)}, Range=${chosenMp.isRange})` : "";
-      const dirFact = this.current_market_regime_directive ? `, Directive15m=${this.current_market_regime_directive}` : "";
-
-      await this.speakWithAgentPrompt(
-        "strategist",
-        `Décision=VALIDÉ, Moteur=${activePlaybook}, Actif=${chosen.symbol}, Direction=${activeDir.toUpperCase()}, Thèse=${activeThesis}, Entrée=${fmtPx(entry)}, Invalidation=${fmtPx(invalidation)}, Cible=${fmtPx(target)}, WFO_OOS=${bt.outOfSample.trades} trades (${fmtR(bt.outOfSample.expectancyR)}, PF=${bt.outOfSample.profitFactor.toFixed(2)}, DSR=${dsrPct}%)${mpFact}${dirFact}.`,
-        stratPassFallback,
-      );
+      const { entry, localAtr, atrMult, macroShieldApplied, actualStopDist, invalidation } = baseLevels;
 
       setAgentActivity(this.state, "risk", "sizing", `Kelly + Levier + LiqGuard sur ${chosen.symbol}`, now, {
         targetAgent: "lead",
@@ -3697,31 +3782,19 @@ export class TradingFloorDesk {
       }
 
       const isFullAuto = this.state.settings.executionMode === "auto" || isScalp;
-      let finalTarget = target;
-      const tpMode = this.state.settings?.tpMode ?? "rr";
-      const tpVal = Number(this.state.settings?.tpVal ?? 0);
-      if (!macroShieldApplied && !selectedIdea?.customTarget && tpVal > 0) {
-        if (tpMode === "rr") {
-          finalTarget = activeDir === "long" ? entry + actualStopDist * tpVal : entry - actualStopDist * tpVal;
-        } else if (tpMode === "pct") {
-          const d = entry * (tpVal / 100);
-          finalTarget = activeDir === "long" ? entry + d : entry - d;
-        } else if (tpMode === "pips") {
-          const d = tpVal * pipSizeForAsset(chosen.symbol, entry);
-          finalTarget = activeDir === "long" ? entry + d : entry - d;
-        } else if (tpMode === "amount" && sized.notional > 0) {
-          const d = (tpVal / sized.notional) * entry;
-          finalTarget = activeDir === "long" ? entry + d : entry - d;
-        }
-      }
+      const finalLevels = this.resolveCandidateTradeLevels(
+        chosen,
+        selectedBars,
+        activePlaybook,
+        activeDir,
+        isScalp,
+        now,
+        selectedIdea,
+        sized.notional,
+      );
+      const { finalTarget, finalStop } = finalLevels;
 
-      let finalStop = invalidation;
-      if (!macroShieldApplied && !selectedIdea?.customStop && slMode === "amount" && rawSlVal > 0 && sized.notional > 0) {
-        const d = (rawSlVal / sized.notional) * entry;
-        finalStop = activeDir === "long" ? entry - d : entry + d;
-      }
-
-      // Pipeline Skills Jakeschincariol : TimeMachine (2 500 replays) + Budget (Buffer 10%) + Risk 7-Points + Tax/Copycat
+      // Validation TimeMachine, Risk 7-Points & Auto-Critique Finale AVANT toute annonce "Setup validé" du Stratège
       const tmSim = TraderSkillsEngine.runTimeMachineSimulation(selectedBars, activeDir, entry, finalStop, finalTarget, 2500);
       const sevenPtRisk = TraderSkillsEngine.runSevenPointRiskCheck({
         state: this.state,
@@ -3818,6 +3891,39 @@ export class TradingFloorDesk {
         sized.exposurePct = sized.notional / Math.max(currentEquity(this.state), 1);
       }
 
+      const analystFallback = `[${chosen.symbol}] ${p.venue} ${fmtPx(p.price)} (1h ${fmtSignedPct(p.ret1h)}, 24h ${fmtSignedPct(chosen.ret24h)}) · Funding ${fmtFunding(p.funding)} · OI ${fmtCompactUsd(p.oiValue)} (${fmtSignedPct(p.oiChange1h)}) · Déséquilibre carnet ${(p.book ?? 0).toFixed(2)}${s ? ` | 2e source ${s.venue} : ${fmtPx(s.price)} (funding ${fmtFunding(s.funding)})` : ""}. ${chosen.onchain ?? ""} — Données et contexte uniquement, je ne propose aucun trade.`;
+      await this.speakWithAgentPrompt(
+        "analyst",
+        `Actif=${chosen.symbol}, Prix1=${p.venue} ${fmtPx(p.price)}, Variation1h=${fmtSignedPct(p.ret1h)}, Variation24h=${fmtSignedPct(chosen.ret24h)}, Funding=${fmtFunding(p.funding)}, OpenInterest=${fmtCompactUsd(p.oiValue)} (${fmtSignedPct(p.oiChange1h)}), Carnet=${(p.book ?? 0).toFixed(2)}, Source2=${s ? `${s.venue} ${fmtPx(s.price)}` : "indisponible"}, Verification2eSource=${check.reason}. Rappel obligatoire : ne propose aucun trade.`,
+        analystFallback,
+      );
+      emitPulse(this.state, "analyst", "strategist", "confirm", `${chosen.symbol} vérifié 2 sources`, chosen.symbol, now);
+
+      setAgentActivity(
+        this.state,
+        "strategist",
+        "backtesting",
+        `Backtest ${selectedTf} + OOS + TimeMachine validés sur ${chosen.symbol}`,
+        now,
+        { targetAgent: "risk", asset: chosen.symbol },
+      );
+      emitPulse(this.state, "strategist", "risk", "backtest_pass", `${selectedTf} + WFO Purgé + TimeMachine validés (${chosen.symbol})`, chosen.symbol, now);
+
+      const finalStopDist = Math.abs(entry - finalStop);
+      const dsrPct = ((bt.outOfSample.deflatedSharpe ?? 0.5) * 100).toFixed(0);
+      const tmSummary = `TimeMachine : ${tmSim.targetFirstPct}% Cible vs ${tmSim.stopFirstPct}% Stop`;
+      const stratPassFallback = `Setup validé [${activePlaybook}] : ${chosen.symbol} ${activeDir.toUpperCase()} (${selectedTf}). ${activeThesis} Entrée ${fmtPx(entry)} · Invalidation ${fmtPx(finalStop)} (${fmtPct(finalStopDist / entry, 2)}) · Cible ${fmtPx(finalTarget)}. WFO Purgé IS : ${bt.inSample.trades} tr (${fmtR(bt.inSample.expectancyR)}) | OOS : ${bt.outOfSample.trades} tr (${fmtR(bt.outOfSample.expectancyR)}, PF ${bt.outOfSample.profitFactor.toFixed(2)}, DSR ${dsrPct}%) · ${tmSummary}.`;
+
+      const chosenMp = chosen.marketProfile;
+      const mpFact = chosenMp ? `, MarketProfile=(POC=${fmtPx(chosenMp.poc)}, VAH=${fmtPx(chosenMp.vah)}, VAL=${fmtPx(chosenMp.val)}, Range=${chosenMp.isRange})` : "";
+      const dirFact = this.current_market_regime_directive ? `, Directive15m=${this.current_market_regime_directive}` : "";
+
+      await this.speakWithAgentPrompt(
+        "strategist",
+        `Décision=VALIDÉ, Moteur=${activePlaybook}, Actif=${chosen.symbol}, Direction=${activeDir.toUpperCase()}, Thèse=${activeThesis}, Entrée=${fmtPx(entry)}, Invalidation=${fmtPx(finalStop)}, Cible=${fmtPx(finalTarget)}, WFO_OOS=${bt.outOfSample.trades} trades (${fmtR(bt.outOfSample.expectancyR)}, PF=${bt.outOfSample.profitFactor.toFixed(2)}, DSR=${dsrPct}%), ${tmSummary}${mpFact}${dirFact}.`,
+        stratPassFallback,
+      );
+
       const id = this.nextTicketId(now);
       const currentRegime = selectedIdea?.regime ?? this.grpo.classifyRegime({
         ret24h: chosen.ret24h ?? 0,
@@ -3845,7 +3951,7 @@ export class TradingFloorDesk {
                 : 120,
         timeStopMs: selectedIdea?.timeStopMs,
         partialTpPrice: selectedIdea?.partialTpPrice,
-        trailingStop: selectedIdea?.trailingAtr1m ? invalidation : undefined,
+        trailingStop: selectedIdea?.trailingAtr1m ? finalStop : undefined,
         timeMachineWinPct: tmSim.targetFirstPct,
         orbSetup: orbSummary.hasOrb,
         washSaleFlag: portIntel.washSaleWarning,

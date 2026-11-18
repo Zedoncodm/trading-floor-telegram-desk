@@ -16,6 +16,7 @@ import { INSTALLED_TRADER_SKILLS, TraderSkillsEngine } from "../src/agents/trade
 import { LiquidityHunterAgent } from "../src/agents/liquidityHunter.ts";
 import { MarketProfileAnalyzer } from "../src/agents/marketProfile.ts";
 import { SentinelAgent, TokenBucketRateLimiter } from "../src/agents/sentinel.ts";
+import { fmtPx } from "../src/format.ts";
 import { Mt5CloudBridge } from "../src/mt5.ts";
 import type { Kline, MarketSnapshot, Ticket } from "../src/types.ts";
 import { DASHBOARD_HTML } from "../src/ui.ts";
@@ -2134,6 +2135,112 @@ test("MT5 Bridge test/tmpdir isolation: never touches live MetaQuotes directory 
     const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor("http://127.0.0.1:4080");
     assert.ok(mq5.includes('> 15)'));
     assert.ok(mq5.includes("if(EnsureMaster()) OnTimer();"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Strategist coherence: 5-decimal FX formatting, bounded Market Profile Mean-Reversion (fade, <= 2.2R), and TimeMachine BEFORE Setup validé", async () => {
+  // 1. fmtPx uses 5 decimals for FX pairs (< 10), so 1.09614 and 1.09526 never collapse to "1.096"
+  assert.equal(fmtPx(1.09614), "1.09614");
+  assert.equal(fmtPx(1.09526), "1.09526");
+  assert.equal(fmtPx(0.54929), "0.54929");
+  assert.equal(fmtPx(159.283), "159.283");
+  assert.equal(fmtPx(3767.94), "3,767.94");
+
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-strat-coh-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "grpo.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+    const now = Date.now();
+    desk.state = store.loadOrCreate(85_000, "Europe/Paris", ["EURUSD"], 15, now);
+
+    const mpBars: Kline[] = Array.from({ length: 65 }, (_, i) => {
+      const wave = Math.sin(i * 0.45) * 0.0012;
+      const close = 1.1000 + wave;
+      return {
+        openTime: now - (65 - i) * 900_000,
+        closeTime: now - (64 - i) * 900_000 - 1,
+        open: close - 0.0002,
+        high: close + 0.0005,
+        low: close - 0.0005,
+        close,
+        volume: 1000,
+      };
+    });
+
+    const mpRange = {
+      symbol: "EURUSD",
+      poc: 1.1010,
+      vah: 1.1012,
+      val: 1.0990,
+      sessionHigh: 1.1020,
+      sessionLow: 1.0980,
+      totalVolume: 5000,
+      valueAreaPct: 0.7,
+      isRange: true,
+      pricePosition: "below_val" as const,
+      updatedAt: now,
+    };
+
+    const choosePlayFn = (desk as unknown as {
+      choosePlay: (s: MarketSnapshot) => {
+        dir: string;
+        playbook: string;
+        customEntry?: number;
+        customStop?: number;
+        customTarget?: number;
+      } | null;
+    }).choosePlay.bind(desk);
+
+    // 2a. Price far below VAL (1.096 vs VAL 1.099 with atr 0.0008 -> breakdown outside Value Area) must NOT fire fade LONG
+    const farSnap: MarketSnapshot = {
+      symbol: "EURUSD",
+      at: now,
+      primary: { venue: "MT5", price: 1.0960, ret1h: -0.002, funding: 0, oiChange1h: 0, oiValue: 0, book: 0 },
+      secondary: { venue: "YahooFinance", price: 1.0960, ret1h: -0.002, funding: null, oiChange1h: null, oiValue: null, book: null },
+      bars4h: mpBars,
+      bars15m: mpBars,
+      channelHi: 1.1012,
+      channelLo: 1.0980,
+      atr: 0.0008,
+      ret24h: -0.003,
+      news: [],
+      onchain: null,
+      errors: [],
+      marketProfile: mpRange,
+    };
+    const farIdea = choosePlayFn(farSnap);
+    if (farIdea) {
+      assert.ok(farIdea.playbook !== "fade" || farIdea.dir !== "long", "Deep breakdown 30 pips below VAL must not fire Mean-Reversion fade LONG");
+    }
+
+    // 2b. Touching VAL within stopBand * 1.15 keeps playbook="fade" and caps R:R <= 2.2R
+    const touchValSnap: MarketSnapshot = {
+      ...farSnap,
+      primary: { ...farSnap.primary!, price: 1.0987 },
+      secondary: { ...farSnap.secondary!, price: 1.0987 },
+    };
+    const touchIdea = choosePlayFn(touchValSnap);
+    assert.ok(touchIdea !== null, "Expected Mean-Reversion idea on VAL touch");
+    assert.equal(touchIdea!.playbook, "fade");
+    assert.equal(touchIdea!.dir, "long");
+    const riskDist = Math.abs((touchIdea!.customEntry ?? 1.0987) - (touchIdea!.customStop ?? 1.0978));
+    const rewardDist = Math.abs((touchIdea!.customTarget ?? 1.1010) - (touchIdea!.customEntry ?? 1.0987));
+    assert.ok(rewardDist <= riskDist * 2.2 + 1e-6, `Expected R:R capped <= 2.2R, got ${(rewardDist / riskDist).toFixed(2)}R`);
+
+    // 3. runDeskScan never logs "Setup validé" followed by "BLOCK TimeMachine" in the same cycle
+    (desk as unknown as { refreshTape: () => Promise<MarketSnapshot[]> }).refreshTape = async () => [touchValSnap];
+    desk.state.settings.executionMode = "human_confirm";
+    desk.state.settings.autoPaperScalp = false;
+    await desk.runDeskScan("manual");
+    const stratMsgs = desk.state.messages.filter((m) => m.speaker === "strategist").map((m) => m.text);
+    const hasSetupValide = stratMsgs.some((t) => t.includes("Setup validé"));
+    const hasBlockTm = stratMsgs.some((t) => t.includes("BLOCK TimeMachine"));
+    assert.ok(!(hasSetupValide && hasBlockTm), `Strategist emitted contradictory Setup validé + BLOCK TimeMachine: ${JSON.stringify(stratMsgs)}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

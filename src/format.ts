@@ -1,6 +1,6 @@
 export function fmtPx(n: number): string {
   if (!Number.isFinite(n)) return "—";
-  const digits = n >= 1000 ? 1 : n >= 100 ? 2 : n >= 1 ? 3 : 5;
+  const digits = n >= 500 ? 2 : n >= 10 ? 3 : 5;
   return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
