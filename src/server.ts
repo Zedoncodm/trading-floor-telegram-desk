@@ -1,12 +1,39 @@
 import { createHash } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { handleAuth } from "./auth.ts";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { networkInterfaces } from "node:os";
+import { join } from "node:path";
+import QRCode from "qrcode";
+import { authEnabled, handleAuth } from "./auth.ts";
 import type { StrategyOptimizerAgent } from "./agents/strategyOptimizer.ts";
 import type { TradingFloorDesk } from "./desk.ts";
 import { Mt5CloudBridge } from "./mt5.ts";
 import type { AgentId, AgentPromptConfig, DeskRuntimeSettings } from "./types.ts";
 import { DASHBOARD_HTML } from "./ui.ts";
+
+function resolveMobileDeskUrl(port: number): { url: string; isTunnel: boolean } {
+  const envUrl = (process.env.CF_PUBLIC_URL || "").trim();
+  if (envUrl) return { url: envUrl, isTunnel: true };
+  const tunnelFile = join(process.cwd(), "data", "tunnel_url.json");
+  if (existsSync(tunnelFile)) {
+    try {
+      const parsed = JSON.parse(readFileSync(tunnelFile, "utf8")) as { url?: string };
+      if (parsed.url && /^https?:\/\//i.test(parsed.url)) {
+        return { url: parsed.url, isTunnel: true };
+      }
+    } catch { /* fallback LAN */ }
+  }
+  const nets = networkInterfaces();
+  for (const list of Object.values(nets)) {
+    for (const net of list ?? []) {
+      if (net.family === "IPv4" && !net.internal) {
+        return { url: `http://${net.address}:${port}`, isTunnel: false };
+      }
+    }
+  }
+  return { url: `http://127.0.0.1:${port}`, isTunnel: false };
+}
 
 const UI_BUILD_HASH = createHash("sha1").update(DASHBOARD_HTML).digest("hex").slice(0, 12);
 const SERVER_STARTED_AT = Date.now();
@@ -299,6 +326,26 @@ export function startDashboardServer(
     if (req.method === "GET" && url.pathname === "/api/rl-memory") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, memory: desk.grpo.memory, summary: desk.state.rlSummary }));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/mobile-access") {
+      const info = resolveMobileDeskUrl(port);
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ ok: true, url: info.url, isTunnel: info.isTunnel, pinEnabled: authEnabled() }));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/mobile-qr.svg") {
+      const info = resolveMobileDeskUrl(port);
+      const svg = await QRCode.toString(info.url, {
+        type: "svg",
+        margin: 1,
+        width: 220,
+        color: { dark: "#0b0f17", light: "#ffffff" },
+      });
+      res.writeHead(200, { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "no-store" });
+      res.end(svg);
       return;
     }
 

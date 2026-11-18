@@ -1617,6 +1617,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
         <span id="emergencyHaltLabel">HALT DESK</span>
       </button>
+      <button class="btn-emergency-act btn-emergency-mt5" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Accès Mobile QR Code, Profil MT5 & Config Telegram" style="background:rgba(56,189,248,0.14);border-color:rgba(56,189,248,0.35);color:#7dd3fc">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM17 17h4v4h-4zM14 20h1"/></svg>
+        <span>QR MOBILE</span>
+      </button>
       <button class="btn-emergency-act btn-emergency-mt5" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Nouveau profil MT5 / Config Telegram">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
         <span>NEW MT5 PROFILE</span>
@@ -2589,6 +2593,26 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:16px;font-size:12px">
+      <!-- CARTE 0: ACCÈS MOBILE VIA QR CODE (CLOUDFLARE TUNNEL + PIN) -->
+      <div class="step-box" style="margin:0;border-color:rgba(56,189,248,0.35)">
+        <div class="step-title">📱 Accès Téléphone Instantané (QR Code HTTPS)</div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <div style="background:#ffffff;padding:8px;border-radius:10px;line-height:0;flex-shrink:0">
+            <img id="mobileQrImg" src="/api/mobile-qr.svg" alt="QR Code Accès Mobile" width="148" height="148" style="display:block;border-radius:4px" />
+          </div>
+          <div style="flex:1;min-width:190px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:11px;color:var(--fg-2);line-height:1.45">
+              Scannez ce QR code avec l’appareil photo de votre téléphone pour ouvrir le Desk en mode mobile (protégé par votre <strong>DESK_ACCESS_PIN</strong>).
+            </div>
+            <div id="mobileAccessUrl" class="mono" style="font-size:11px;color:#38bdf8;word-break:break-all;background:rgba(15,23,42,0.65);padding:6px 8px;border-radius:6px;border:1px solid var(--ring-1)">Chargement URL...</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button type="button" class="pill-btn primary" onclick="copyMobileUrl()">Copier URL</button>
+              <button type="button" class="pill-btn" onclick="loadMobileQr()">Actualiser QR</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- CARTE 1: BOTS TELEGRAM (100% GRATUIT) -->
       <div class="step-box" style="margin:0">
         <div class="step-title">1. Bots Telegram sur Téléphone (100 % Gratuit · En Direct)</div>
@@ -3188,7 +3212,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
     }
 
-    function openDrawer(id) { document.getElementById(id).classList.add('open'); }
+    var cachedMobileUrl = '';
+    function loadMobileQr() {
+      var img = document.getElementById('mobileQrImg');
+      if (img) img.src = '/api/mobile-qr.svg?t=' + Date.now();
+      fetch('/api/mobile-access').then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.ok && d.url) {
+          cachedMobileUrl = d.url;
+          var el = document.getElementById('mobileAccessUrl');
+          if (el) el.textContent = d.url + (d.isTunnel ? ' (HTTPS Tunnel)' : ' (LAN local)');
+        }
+      }).catch(function () {});
+    }
+    function copyMobileUrl() {
+      if (!cachedMobileUrl) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cachedMobileUrl);
+        showToast('URL mobile copiée !', 'ok');
+      }
+    }
+    function openDrawer(id) {
+      document.getElementById(id).classList.add('open');
+      if (id === 'mobileDrawer') loadMobileQr();
+    }
     function closeDrawer(id) { document.getElementById(id).classList.remove('open'); }
 
     function openPanicModal() {

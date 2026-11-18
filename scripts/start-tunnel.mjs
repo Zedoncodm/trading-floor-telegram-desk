@@ -1,8 +1,25 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const rootDir = dirname(__dirname);
+const tunnelInfoPath = join(rootDir, "data", "tunnel_url.json");
+
+function saveTunnelUrl(url) {
+  try {
+    mkdirSync(dirname(tunnelInfoPath), { recursive: true });
+    writeFileSync(tunnelInfoPath, JSON.stringify({ url, updatedAt: Date.now() }, null, 2), "utf8");
+  } catch (err) {
+    console.error("[Tunnel] Impossible d'enregistrer tunnel_url.json:", err);
+  }
+}
 
 const port = process.env.UI_PORT || process.env.PORT || "4080";
 const token = (process.env.CF_TUNNEL_TOKEN || "").trim();
+const publicUrl = (process.env.CF_PUBLIC_URL || "").trim();
+if (publicUrl) saveTunnelUrl(publicUrl);
 
 const candidates = [
   process.env.CLOUDFLARED_PATH,
@@ -32,6 +49,7 @@ function forward(stream, out) {
     out.write(text);
     const m = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
     if (m) {
+      saveTunnelUrl(m[0]);
       console.log(`\n==========================================================`);
       console.log(`[Tunnel] URL HTTPS MOBILE : ${m[0]}`);
       console.log(`==========================================================\n`);
