@@ -708,6 +708,9 @@ string gRejIds[12];
 string gRejSyms[12];
 string gRejReasons[12];
 int    gRejCount = 0;
+string gQuoteSyms[16] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY", "XAUUSD", "XAGUSD", "USTEC", "US500", "US30", "DE40", "USOIL" };
+string gQuoteResolved[16];
+datetime gQuoteResolvedAt = 0;
 
 void RecordRejectedOrder(const string id, const string sym, const string reason) {
    for(int i = 0; i < gRejCount; i++) {
@@ -1106,12 +1109,17 @@ void WriteMt5StateToFile() {
    }
    json += "],";
 
-   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY", "XAUUSD", "XAGUSD", "USTEC", "US500", "US30", "DE40", "USOIL" };
+   if(gQuoteResolvedAt == 0 || TimeLocal() - gQuoteResolvedAt >= 300) {
+      for(int q = 0; q < 16; q++) {
+         gQuoteResolved[q] = ResolveBrokerSymbol(gQuoteSyms[q]);
+      }
+      gQuoteResolvedAt = TimeLocal();
+   }
    json += "\\"quotes\\":[";
    bool firstQ = true;
-   for(int q = 0; q < ArraySize(quoteSyms); q++) {
-      string qSym = quoteSyms[q];
-      string realQ = ResolveBrokerSymbol(qSym);
+   for(int q = 0; q < 16; q++) {
+      string qSym = gQuoteSyms[q];
+      string realQ = gQuoteResolved[q];
       if(realQ == "") continue;
       double bid = SymbolInfoDouble(realQ, SYMBOL_BID);
       double ask = SymbolInfoDouble(realQ, SYMBOL_ASK);
@@ -1220,10 +1228,12 @@ int OnInit() {
    if(lowId == 0) lowId = (long)GetTickCount();
    gMyMasterId = (double)lowId;
    gLastFailReset = TimeLocal();
+   for(int i = 0; i < 16; i++) gQuoteResolved[i] = "";
+   gQuoteResolvedAt = 0;
 
    trade.SetExpertMagicNumber(InpMagic);
+   EnsureMaster();
    EventSetTimer(MathMax(1, InpPollSeconds));
-   if(EnsureMaster()) OnTimer();
    return(INIT_SUCCEEDED);
 }
 
@@ -1259,6 +1269,7 @@ string ReadBodyFromBridge() {
 
 void OnTimer() {
    if(!EnsureMaster()) return;
+   if(TerminalInfoInteger(TERMINAL_CONNECTED) == 0 || AccountInfoDouble(ACCOUNT_EQUITY) <= 0.0) return;
 
    if(TimeLocal() - gLastFailReset >= 60) {
       gFailedIds = "|";

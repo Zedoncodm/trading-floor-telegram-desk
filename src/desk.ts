@@ -1121,16 +1121,18 @@ export class TradingFloorDesk {
         telemetryChange = true;
       }
 
+      const validMt5Metrics = mt5State.equity > 0 && mt5State.balance > 0;
+      const keepPrevMetrics = !validMt5Metrics && prevMt5 && prevMt5.equity > 0;
       this.state.mt5Live = {
         connected: Boolean(mt5State.connected),
         updatedAt: now,
         login: mt5State.login,
         server: mt5State.server,
         currency: mt5State.currency || "EUR",
-        balance: mt5State.balance,
-        equity: mt5State.equity,
-        profit: mt5State.profit,
-        freeMargin: mt5State.freeMargin,
+        balance: keepPrevMetrics ? prevMt5.balance : mt5State.balance,
+        equity: keepPrevMetrics ? prevMt5.equity : mt5State.equity,
+        profit: keepPrevMetrics ? prevMt5.profit : mt5State.profit,
+        freeMargin: keepPrevMetrics ? prevMt5.freeMargin : mt5State.freeMargin,
         leverage: mt5State.leverage,
         tradeAllowed: mt5State.tradeAllowed,
         positionsCount: mt5State.positions.length,
@@ -1141,7 +1143,7 @@ export class TradingFloorDesk {
       this.state.settings.mt5Connected = true;
       this.state.settings.mt5Login = String(mt5State.login);
       this.state.settings.mt5Server = mt5State.server;
-      this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${mt5State.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s) · Forex/Métaux/Indices)`;
+      this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${this.state.mt5Live.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s) · Forex/Métaux/Indices)`;
 
       const nonCryptoSyms = (this.state.settings.symbols ?? []).filter((s) => !s.toUpperCase().endsWith("USDT"));
       if (nonCryptoSyms.length !== (this.state.settings.symbols ?? []).length) {
@@ -3424,7 +3426,7 @@ export class TradingFloorDesk {
         mt5SnapshotNow?.quotes?.length
           ? new Set(
               mt5SnapshotNow.quotes
-                .filter((q) => q.bid > 0)
+                .filter((q) => q.bid > 0 && q.tradeMode !== 0)
                 .flatMap((q) => [q.symbol.toUpperCase(), Mt5CloudBridge.mapMt5SymbolToDesk(q.symbol).toUpperCase()]),
             )
           : null;

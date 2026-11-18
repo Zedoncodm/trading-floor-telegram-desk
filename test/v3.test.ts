@@ -2134,7 +2134,9 @@ test("MT5 Bridge test/tmpdir isolation: never touches live MetaQuotes directory 
 
     const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor("http://127.0.0.1:4080");
     assert.ok(mq5.includes('> 15)'));
-    assert.ok(mq5.includes("if(EnsureMaster()) OnTimer();"));
+    assert.ok(mq5.includes("EnsureMaster();"));
+    assert.ok(mq5.includes("gQuoteResolvedAt"));
+    assert.ok(mq5.includes("TERMINAL_CONNECTED"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
