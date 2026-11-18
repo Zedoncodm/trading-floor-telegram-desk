@@ -7,7 +7,7 @@ import type { Config } from "../src/config.ts";
 import { DeskLeadAgent, PacingCalculator } from "../src/agents/deskLead.ts";
 import { createDefaultSettings, DEFAULT_AGENT_PROMPTS, PROMPT_SCHEMA_VERSION } from "../src/llm.ts";
 import { aggregateKlines, verifySecondSource } from "../src/market.ts";
-import { computeLeveragedSizing, SocialSentimentEngine, TradingFloorDesk } from "../src/desk.ts";
+import { computeLeveragedSizing, computeTechnicalConfluence, feeRateForAsset, netTicketPnlAt, roundTripFeesForTicket, SocialSentimentEngine, TradingFloorDesk } from "../src/desk.ts";
 import { GrpoEngine } from "../src/rl/grpo.ts";
 import { DeskStore } from "../src/store.ts";
 import { TelegramFloorRoom } from "../src/telegram.ts";
@@ -1558,4 +1558,50 @@ test("Adaptive Break-Even 50-90%, dedicated Audit Reviewer tab & closed 3D Quant
   const scriptMatch2 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
   assert.ok(scriptMatch2 && scriptMatch2[1]);
   assert.doesNotThrow(() => new Function(scriptMatch2[1]));
+});
+
+test("Audit Overhaul: asset-class fees, net PnL BE lock, technical confluence, chart indicators & Reviewer filters", () => {
+  // 1. Asset-class fee calibration (Forex 0.3bps, Gold 0.5bps, Crypto 4bps)
+  assert.equal(feeRateForAsset("GBPUSD"), 0.00003);
+  assert.equal(feeRateForAsset("XAUUSD"), 0.00005);
+  assert.equal(feeRateForAsset("BTCUSDT"), 0.0004);
+
+  const fxTicket = {
+    asset: "GBPUSD",
+    direction: "long" as const,
+    entry: 1.3200,
+    fillPrice: 1.3200,
+    notional: 200_000,
+    fees: 6, // 0.3 bps * 200k
+    mt5Profit: undefined,
+  };
+  assert.equal(roundTripFeesForTicket(fxTicket), 12);
+  // Gross move +0.0005 (~+75.75 EUR) minus 12 EUR RT fees => clearly net positive
+  assert.ok(netTicketPnlAt(fxTicket, 1.3205) > 60);
+
+  // 2. Technical confluence detects trend & RSI cleanly
+  const now = Date.now();
+  const bullBars: Kline[] = Array.from({ length: 60 }, (_, i) => ({
+    openTime: now - (60 - i) * 60_000,
+    closeTime: now - (59 - i) * 60_000 - 1,
+    open: 100 + i * 0.4,
+    high: 100.5 + i * 0.4,
+    low: 99.8 + i * 0.4,
+    close: 100.3 + i * 0.4,
+    volume: 1000,
+  }));
+  const tech = computeTechnicalConfluence(bullBars, 124.5);
+  assert.equal(tech.trendBias, "bull");
+  assert.ok(tech.ema20 > tech.ema50);
+  assert.ok(tech.rsi14 > 60);
+
+  // 3. UI Charts overhaul & Reviewer / Layout fixes compile cleanly
+  assert.ok(DASHBOARD_HTML.includes("getSymbolPriceFormat"));
+  assert.ok(DASHBOARD_HTML.includes("chartOhlcvLegend"));
+  assert.ok(DASHBOARD_HTML.includes("lwEma20Series"));
+  assert.ok(DASHBOARD_HTML.includes("m.speaker === 'reviewer'"));
+  assert.ok(DASHBOARD_HTML.includes("repeat(7, minmax(0, 1fr))"));
+  const scriptMatch3 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(scriptMatch3 && scriptMatch3[1]);
+  assert.doesNotThrow(() => new Function(scriptMatch3[1]));
 });

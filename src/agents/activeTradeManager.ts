@@ -74,7 +74,13 @@ export class ActiveTradeManager {
       return { shouldModify: false, progressRatio, newStopLoss: sl, takeProfit: tp };
     }
 
-    const rawBeSl = isLong ? entry * (1 + Math.max(0.0002, feeBufferPct)) : entry * (1 - Math.max(0.0002, feeBufferPct));
+    const defaultAssetFee =
+      /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){6}$/i.test(ticket.asset)
+        ? 0.00012
+        : /^(XAU|XAG|NQ1!|ES1!|YM1!|FDAX1!)/i.test(ticket.asset)
+          ? 0.00018
+          : feeBufferPct;
+    const rawBeSl = isLong ? entry * (1 + Math.max(0.0001, defaultAssetFee)) : entry * (1 - Math.max(0.0001, defaultAssetFee));
     const safeOffset = entry * 0.0002;
     const boundedBeSl = isLong
       ? Math.min(rawBeSl, currentPrice - safeOffset)
@@ -296,17 +302,20 @@ export class ActiveTradeManager {
 
     // 4. Remontée dynamique du Stop-Loss (Break-Even rapide puis resserrement continu)
     let nextStop: number | undefined;
+    const rtFeeOffsetUsd = Math.max(0, fees * 2);
     if (securedFloorUsd > 0 && ticket.notional > 0) {
+      const grossFloorUsd = securedFloorUsd + rtFeeOffsetUsd;
       const floorPx = isLong
-        ? entry + (securedFloorUsd * entry) / ticket.notional
-        : entry - (securedFloorUsd * entry) / ticket.notional;
+        ? entry + (grossFloorUsd * entry) / ticket.notional
+        : entry - (grossFloorUsd * entry) / ticket.notional;
       const safeDist = entry * 0.00015;
       const clampedFloor = isLong ? Math.min(floorPx, currentPrice - safeDist) : Math.max(floorPx, currentPrice + safeDist);
       if ((isLong && clampedFloor > ticket.invalidation) || (!isLong && clampedFloor < ticket.invalidation)) {
         nextStop = Number(clampedFloor.toFixed(5));
       }
     } else if (netPnlUsd >= minGreenUsd) {
-      const beFeePx = isLong ? entry * 1.0006 : entry * 0.9994;
+      const feeRatio = ticket.notional > 0 ? Math.max(0.00015, (rtFeeOffsetUsd + 1) / ticket.notional) : 0.0006;
+      const beFeePx = isLong ? entry * (1 + feeRatio) : entry * (1 - feeRatio);
       const safeDist = entry * 0.00015;
       const clampedBe = isLong ? Math.min(beFeePx, currentPrice - safeDist) : Math.max(beFeePx, currentPrice + safeDist);
       if ((isLong && clampedBe > ticket.invalidation) || (!isLong && clampedBe < ticket.invalidation)) {

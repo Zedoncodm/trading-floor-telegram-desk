@@ -89,6 +89,79 @@ export function markPriceOf(state: DeskState, symbol: string, fallback = 0): num
   return row ? row.px : fallback;
 }
 
+export function feeRateForAsset(asset: string): number {
+  const a = String(asset || "").toUpperCase();
+  if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(a)) return 0.00003; // 0.3 bps / side Forex
+  if (/^(XAU|XAG|NQ1!|ES1!|YM1!|FDAX1!)/.test(a)) return 0.00005; // 0.5 bps / side Metals & Indices
+  if (/^(NVDA|AAPL|TSLA|MSFT|AMZN|USOIL|NGAS)$/.test(a)) return 0.0001; // 1 bp / side Stocks & Commodities
+  return 0.0004; // 4 bps / side Crypto
+}
+
+export function roundTripFeesForTicket(
+  ticket: Pick<Ticket, "asset" | "notional" | "fees" | "mt5Profit">,
+): number {
+  if ((ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)) || ticket.fees <= 0) {
+    return 0;
+  }
+  const rate = feeRateForAsset(ticket.asset);
+  return ticket.fees + ticket.notional * rate;
+}
+
+export function netTicketPnlAt(
+  ticket: Pick<Ticket, "asset" | "direction" | "entry" | "fillPrice" | "notional" | "fees" | "mt5Profit">,
+  px: number,
+): number {
+  if (ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)) {
+    return ticket.mt5Profit;
+  }
+  return ticketPnlAt(ticket, px) - roundTripFeesForTicket(ticket);
+}
+
+export function computeTechnicalConfluence(bars: MarketSnapshot["bars4h"], px: number): {
+  ema20: number;
+  ema50: number;
+  rsi14: number;
+  atr14: number;
+  momentum3Bars: number;
+  trendBias: "bull" | "bear" | "neutral";
+} {
+  if (!bars.length) {
+    return { ema20: px, ema50: px, rsi14: 50, atr14: px * 0.005, momentum3Bars: 0, trendBias: "neutral" };
+  }
+  const closes = bars.map((b) => b.close);
+  const emaCalc = (period: number): number => {
+    const k = 2 / (period + 1);
+    let e = closes[0];
+    for (let i = 1; i < closes.length; i++) e = closes[i] * k + e * (1 - k);
+    return e;
+  };
+  const ema20 = emaCalc(20);
+  const ema50 = emaCalc(50);
+
+  let gains = 0;
+  let losses = 0;
+  const rsiStart = Math.max(1, closes.length - 14);
+  for (let i = rsiStart; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  const avgGain = gains / 14;
+  const avgLoss = losses / 14;
+  const rsi14 = avgLoss <= 1e-12 ? (avgGain > 0 ? 90 : 50) : Number((100 - 100 / (1 + avgGain / avgLoss)).toFixed(2));
+
+  const atrSlice = bars.slice(-14);
+  const atr14 = atrSlice.reduce((s, b) => s + Math.max(0, b.high - b.low), 0) / Math.max(1, atrSlice.length);
+  const refIdx = Math.max(0, closes.length - 4);
+  const momentum3Bars = closes[refIdx] > 0 ? (px - closes[refIdx]) / closes[refIdx] : 0;
+
+  let trendBias: "bull" | "bear" | "neutral" = "neutral";
+  if (px >= ema20 && ema20 >= ema50 * 0.9995) trendBias = "bull";
+  else if (px <= ema20 && ema20 <= ema50 * 1.0005) trendBias = "bear";
+
+  return { ema20, ema50, rsi14, atr14, momentum3Bars, trendBias };
+}
+
 export function ticketPnlAt(
   ticket: Pick<Ticket, "direction" | "entry" | "fillPrice" | "notional" | "mt5Profit">,
   px: number,
@@ -449,7 +522,9 @@ export function computeLeveragedSizing(
   const availableMargin = Math.max(0, eq - marginUsed);
 
   // REVERSE-ENGINEERED SIZING FOR HFT FIAT-TARGET (KAMIKAZE) STRATEGY
-  const isKamikazeRegime = options.playbook === "HFT_Kamikaze_FiatTarget" || state.settings?.regime === "hft_kamikaze";
+  const isKamikazeRegime =
+    options.playbook === "HFT_Kamikaze_FiatTarget" ||
+    (state.settings?.regime === "hft_kamikaze" && (options.leverageFactor ?? state.settings?.defaultLeverage ?? 5) >= 100);
   if (isKamikazeRegime) {
     const targetFiat = options.targetFiatProfit ?? 75;
     const atr1m = options.atr1m ?? (priceStopDistance * entryPrice);
@@ -672,6 +747,7 @@ export class TradingFloorDesk {
   private monitoring = false;
   private syncingMt5 = false;
   private latestBarsBySymbol = new Map<string, MarketSnapshot["bars4h"]>();
+  private recentTicksBySymbol = new Map<string, Array<{ t: number; px: number }>>();
   private lastKnownEquity = 0;
   private scanCursor = 0;
   private lastConcurrencySayAt = 0;
@@ -960,6 +1036,7 @@ export class TradingFloorDesk {
         const deskSym = Mt5CloudBridge.mapMt5SymbolToDesk(q.symbol);
         const candidates = [q.symbol.toUpperCase(), deskSym];
         for (const sym of new Set(candidates)) {
+          this.recordLiveTick(sym, mid, now);
           const row = this.state.tape.find((r) => r.symbol === sym);
           if (row) {
             if (row.px !== mid) {
@@ -1630,6 +1707,18 @@ export class TradingFloorDesk {
     };
   }
 
+  private recordLiveTick(symbol: string, px: number, now = Date.now()): void {
+    if (!Number.isFinite(px) || px <= 0) return;
+    const key = symbol.toUpperCase();
+    const list = this.recentTicksBySymbol.get(key) ?? [];
+    const last = list[list.length - 1];
+    if (!last || now - last.t >= 500 || last.px !== px) {
+      list.push({ t: now, px });
+      if (list.length > 360) list.shift();
+      this.recentTicksBySymbol.set(key, list);
+    }
+  }
+
   async getChartCandles(
     symbol: string,
     interval = "15m",
@@ -1643,6 +1732,11 @@ export class TradingFloorDesk {
     fvg: MarketSnapshot["fvgZone"] | null;
     marketProfile: MarketProfileSummary;
     sentimentScore: number;
+    ema20: Array<{ time: number; value: number }>;
+    ema50: Array<{ time: number; value: number }>;
+    vwapSeries: Array<{ time: number; value: number }>;
+    rsi14: number;
+    atr14: number;
   }> {
     const now = Date.now();
     const sym = (symbol || this.state.settings.symbols[0] || "BTCUSDT").toUpperCase();
@@ -1766,8 +1860,77 @@ export class TradingFloorDesk {
       candles = snapFallback.bars4h ?? [];
     }
 
-    const slicedCandles = candles.slice(-targetCount);
     const livePx = markPriceOf(this.state, sym, 0);
+
+    // Véritables bougies 1s pour les actifs non-crypto (ou fallback) construites à partir des ticks live
+    if (unit === "s" && (!sym.endsWith("USDT") || !candles.length)) {
+      const refBase = candles[candles.length - 1]?.close || livePx || 1;
+      const ticks = this.recentTicksBySymbol.get(sym) ?? [];
+      const count1s = Math.min(180, targetCount);
+      const secNow = Math.floor(now / 1000) * 1000;
+      const synth1s: MarketSnapshot["bars4h"] = [];
+      let prevPx = refBase;
+      const tickMap = new Map<number, number[]>();
+      for (const tk of ticks) {
+        const slot = Math.floor(tk.t / 1000) * 1000;
+        const arr = tickMap.get(slot) ?? [];
+        arr.push(tk.px);
+        tickMap.set(slot, arr);
+      }
+      const volBase = candles.length ? Math.max(1, candles[candles.length - 1].volume / 60) : 1;
+      for (let i = count1s - 1; i >= 0; i--) {
+        const slotTs = secNow - i * 1000;
+        const bucket = tickMap.get(slotTs);
+        if (bucket && bucket.length > 0) {
+          const o = prevPx;
+          const c = bucket[bucket.length - 1];
+          const hi = Math.max(o, ...bucket);
+          const lo = Math.min(o, ...bucket);
+          synth1s.push({
+            openTime: slotTs,
+            closeTime: slotTs + 999,
+            open: o,
+            high: hi,
+            low: lo,
+            close: c,
+            volume: Number((volBase * (1 + bucket.length * 0.25)).toFixed(2)),
+          });
+          prevPx = c;
+        } else {
+          const histRef = candles[Math.max(0, candles.length - 1 - Math.floor(i / 15))]?.close ?? refBase;
+          const drift = (histRef - prevPx) * 0.15;
+          const c = i === 0 && livePx > 0 ? livePx : prevPx + drift;
+          synth1s.push({
+            openTime: slotTs,
+            closeTime: slotTs + 999,
+            open: prevPx,
+            high: Math.max(prevPx, c),
+            low: Math.min(prevPx, c),
+            close: c,
+            volume: Number(volBase.toFixed(2)),
+          });
+          prevPx = c;
+        }
+      }
+      candles = synth1s;
+    }
+
+    let slicedCandles = candles.slice(-targetCount);
+    // Alignement Spot MT5 vs Futures Yahoo (évite le pic vertical artificiel sur la dernière bougie XAUUSD / Indices)
+    if (slicedCandles.length >= 2 && livePx > 0) {
+      const lastClose = slicedCandles[slicedCandles.length - 1].close;
+      const gapPct = Math.abs(livePx - lastClose) / Math.max(lastClose, 1e-9);
+      if (gapPct > 0.0012 && gapPct < 0.08) {
+        const offset = livePx - lastClose;
+        slicedCandles = slicedCandles.map((b) => ({
+          ...b,
+          open: b.open + offset,
+          high: b.high + offset,
+          low: b.low + offset,
+          close: b.close + offset,
+        }));
+      }
+    }
     if (slicedCandles.length > 0 && livePx > 0) {
       const lastBar = slicedCandles[slicedCandles.length - 1];
       slicedCandles[slicedCandles.length - 1] = {
@@ -1785,6 +1948,42 @@ export class TradingFloorDesk {
     const vwap = computeSessionVwap(slicedCandles, now) ?? null;
     const fvg = detectLatestFvg(slicedCandles, this.state.settings.fvgMinSizeAtr ?? 0.5);
 
+    // Pré-calcul EMA 20, EMA 50, VWAP roulant, RSI 14 & ATR 14 pour affichage direct sur le graphique
+    const ema20: Array<{ time: number; value: number }> = [];
+    const ema50: Array<{ time: number; value: number }> = [];
+    const vwapSeries: Array<{ time: number; value: number }> = [];
+    if (slicedCandles.length > 0) {
+      const k20 = 2 / 21;
+      const k50 = 2 / 51;
+      let e20 = slicedCandles[0].close;
+      let e50 = slicedCandles[0].close;
+      let cumPv = 0;
+      let cumV = 0;
+      let lastVwapDay = -1;
+      const seenT = new Set<number>();
+      for (const b of slicedCandles) {
+        const tsSec = Math.floor(Number(b.openTime || 0) / 1000);
+        if (!tsSec || seenT.has(tsSec)) continue;
+        seenT.add(tsSec);
+        e20 = b.close * k20 + e20 * (1 - k20);
+        e50 = b.close * k50 + e50 * (1 - k50);
+        const dayIdx = Math.floor(tsSec / 86400);
+        if (dayIdx !== lastVwapDay) {
+          lastVwapDay = dayIdx;
+          cumPv = 0;
+          cumV = 0;
+        }
+        const tp = (b.high + b.low + b.close) / 3;
+        const vol = Math.max(1e-6, b.volume || 1);
+        cumPv += tp * vol;
+        cumV += vol;
+        ema20.push({ time: tsSec, value: Number(e20.toFixed(6)) });
+        ema50.push({ time: tsSec, value: Number(e50.toFixed(6)) });
+        vwapSeries.push({ time: tsSec, value: Number((cumPv / cumV).toFixed(6)) });
+      }
+    }
+    const techStats = computeTechnicalConfluence(slicedCandles, curPx);
+
     return {
       ok: true,
       symbol: sym,
@@ -1794,6 +1993,11 @@ export class TradingFloorDesk {
       fvg,
       marketProfile,
       sentimentScore: this.sentiment.getScore(sym),
+      ema20,
+      ema50,
+      vwapSeries,
+      rsi14: techStats.rsi14,
+      atr14: techStats.atr14,
     };
   }
 
@@ -2229,6 +2433,9 @@ export class TradingFloorDesk {
     } else {
       this.state.tape = nextTape;
     }
+    for (const r of nextTape) {
+      if (r.px > 0) this.recordLiveTick(r.symbol, r.px, now);
+    }
     this.state.lastTickAt = now;
     if (!this.state.marketProfiles) this.state.marketProfiles = {};
     for (const snap of snaps) {
@@ -2388,7 +2595,8 @@ export class TradingFloorDesk {
     const squeezeSig = this.hunter.computeSqueezeSignal(funding, p.oiChange1h ?? 0, ret1h);
     const magnetZones = this.hunter.computeLiquidityMagnetZones(snap.bars4h ?? [], px, snap.symbol);
 
-    // Calcul temps réel du Market Profile (POC, VAH, VAL) pour contextualiser le Strategist
+    // Calcul temps réel du Market Profile (POC, VAH, VAL) et confluence technique (EMA20/50, RSI14, ATR14)
+    const tech = computeTechnicalConfluence(snap.bars4h ?? [], px);
     const mp: MarketProfileSummary =
       snap.marketProfile ??
       MarketProfileAnalyzer.computeSessionProfile(snap.symbol, snap.bars4h ?? [], px, now);
@@ -2559,30 +2767,30 @@ export class TradingFloorDesk {
     // 2. Moteur A : Scalping Microstructure (HFT_OrderFlow_Imbalance) — Horizon Tick / 1m
     const micro = snap.microstructure;
     if ((isAutoScalp || style === "scalping") && !this.sentinel.latencyHalted && micro && micro.spreadTicks <= 2.5) {
-      if (micro.zOfi > ofiThresh && micro.volumeTickRatio >= 2.0) {
-        const stopDist = Math.max(micro.atr1m * 0.5, px * 0.0015);
+      if (micro.zOfi > ofiThresh && micro.volumeTickRatio >= 2.0 && tech.rsi14 < 78 && tech.momentum3Bars >= -0.002) {
+        const stopDist = Math.max(micro.atr1m * 1.1, px * 0.0022);
         return withConfluence({
           dir: "long",
           playbook: "HFT_OrderFlow_Imbalance",
-          thesis: `Moteur A (HFT_OrderFlow_Imbalance) : Z_OFI=${micro.zOfi.toFixed(2)} > ${ofiThresh}, Vol=${micro.volumeTickRatio.toFixed(1)}x SMA20, Spread=${micro.spreadTicks.toFixed(1)} ticks.`,
+          thesis: `Moteur A (HFT_OrderFlow_Imbalance) : Z_OFI=${micro.zOfi.toFixed(2)} > ${ofiThresh}, Vol=${micro.volumeTickRatio.toFixed(1)}x SMA20, RSI=${tech.rsi14.toFixed(0)}, Spread=${micro.spreadTicks.toFixed(1)} ticks.`,
           customEntry: px,
           customStop: px - stopDist,
-          customTarget: px + stopDist * 1.8,
-          timeStopMs: 120_000,
-          trailingAtr1m: micro.atr1m * 0.5,
+          customTarget: px + stopDist * 2.1,
+          timeStopMs: 900_000,
+          trailingAtr1m: micro.atr1m * 0.85,
         });
       }
-      if (micro.zOfi < -ofiThresh && micro.volumeTickRatio >= 2.0) {
-        const stopDist = Math.max(micro.atr1m * 0.5, px * 0.0015);
+      if (micro.zOfi < -ofiThresh && micro.volumeTickRatio >= 2.0 && tech.rsi14 > 22 && tech.momentum3Bars <= 0.002) {
+        const stopDist = Math.max(micro.atr1m * 1.1, px * 0.0022);
         return withConfluence({
           dir: "short",
           playbook: "HFT_OrderFlow_Imbalance",
-          thesis: `Moteur A (HFT_OrderFlow_Imbalance) : Z_OFI=${micro.zOfi.toFixed(2)} < -${ofiThresh}, Vol=${micro.volumeTickRatio.toFixed(1)}x SMA20, Spread=${micro.spreadTicks.toFixed(1)} ticks.`,
+          thesis: `Moteur A (HFT_OrderFlow_Imbalance) : Z_OFI=${micro.zOfi.toFixed(2)} < -${ofiThresh}, Vol=${micro.volumeTickRatio.toFixed(1)}x SMA20, RSI=${tech.rsi14.toFixed(0)}, Spread=${micro.spreadTicks.toFixed(1)} ticks.`,
           customEntry: px,
           customStop: px + stopDist,
-          customTarget: px - stopDist * 1.8,
-          timeStopMs: 120_000,
-          trailingAtr1m: micro.atr1m * 0.5,
+          customTarget: px - stopDist * 2.1,
+          timeStopMs: 900_000,
+          trailingAtr1m: micro.atr1m * 0.85,
         });
       }
     }
@@ -2592,9 +2800,9 @@ export class TradingFloorDesk {
       return null;
     }
 
-    // 3. Moteur B : Day Trading Institutionnel (Session_VWAP_Reversion) — Horizon 15m / 1h
+    // 3. Moteur B : Day Trading Institutionnel (Session_VWAP_Reversion) — Horizon 15m / 1h (actif aussi en scalping)
     const vw = snap.vwapContext;
-    if (vw && !isAutoScalp) {
+    if (vw) {
       if (vw.sweptHighReclaim && vw.rsi14 > 70) {
         const stop = Math.max(px + vw.atr15m * 1.5, vw.sd25Upper);
         return withConfluence({
@@ -2656,27 +2864,45 @@ export class TradingFloorDesk {
         thesis: "Contre-tendance des shorts encombrés : funding négatif payant les acheteurs et soutien du carnet.",
       });
     }
-    // Vraie cassure de canal : pas de seuil fantôme -0.5% (~20$ sous le haut sur l'Or) et flux 1h aligné !
-    if (snap.channelHi && px >= snap.channelHi * 0.9995 && ret1h >= 0.0005 && !isRangeMarket) {
+    // Vraie cassure de canal : confluence EMA20/50 + RSI non-extrême + flux 1h aligné
+    if (snap.channelHi && px >= snap.channelHi * 0.9995 && ret1h >= 0.0005 && !isRangeMarket && tech.rsi14 <= 75 && tech.trendBias !== "bear") {
       return withConfluence({
         dir: "long",
         playbook: "breakout",
-        thesis: "Cassure haussière du canal 4h soutenue par le flux 1h et la 2e source.",
+        thesis: `Cassure haussière du canal 4h soutenue par EMA20/50 (RSI=${tech.rsi14.toFixed(0)}) et le flux 1h.`,
       });
     }
-    if (snap.channelLo && px <= snap.channelLo * 1.0005 && ret1h <= -0.0005 && !isRangeMarket) {
+    if (snap.channelLo && px <= snap.channelLo * 1.0005 && ret1h <= -0.0005 && !isRangeMarket && tech.rsi14 >= 25 && tech.trendBias !== "bull") {
       return withConfluence({
         dir: "short",
         playbook: "breakout",
-        thesis: "Cassure baissière du support 4h confirmée sur les deux plateformes.",
+        thesis: `Cassure baissière du support 4h confirmée par EMA20/50 (RSI=${tech.rsi14.toFixed(0)}) sur les deux plateformes.`,
+      });
+    }
+    // Continuation sur pullback EMA20/50 en tendance saine
+    if (!isRangeMarket && tech.trendBias === "bull" && ret1h >= 0.0012 && tech.rsi14 >= 48 && tech.rsi14 <= 68) {
+      return withConfluence({
+        dir: "long",
+        playbook: "breakout",
+        thesis: `Continuation tendance EMA20>EMA50 haussière (RSI=${tech.rsi14.toFixed(0)}, 1h ${fmtSignedPct(ret1h)}).`,
+      });
+    }
+    if (!isRangeMarket && tech.trendBias === "bear" && ret1h <= -0.0012 && tech.rsi14 >= 32 && tech.rsi14 <= 52) {
+      return withConfluence({
+        dir: "short",
+        playbook: "breakout",
+        thesis: `Continuation tendance EMA20<EMA50 baissière (RSI=${tech.rsi14.toFixed(0)}, 1h ${fmtSignedPct(ret1h)}).`,
       });
     }
     if (Math.abs(ret1h) >= 0.003) {
-      return withConfluence({
-        dir: ret1h >= 0 ? "long" : "short",
-        playbook: "breakout",
-        thesis: `Impulsion directionnelle (${fmtSignedPct(ret1h)}) validée par le carnet et la 2e source.`,
-      });
+      const impDir: Direction = ret1h >= 0 ? "long" : "short";
+      if ((impDir === "long" && tech.trendBias !== "bear") || (impDir === "short" && tech.trendBias !== "bull")) {
+        return withConfluence({
+          dir: impDir,
+          playbook: "breakout",
+          thesis: `Impulsion directionnelle (${fmtSignedPct(ret1h)}, RSI=${tech.rsi14.toFixed(0)}) validée par le carnet et la 2e source.`,
+        });
+      }
     }
     if (directiveForcesMeanRev) {
       const mrDir: Direction = px >= mp.poc ? "short" : "long";
@@ -2687,13 +2913,21 @@ export class TradingFloorDesk {
         customTarget: mp.poc,
       });
     }
+    // Pas de fallback aléatoire sur marché plat/sans confluence : exiger une impulsion et l'alignement EMA
     const socialBias = sentimentScore + (fomoLong - fomoShort);
+    const hasImpulse = Math.abs(ret1h) >= 0.0015 || ((snap.bars4h?.length ?? 0) > 0 && Math.abs(tech.momentum3Bars) >= 0.002);
+    if (!hasImpulse && Math.abs(socialBias) < 0.25) {
+      return null;
+    }
     const defaultDir: Direction =
-      Math.abs(socialBias) > 0.2 ? (socialBias >= 0 ? "long" : "short") : (snap.ret24h ?? 0) >= 0 ? "long" : "short";
+      Math.abs(socialBias) > 0.2 ? (socialBias >= 0 ? "long" : "short") : ret1h !== 0 ? (ret1h >= 0 ? "long" : "short") : (snap.ret24h ?? 0) >= 0 ? "long" : "short";
+    if ((defaultDir === "long" && tech.trendBias === "bear") || (defaultDir === "short" && tech.trendBias === "bull")) {
+      return null;
+    }
     return withConfluence({
       dir: defaultDir,
       playbook: "breakout",
-      thesis: "Alignement de tendance 4h et confirmation multi-sources Binance / Bybit.",
+      thesis: `Alignement de tendance 4h (EMA20/50=${tech.trendBias}, RSI=${tech.rsi14.toFixed(0)}) et confirmation multi-sources Binance / Bybit.`,
     });
   }
 
@@ -3121,12 +3355,13 @@ export class TradingFloorDesk {
       const isKamikazeTrade = activePlaybook === "HFT_Kamikaze_FiatTarget" || this.state.settings?.regime === "hft_kamikaze";
       const targetLev = isKamikazeTrade ? 500 : (this.state.settings.defaultLeverage ?? 5);
 
+      const assetFeeRate = feeRateForAsset(chosen.symbol);
       const sized = computeLeveragedSizing(this.state, entry, invalidation, bt, {
         side: activeDir,
         leverageFactor: targetLev,
         maintenanceMarginRate: this.state.settings.maintenanceMarginRate ?? 0.005,
-        takerFee: 0.0004,
-        expectedSlippage: 0.0002,
+        takerFee: assetFeeRate,
+        expectedSlippage: Math.min(0.0002, assetFeeRate * 0.5),
         autoReduceLeverage: true,
         playbook: activePlaybook,
         targetFiatProfit: 75,
@@ -3146,7 +3381,7 @@ export class TradingFloorDesk {
       // Garde-fou frais aller-retour (hors HFT Kamikaze qui a déjà son propre plafond) :
       // empêche un stop ultra-serré de générer un notionnel où les frais mangent > 30% du budget de risque.
       if (!isKamikazeTrade) {
-        const estRoundTripFees = sized.notional * 0.0008;
+        const estRoundTripFees = sized.notional * assetFeeRate * 2;
         const maxSafeFees = Math.max(2, sized.riskUsd * 0.30);
         if (estRoundTripFees > maxSafeFees) {
           const capFactor = maxSafeFees / estRoundTripFees;
@@ -3324,12 +3559,13 @@ export class TradingFloorDesk {
       return;
     }
 
+    const tFeeRate = feeRateForAsset(ticket.asset);
     const recheck = computeLeveragedSizing(this.state, ticket.entry, ticket.invalidation, ticket.backtest, {
       side: ticket.direction,
       leverageFactor: ticket.leverage ?? this.state.settings.defaultLeverage ?? 5,
       maintenanceMarginRate: this.state.settings.maintenanceMarginRate ?? 0.005,
-      takerFee: 0.0004,
-      expectedSlippage: 0.0002,
+      takerFee: tFeeRate,
+      expectedSlippage: Math.min(0.0002, tFeeRate * 0.5),
       autoReduceLeverage: true,
     });
     if (!recheck.ok) {
@@ -3343,7 +3579,7 @@ export class TradingFloorDesk {
 
     const liveMark = markPriceOf(this.state, ticket.asset, ticket.entry);
     const fillPrice = liveMark > 0 ? liveMark : ticket.entry;
-    const feeUsd = ticket.notional * 0.0004;
+    const feeUsd = Number((ticket.notional * tFeeRate).toFixed(2));
 
     ticket.status = "open";
     ticket.decidedAt = now;
@@ -3439,7 +3675,11 @@ export class TradingFloorDesk {
   ): Promise<void> {
     if (ticket.status !== "open") return;
     const rawPnl = ticketPnlAt(ticket, exitPrice);
-    const exitFee = ticket.notional * 0.0004;
+    const feeRate = feeRateForAsset(ticket.asset);
+    const exitFee =
+      ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)
+        ? 0
+        : Number((ticket.notional * feeRate).toFixed(2));
     const computedNet = rawPnl - ticket.fees - exitFee;
     const netPnl =
       typeof realizedOverridePnl === "number" && Number.isFinite(realizedOverridePnl) && realizedOverridePnl !== 0
@@ -3971,7 +4211,7 @@ export class TradingFloorDesk {
         this.state.marketProfiles?.[focusSym] ??
         (bars.length ? MarketProfileAnalyzer.computeSessionProfile(focusSym, bars, livePx, now) : undefined);
 
-      const safeBurst = Math.max(1, Math.min(4, burstCount));
+      const safeBurst = Math.max(1, Math.min(3, burstCount));
       const maxSimultaneousOpen = Math.max(10, Math.min(35, Math.ceil(tpm * 1.15)));
       const targetLev = this.state.settings?.regime === "hft_kamikaze"
         ? 500
@@ -3982,45 +4222,44 @@ export class TradingFloorDesk {
         if (this.executionTimestampsMs.length >= tpm) break;
 
         // Recycler intelligemment si le plafond de positions HFT simultanées est atteint :
-        // priorité à l'encaissement de la position la plus profitable (> frais), sinon la plus ancienne.
+        // uniquement si une position est réellement en profit NET après frais (sinon ne pas fermer à perte).
         const openOnFocus = this.state.tickets
           .filter((t) => t.status === "open" && t.asset.toUpperCase() === focusSym);
         if (openOnFocus.length >= maxSimultaneousOpen) {
           const profitableSorted = openOnFocus
-            .map((t) => ({ t, p: t.mt5Profit ?? ticketPnlAt(t, livePx) }))
+            .map((t) => ({ t, p: netTicketPnlAt(t, livePx) }))
+            .filter((x) => x.p > Math.max(2, roundTripFeesForTicket(x.t)))
             .sort((a, b2) => b2.p - a.p);
-          const candidateToClose =
-            profitableSorted[0] && profitableSorted[0].p > profitableSorted[0].t.fees
-              ? profitableSorted[0].t
-              : [...openOnFocus].sort((a, b2) => (a.filledAt ?? a.createdAt) - (b2.filledAt ?? b2.createdAt))[0];
-          if (candidateToClose) {
-            const pVal = candidateToClose.mt5Profit ?? ticketPnlAt(candidateToClose, livePx);
-            await this.closeOpenTicket(candidateToClose, livePx, pVal > 0 ? "target" : "time", now);
-          }
+          const candidateToClose = profitableSorted[0]?.t;
+          if (!candidateToClose) break;
+          await this.closeOpenTicket(candidateToClose, livePx, "target", now);
         }
 
-        // Micro-signal directionnel mono-paire (tick impulse + Market Profile + alternation HFT si marché plat)
+        // Micro-signal directionnel mono-paire aligné avec EMA/MP (sans jamais hedger LONG+SHORT en parallèle)
         const tickDiff = row && row.prev > 0 ? livePx - row.prev : 0;
         const barSlope = bars.length >= 2 ? bars[bars.length - 1].close - bars[bars.length - 2].close : 0;
+        const techFocus = computeTechnicalConfluence(bars, livePx);
         let dir: Direction =
-          Math.abs(tickDiff) > 0
-            ? tickDiff >= 0
-              ? "long"
-              : "short"
-            : Math.abs(barSlope) > 0
-              ? barSlope >= 0
+          openOnFocus.length > 0
+            ? openOnFocus[0].direction
+            : Math.abs(tickDiff) > 0
+              ? tickDiff >= 0
                 ? "long"
                 : "short"
-              : (row?.change24h ?? 0) >= 0
+              : techFocus.trendBias === "bull"
                 ? "long"
-                : "short";
-        if (mp?.isRange) {
+                : techFocus.trendBias === "bear"
+                  ? "short"
+                  : Math.abs(barSlope) > 0
+                    ? barSlope >= 0
+                      ? "long"
+                      : "short"
+                    : (row?.change24h ?? 0) >= 0
+                      ? "long"
+                      : "short";
+        if (mp?.isRange && openOnFocus.length === 0) {
           if (mp.pricePosition === "above_vah") dir = "short";
           else if (mp.pricePosition === "below_val") dir = "long";
-        }
-        // Si stricte égalité de tick et plusieurs tirs dans la rafale, suivre l'ordre carnet / alternance
-        if (Math.abs(tickDiff) === 0 && b % 2 === 1 && !mp?.isRange) {
-          dir = dir === "long" ? "short" : "long";
         }
 
         const eq = Math.max(1, currentEquity(this.state));
@@ -4115,7 +4354,7 @@ export class TradingFloorDesk {
           decidedAt: now,
           filledAt: now,
           fillPrice: livePx,
-          fees: Number((notional * 0.0004).toFixed(2)),
+          fees: Number((notional * feeRateForAsset(focusSym)).toFixed(2)),
           funding: 0,
           setupGrade: "A+",
           sessionName: "Focus HFT Quota",
@@ -4221,7 +4460,9 @@ export class TradingFloorDesk {
       const mark = ticket.mt5CurrentPrice ?? markPriceOf(this.state, ticket.asset, ticket.fillPrice ?? ticket.entry);
       const isLong = ticket.direction === "long";
       const engine = ticket.engine ?? ticket.playbook;
-      const curUnrealized = ticketPnlAt(ticket, mark);
+      const rtFees = roundTripFeesForTicket(ticket);
+      const curUnrealized = netTicketPnlAt(ticket, mark);
+      const holdAgeMs = Math.max(0, now - (ticket.filledAt || ticket.decidedAt || ticket.createdAt || now));
       if (curUnrealized < 0 && ticket.riskUsd > 0) {
         const maeR = Math.abs(curUnrealized) / ticket.riskUsd;
         if (maeR > (ticket.maxAdverseExcursion ?? 0)) {
@@ -4337,18 +4578,15 @@ export class TradingFloorDesk {
         this.broadcast();
       }
 
-      // STOP-LOSS PROGRESSIF ADAPTATIF (Break-Even 50%..90% piloté par les agents selon le marché)
+      // STOP-LOSS PROGRESSIF ADAPTATIF (Break-Even 50%..90% NET après frais piloté par les agents)
       if (this.state.settings?.progressiveStopEnabled) {
-        const effectiveUnrealized =
-          ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)
-            ? ticket.mt5Profit
-            : curUnrealized;
+        const effectiveUnrealized = curUnrealized;
         const prevPeak = ticket.peakProfitUsd ?? 0;
         if (effectiveUnrealized > prevPeak) {
           ticket.peakProfitUsd = Number(effectiveUnrealized.toFixed(2));
         }
         const activePeak = ticket.peakProfitUsd ?? 0;
-        const minActivatePeakUsd = Math.max(15, ticket.riskUsd * 0.25, ticket.fees * 1.5);
+        const minActivatePeakUsd = Math.max(15, ticket.riskUsd * 0.25, rtFees * 1.25);
         if (activePeak >= minActivatePeakUsd) {
           const tapeRowBe = this.state.tape.find((r) => r.symbol === ticket.asset);
           const tickDeltaPct = tapeRowBe && tapeRowBe.prev > 0 ? ((mark - tapeRowBe.prev) / tapeRowBe.prev) * 100 : 0;
@@ -4366,13 +4604,14 @@ export class TradingFloorDesk {
             ticket.progressiveStopUsd = floorUsd;
             const refPx = ticket.fillPrice ?? ticket.entry;
             if (refPx > 0) {
+              const grossFloorUsd = floorUsd + rtFees;
               const lockPx =
                 ticket.mt5Profit !== undefined && effectiveUnrealized > floorUsd
                   ? refPx + (mark - refPx) * (floorUsd / effectiveUnrealized)
                   : ticket.notional > 0
                     ? isLong
-                      ? refPx + (floorUsd * refPx) / ticket.notional
-                      : refPx - (floorUsd * refPx) / ticket.notional
+                      ? refPx + (grossFloorUsd * refPx) / ticket.notional
+                      : refPx - (grossFloorUsd * refPx) / ticket.notional
                     : refPx;
               if ((isLong && lockPx > ticket.invalidation) || (!isLong && lockPx < ticket.invalidation)) {
                 ticket.invalidation = lockPx;
@@ -4383,7 +4622,7 @@ export class TradingFloorDesk {
             if (firstLock || floorUsd >= 25) {
               this.say(
                 "risk",
-                `[BREAK-EVEN ADAPTATIF ${lockPct}%] ${ticket.id} (${ticket.asset}) : pic ${fmtSignedUsd(activePeak, 2)} -> plancher sécurisé à ${fmtSignedUsd(floorUsd, 2)} (${adaptiveBe.reason}).`,
+                `[BREAK-EVEN ADAPTATIF ${lockPct}%] ${ticket.id} (${ticket.asset}) : pic ${fmtSignedUsd(activePeak, 2)} -> plancher net sécurisé à ${fmtSignedUsd(floorUsd, 2)} (${adaptiveBe.reason}).`,
                 "plain",
                 ticket.id,
               ).catch(() => {});
@@ -4405,7 +4644,7 @@ export class TradingFloorDesk {
           );
           await this.say(
             "execution",
-            `[BREAK-EVEN ADAPTATIF ${lockPct}%] Clôture gagnante de ${ticket.id} (${ticket.asset}) : gain sécurisé ${fmtSignedUsd(effectiveUnrealized, 2)} (pic +${fmtUsd(ticket.peakProfitUsd ?? 0, 2)}, seuil ${lockPct}% +${fmtUsd(ticket.progressiveStopUsd ?? 0, 2)} | ${ticket.progressiveLockReason ?? "Standard"}).`,
+            `[BREAK-EVEN ADAPTATIF ${lockPct}%] Clôture gagnante de ${ticket.id} (${ticket.asset}) : gain net sécurisé ${fmtSignedUsd(effectiveUnrealized, 2)} (pic +${fmtUsd(ticket.peakProfitUsd ?? 0, 2)}, seuil ${lockPct}% +${fmtUsd(ticket.progressiveStopUsd ?? 0, 2)} | ${ticket.progressiveLockReason ?? "Standard"}).`,
             "fill",
             ticket.id,
           );
@@ -4414,14 +4653,12 @@ export class TradingFloorDesk {
       }
 
       // MODULE 2 : THE FIAT-TARGET TAKE PROFIT & AUTONOMOUS THF MANAGEMENT (Execution Trader Agent)
-      // Clôture instantanée au marché dès que le PnL non-réalisé atteint la cible fiat (50$-100$ ou cible utilisateur),
-      // et protection dynamique autonome (Break-Even / Trailing) si le trade part en gain.
       const isKamikazeActive = this.state.settings?.regime === "hft_kamikaze" || engine === "HFT_Kamikaze_FiatTarget";
       if (isKamikazeActive) {
         const minTarget = userTpAmount > 0 ? Math.min(userTpAmount, this.state.settings?.hftTargetPnlMin ?? 50) : (this.state.settings?.hftTargetPnlMin ?? 50);
         const maxTarget = this.state.settings?.hftTargetPnlMax ?? 100;
         const fiatEval = ExecutionTraderAgent.evaluateFiatTargetTakeProfit(ticket, mark, minTarget, maxTarget);
-        if (fiatEval.shouldClose) {
+        if (fiatEval.shouldClose && curUnrealized > 0) {
           await this.closeOpenTicket(ticket, mark, "target", now);
           await this.say(
             "execution",
@@ -4432,7 +4669,7 @@ export class TradingFloorDesk {
           continue;
         }
 
-        // Protection autonome des gains THF : passage au Break-Even + trailing serré dès +20$ de gain
+        // Protection autonome des gains THF : passage au Break-Even + trailing serré dès +20$ net de gain
         const refPx = ticket.fillPrice ?? ticket.entry;
         if (curUnrealized >= 20 && refPx > 0) {
           const lockPx = isLong
@@ -4445,25 +4682,24 @@ export class TradingFloorDesk {
         }
       }
 
-      // Moteur A (HFT_OrderFlow_Imbalance) hors Focus HFT : Trailing Stop 0.5x ATR(1m), Sélection Adverse, Épuisement
+      // Moteur A (HFT_OrderFlow_Imbalance) hors Focus HFT : Trailing Stop, Sélection Adverse, Épuisement (après frais + >= 25s)
       if (engine === "HFT_OrderFlow_Imbalance" && ticket.sessionName !== "Focus HFT Quota") {
         const micro = await fetchMicrostructureTick(ticket.asset);
         if (micro) {
-          // Sortie d'urgence (Sélection Adverse)
-          const adverse = (isLong && micro.zOfi < -1.5) || (!isLong && micro.zOfi > 1.5);
+          // Sortie d'urgence (Sélection Adverse) uniquement après 25s minimum
+          const adverse = holdAgeMs >= 25_000 && ((isLong && micro.zOfi < -1.8) || (!isLong && micro.zOfi > 1.8));
           if (adverse) {
             await this.closeOpenTicket(ticket, mark, "adverse_selection", now);
             continue;
           }
-          // Take Profit dynamique sur épuisement du flux (|Z_OFI| < 0.5)
-          const inProfit = isLong ? mark > (ticket.fillPrice ?? ticket.entry) : mark < (ticket.fillPrice ?? ticket.entry);
-          if (Math.abs(micro.zOfi) < 0.5 && inProfit) {
+          // Take Profit dynamique sur épuisement du flux (|Z_OFI| < 0.5) uniquement si gain NET positif après frais !
+          if (holdAgeMs >= 25_000 && Math.abs(micro.zOfi) < 0.5 && curUnrealized >= Math.max(8, rtFees * 0.6)) {
             await this.closeOpenTicket(ticket, mark, "flow_exhaustion", now);
             continue;
           }
-          // Trailing Stop dynamique 0.5 * ATR(1m) uniquement dans le sens du trade
+          // Trailing Stop dynamique 0.65 * ATR(1m) uniquement dans le sens du trade et jamais sous les frais si BE actif
           if (micro.atr1m > 0) {
-            const trailDist = Math.max(micro.atr1m * 0.5, mark * 0.0012);
+            const trailDist = Math.max(micro.atr1m * 0.65, mark * 0.0015);
             if (isLong) {
               const candStop = mark - trailDist;
               if (candStop > ticket.invalidation) ticket.invalidation = candStop;
@@ -4488,7 +4724,7 @@ export class TradingFloorDesk {
           ticket.partialTpDone = true;
           ticket.breakEvenActive = true;
           if ((isLong && refPx > ticket.invalidation) || (!isLong && refPx < ticket.invalidation)) {
-            ticket.invalidation = refPx; // Passage du stop au Break-Even (sans reculer un stop progressif)
+            ticket.invalidation = refPx;
           }
           await this.say(
             "execution",
@@ -4499,12 +4735,24 @@ export class TradingFloorDesk {
         }
       }
 
-      // Time-Stop naturel défini par chaque stratégie (hors Focus HFT où les agents pilotent 100% la sortie en temps réel)
-      const timeLimitMs = ticket.timeStopMs ?? ticket.timeStopHours * 3600_000;
+      // Time-Stop intelligent : plancher 10 min pour les scalps, clôture seulement si gain net ou invalidation majeure
+      const rawTimeLimitMs = ticket.timeStopMs ?? ticket.timeStopHours * 3600_000;
+      const effectiveTimeLimitMs = ticket.timeStopHours >= 1 ? rawTimeLimitMs : Math.max(rawTimeLimitMs, 10 * 60_000);
       const ticketStart = ticket.filledAt || ticket.decidedAt || ticket.createdAt;
-      if (ticket.sessionName !== "Focus HFT Quota" && ticketStart && now - ticketStart >= timeLimitMs) {
-        await this.closeOpenTicket(ticket, mark, "time", now);
-        continue;
+      if (ticket.sessionName !== "Focus HFT Quota" && ticketStart && now - ticketStart >= effectiveTimeLimitMs) {
+        if (curUnrealized > 0) {
+          await this.closeOpenTicket(ticket, mark, "target", now);
+          continue;
+        }
+        if (ticket.timeStopHours >= 1 || curUnrealized <= -ticket.riskUsd * 0.65) {
+          await this.closeOpenTicket(ticket, mark, "time", now);
+          continue;
+        }
+        // Resserre le SL à mi-chemin sans liquider bêtement en perte légère
+        const halfWaySl = (mark + ticket.invalidation) / 2;
+        if ((isLong && halfWaySl > ticket.invalidation && halfWaySl < mark) || (!isLong && halfWaySl < ticket.invalidation && halfWaySl > mark)) {
+          ticket.invalidation = halfWaySl;
+        }
       }
 
       const hitAmountTp =

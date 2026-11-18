@@ -348,6 +348,9 @@ export class DeskStore {
     if (mergedSettings.slMode === "atr" && (mergedSettings.slVal ?? 0) >= 10) {
       mergedSettings.slVal = mergedSettings.fixedStopAtr || 1.35;
     }
+    if (mergedSettings.regime === "hft_kamikaze" && (mergedSettings.defaultLeverage ?? 5) <= 50) {
+      mergedSettings.regime = "standard";
+    }
 
     const needPromptUpgrade = (s.promptsVersion ?? 1) < PROMPT_SCHEMA_VERSION;
     let upgradedPrompts = { ...empty.agentPrompts, ...(s.agentPrompts ?? {}) };
