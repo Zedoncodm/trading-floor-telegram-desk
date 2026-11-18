@@ -710,6 +710,25 @@ export async function fetchYahooKlines(
   return bars;
 }
 
+/**
+ * Charge un historique étendu depuis 2021-01-01 pour l'apprentissage des stratégies
+ * (bougies 1d 2021->aujourd'hui + bougies 1h sur 2 ans).
+ */
+export async function fetchTrainingHistorySince2021(
+  symbol: string,
+  sinceMs = Date.UTC(2021, 0, 1),
+): Promise<{ barsDaily2021: Kline[]; bars1h2y: Kline[] }> {
+  const [raw1d, raw1h] = await Promise.all([
+    fetchYahooKlines(symbol, "1d", "10y").catch(() => [] as Kline[]),
+    fetchYahooKlines(symbol, "1h", "2y").catch(() => [] as Kline[]),
+  ]);
+  const barsDaily2021 = raw1d.filter((b) => b.openTime >= sinceMs);
+  return {
+    barsDaily2021: barsDaily2021.length >= 120 ? barsDaily2021 : raw1d,
+    bars1h2y: raw1h,
+  };
+}
+
 async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<MarketSnapshot> {
   const ySym = YAHOO_MAP[symbol] ?? symbol;
   const mt5Local = Mt5CloudBridge.readLocalMt5State(25_000);

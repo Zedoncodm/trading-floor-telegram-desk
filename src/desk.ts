@@ -40,6 +40,7 @@ import {
   fetchMacroEconomicCalendar,
   fetchMarketSnapshot,
   fetchMicrostructureTick,
+  fetchTrainingHistorySince2021,
   fetchYahooKlines,
   symbolName,
   verifySecondSource,
@@ -1832,17 +1833,29 @@ export class TradingFloorDesk {
     });
     this.broadcast();
 
+    const defaultSince2021 = Date.UTC(2021, 0, 1);
+    const effectiveStartTs = startTs ?? defaultSince2021;
     let rawBars: MarketSnapshot["bars4h"] = [];
+    let rawDaily2021: MarketSnapshot["bars4h"] = [];
     try {
-      rawBars = targetSym.endsWith("USDT")
-        ? await fetchBinanceKlines(targetSym, tf, 1000)
-        : (await fetchMarketSnapshot(targetSym, now)).bars4h;
+      if (targetSym.endsWith("USDT")) {
+        rawBars = await fetchBinanceKlines(targetSym, tf, 1000);
+      } else {
+        const hist = await fetchTrainingHistorySince2021(targetSym, effectiveStartTs);
+        rawDaily2021 = hist.barsDaily2021;
+        rawBars = hist.bars1h2y.length >= 120 ? hist.bars1h2y : hist.barsDaily2021;
+        if (rawBars.length < 60) {
+          rawBars = (await fetchMarketSnapshot(targetSym, now)).bars4h;
+        }
+      }
     } catch {
       rawBars = (await fetchMarketSnapshot(targetSym, now)).bars4h;
     }
 
-    const ranged = filterBarsByDateRange(rawBars, startTs, endTs);
+    const ranged = filterBarsByDateRange(rawBars, effectiveStartTs, endTs);
     const bars = ranged.length >= 60 ? ranged : rawBars;
+    const daily2021Ranged = filterBarsByDateRange(rawDaily2021, effectiveStartTs, endTs);
+    const dailyBars = daily2021Ranged.length >= 120 ? daily2021Ranged : rawDaily2021;
     const lastClose = bars[bars.length - 1]?.close ?? 1;
     const firstClose = bars[0]?.close ?? lastClose;
     const recentAtrBars = bars.slice(-20);
@@ -1875,15 +1888,22 @@ export class TradingFloorDesk {
 
     const dsrScores: number[] = [];
     const outcomes: GrpoCandidateOutcome[] = candidates.map((cand) => {
-      const evalRes = evaluateCandidateForGrpo(bars, cand.strategy, cand.slMult, cand.tpMult, cand.leverage, startTs, endTs);
-      dsrScores.push(evalRes.deflatedSharpe);
+      const eval1h = evaluateCandidateForGrpo(bars, cand.strategy, cand.slMult, cand.tpMult, cand.leverage, effectiveStartTs, endTs);
+      const eval2021 =
+        dailyBars.length >= 120
+          ? evaluateCandidateForGrpo(dailyBars, cand.strategy, cand.slMult, cand.tpMult, cand.leverage, effectiveStartTs, endTs)
+          : null;
+      const pnl = eval2021 ? (eval1h.pnl * 0.55 + eval2021.pnl * 0.45) : eval1h.pnl;
+      const realizedR = eval2021 ? (eval1h.realizedR * 0.55 + eval2021.realizedR * 0.45) : eval1h.realizedR;
+      const dsr = eval2021 ? (eval1h.deflatedSharpe * 0.55 + eval2021.deflatedSharpe * 0.45) : eval1h.deflatedSharpe;
+      dsrScores.push(dsr);
       return {
         config: cand,
-        pnl: evalRes.pnl,
-        realizedR: evalRes.realizedR,
-        maxAdverseExcursion: evalRes.maxAdverseExcursion,
-        stopDistance: evalRes.stopDistance,
-        executionFees: evalRes.executionFees,
+        pnl,
+        realizedR,
+        maxAdverseExcursion: Math.max(eval1h.maxAdverseExcursion, eval2021?.maxAdverseExcursion ?? 0),
+        stopDistance: eval1h.stopDistance,
+        executionFees: eval1h.executionFees,
       };
     });
 
@@ -2293,7 +2313,7 @@ export class TradingFloorDesk {
     this.state.haltKind = null;
     this.state.settings.executionMode = "auto";
     this.state.settings.autoPaperScalp = true;
-    const training = await this.runGrpoTraining(symbol, now - 90 * 86400_000, now);
+    const training = await this.runGrpoTraining(symbol, Date.UTC(2021, 0, 1), now);
     await this.runDeskScan("manual");
     const openPositions = this.state.tickets.filter((t) => t.status === "open").length;
     const pendingPositions = this.state.tickets.filter((t) => t.status === "pending").length;
