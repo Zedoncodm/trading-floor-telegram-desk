@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
+import { handleAuth } from "./auth.ts";
+import type { StrategyOptimizerAgent } from "./agents/strategyOptimizer.ts";
 import type { TradingFloorDesk } from "./desk.ts";
 import { Mt5CloudBridge } from "./mt5.ts";
 import type { AgentId, AgentPromptConfig, DeskRuntimeSettings } from "./types.ts";
@@ -26,7 +28,11 @@ function readJsonBody<T>(req: IncomingMessage): Promise<T> {
   });
 }
 
-export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url: string; close: () => void } {
+export function startDashboardServer(
+  desk: TradingFloorDesk,
+  port = 4080,
+  optimizer?: StrategyOptimizerAgent,
+): { url: string; close: () => void } {
   const clients = new Set<ServerResponse>();
 
   const unsub = desk.subscribe((state) => {
@@ -42,6 +48,7 @@ export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    if (await handleAuth(req, res, url)) return;
 
     if (req.method === "GET" && url.pathname === "/") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
@@ -424,6 +431,45 @@ export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: String(e) }));
       }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/strategy-optimizer") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(
+        JSON.stringify({
+          ok: true,
+          health: optimizer?.health ?? null,
+          lastReport: optimizer?.lastReport ?? null,
+          versions: optimizer ? optimizer.listVersions() : [],
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/strategy-optimizer/run") {
+      if (!optimizer) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "Strategy_Optimizer non initialisé" }));
+        return;
+      }
+      const report = await optimizer.run("manuel UI");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: Boolean(report), report }));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/strategy-optimizer/rollback") {
+      if (!optimizer) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "Strategy_Optimizer non initialisé" }));
+        return;
+      }
+      const parsed = await readJsonBody<{ version?: number }>(req).catch(() => ({ version: undefined }));
+      const ver = Number(parsed.version);
+      const report = Number.isFinite(ver) ? optimizer.rollback(ver) : null;
+      res.writeHead(report ? 200 : 404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: Boolean(report), report }));
       return;
     }
 

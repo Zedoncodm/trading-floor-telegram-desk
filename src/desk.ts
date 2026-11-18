@@ -45,6 +45,7 @@ import {
 } from "./market.ts";
 import { DeskStore, emitPulse, setAgentActivity } from "./store.ts";
 import { TelegramFloorRoom } from "./telegram.ts";
+import { computeRiskBasedLots, defaultRiskPercent, formatLotLog, riskSizingEnabled, type LotSizingResult } from "./lotSizing.ts";
 import { dayKey, isOvernight, isoWeek, localParts, ticketDay } from "./time.ts";
 import type {
   AgentId,
@@ -2309,6 +2310,77 @@ export class TradingFloorDesk {
     };
   }
 
+  /** Equity réelle : MT5 (AccountEquity) si le bridge est connecté, sinon equity paper. */
+  accountEquity(): number {
+    const live = this.state.mt5Live;
+    if (live?.connected && Number.isFinite(live.equity) && live.equity > 0) return live.equity;
+    return currentEquity(this.state);
+  }
+
+  /**
+   * Risk Manager -> Execution Trader : remplace le sizing notionnel (plafonné par
+   * MAX_EXPOSURE / garde-fou frais / cible fiat HFT, ce qui donnait 0.01-0.08 lot)
+   * par un sizing strict basé sur l'equity et la distance du Stop-Loss.
+   */
+  applyRiskBasedLotsToTicket(ticket: Ticket, ctx: string, riskPercentOverride?: number): LotSizingResult | null {
+    if (!riskSizingEnabled()) return null;
+    const marks: Record<string, number> = {};
+    for (const p of ["EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "USDJPY", "USDCHF", "USDCAD"]) {
+      const m = markPriceOf(this.state, p, 0);
+      if (m > 0) marks[p] = m;
+    }
+    const riskPercent = riskPercentOverride && riskPercentOverride > 0
+      ? riskPercentOverride
+      : (this.state.settings.riskPerTradePct ?? defaultRiskPercent());
+    const equity = this.accountEquity();
+    const r = computeRiskBasedLots({
+      symbol: ticket.asset,
+      equity,
+      entry: ticket.fillPrice ?? ticket.entry,
+      stopLoss: ticket.invalidation,
+      riskPercent,
+      marks,
+    });
+    console.log(formatLotLog(r, `${ctx} ${ticket.id}`));
+    if (!r.ok || r.finalLot <= 0) return r;
+    ticket.mt5Lots = r.finalLot;
+    ticket.qty = r.qty;
+    ticket.notional = r.notionalUsd;
+    ticket.riskUsd = r.effectiveRisk;
+    ticket.riskPct = Number((r.effectiveRisk / Math.max(equity, 1)).toFixed(5));
+    ticket.exposurePct = Number((r.notionalUsd / Math.max(equity, 1)).toFixed(4));
+    ticket.binding = "risk";
+    ticket.journalTags = [...(ticket.journalTags ?? []), `Lot ${r.finalLot}`];
+    this.lastLotSizing = r;
+    return r;
+  }
+
+  public lastLotSizing: LotSizingResult | null = null;
+
+  /** Strategy_Optimizer : applique des paramètres Strategist / Risk Manager (versionnés côté optimiseur). */
+  applyStrategyParams(
+    patch: Partial<Pick<DeskRuntimeSettings, "fixedStopAtr" | "maxRiskPct" | "riskPerTradePct" | "trainedRewardR">>,
+    quarantine: Record<string, number> = {},
+  ): void {
+    for (const [k, v] of Object.entries(patch)) {
+      if (typeof v === "number" && Number.isFinite(v)) (this.state.settings as Record<string, unknown>)[k] = v;
+    }
+    for (const [sym, until] of Object.entries(quarantine)) {
+      this.state.cooldowns[sym] = Math.max(this.state.cooldowns[sym] ?? 0, until);
+    }
+    this.broadcast();
+  }
+
+  /** Message dans le flux local du desk (UI + journal), sans relais Telegram. */
+  publishLocal(speaker: AgentId, text: string, tone: MessageTone = "report"): void {
+    this.state.nonce += 1;
+    this.state.messages = [
+      ...this.state.messages.slice(-299),
+      { id: `m${this.state.nonce}`, at: Date.now(), speaker, text, tone, source: "desk" },
+    ];
+    this.broadcast();
+  }
+
   subscribe(fn: (state: DeskState) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -4116,6 +4188,7 @@ export class TradingFloorDesk {
         explicitTarget: finalTarget,
         now,
       });
+      this.applyRiskBasedLotsToTicket(ticket, "Ticket");
       this.attachGovernanceToTicket(ticket, xaiAudit, atrKellySizing);
 
       this.state.tickets = [ticket, ...this.state.tickets];
@@ -5071,6 +5144,7 @@ export class TradingFloorDesk {
           journalNotes: `8 agents synchronisés en mode Quota HFT sur ${focusSym}.`,
         };
         ActiveTradeManager.ensureHardStopAndTarget(ticket);
+        this.applyRiskBasedLotsToTicket(ticket, "HFT", scaledHftRisk / Math.max(eq, 1));
         const hftXai = TraderSkillsEngine.buildModule2XaiAudit({
           symbol: focusSym,
           direction: dir,

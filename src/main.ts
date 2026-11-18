@@ -6,6 +6,8 @@ import { startDashboardServer } from "./server.ts";
 import { DeskStore } from "./store.ts";
 import { TelegramFloorRoom } from "./telegram.ts";
 import { AGENT_NAMES } from "./types.ts";
+import { StrategyOptimizerAgent } from "./agents/strategyOptimizer.ts";
+import { TelegramDeskService } from "./services/telegramDesk.ts";
 
 async function main(): Promise<void> {
   let cfg;
@@ -25,7 +27,13 @@ async function main(): Promise<void> {
   const desk = new TradingFloorDesk(cfg, store, tg);
 
   const uiPort = Number(process.env.UI_PORT || 4080);
-  const web = startDashboardServer(desk, uiPort);
+  const optimizer = new StrategyOptimizerAgent(desk, cfg.dataDir, cfg.timeZone);
+  const tgDesk = new TelegramDeskService(desk, tg, optimizer);
+  optimizer.onReport((r) => {
+    console.log(`[Strategy_Optimizer] ${StrategyOptimizerAgent.summarize(r)}`);
+    tgDesk.onOptimizerReport(r);
+  });
+  const web = startDashboardServer(desk, uiPort, optimizer);
 
   process.on("unhandledRejection", (reason) => {
     console.error("[TradingFloor] UnhandledRejection interceptée (serveur maintenu actif) :", reason);
@@ -73,10 +81,19 @@ async function main(): Promise<void> {
     void desk.monitorStep().catch((e) => console.error("[MonitorStep Error]", e));
   }, 1000);
 
-  // Agentic Self-Reflection CRON loop (every 15 minutes): Trade Reviewer updates Strategist directive
-  setInterval(() => {
-    void desk.runAgenticSelfReflection().catch((e) => console.error("[SelfReflection Error]", e));
-  }, 15 * 60_000);
+  // Strategy_Optimizer (méta-stratège) : tâche de fond. Remplace le CRON 15 min de self-reflection
+  // du Reviewer (désormais limité à l'audit individuel). Déclenchement : tous les N trades clôturés
+  // (vérifié à chaque mise à jour d'état) + fin de journée (vérifié chaque minute).
+  desk.subscribe(() => {
+    optimizer.tick();
+    try {
+      tgDesk.onState();
+    } catch (e) {
+      console.error("[TelegramDesk Error]", e);
+    }
+  });
+  setInterval(() => optimizer.tick(), 60_000);
+  void tg.registerCommands().catch(() => {});
 
   // Telegram group chat polling loop (checks live so UI token config activates immediately without restart)
   setInterval(async () => {
@@ -88,6 +105,7 @@ async function main(): Promise<void> {
         store.save(desk.state);
       }
       for (const cmd of commands) {
+        if (await tgDesk.handleCommand(cmd.text)) continue;
         await desk.handleHumanInput(cmd.text, "telegram");
       }
     } catch (e) {

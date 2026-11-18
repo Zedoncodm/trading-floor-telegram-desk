@@ -169,6 +169,8 @@ export type DeskRuntimeSettings = {
   sessionDurationHours?: number;
   hftTargetPnlMin?: number;
   hftTargetPnlMax?: number;
+  /** Risque par trade pour le sizing en lots (0.005 - 0.01). Piloté par Strategy_Optimizer. */
+  riskPerTradePct?: number;
 };
 
 export type TradingRegime = "standard" | "macro_fvg" | "hft_kamikaze";

@@ -617,6 +617,7 @@ export class Mt5CloudBridge {
       mt5Lots?: number;
       notional?: number;
       qty?: number;
+      riskUsd?: number;
       leverage?: number;
       closedAt?: number;
       mt5PositionId?: string;
@@ -632,6 +633,7 @@ export class Mt5CloudBridge {
       side: "BUY" | "SELL";
       lots: number;
       notional: number;
+      riskUsd: number;
       entry: number;
       sl: number;
       tp: number;
@@ -662,6 +664,8 @@ export class Mt5CloudBridge {
           side: (t.direction === "long" ? "BUY" : "SELL") as "BUY" | "SELL",
           lots,
           notional: Number(((t.notional && t.notional > 0) ? t.notional : 0).toFixed(2)),
+          // Montant risqué au SL : l'EA recalcule le lot avec le TickValue réel du broker.
+          riskUsd: Number(((t.riskUsd && t.riskUsd > 0) ? t.riskUsd : 0).toFixed(2)),
           entry: Number(((t.fillPrice ?? t.entry) || 0).toFixed(5)),
           sl: Number(t.invalidation.toFixed(5)),
           tp: Number(t.target.toFixed(5)),
@@ -697,6 +701,8 @@ input string InpBridgeFile  = "trading_floor_bridge.json";
 input string InpStateFile   = "mt5_state.json";
 input int    InpPollSeconds = 1;
 input long   InpMagic       = 4080;
+input double InpMaxLotCap   = 10.0;   // Plafond de sécurité (MAX_LOT_CAP)
+input bool   InpRiskSizing  = true;   // Recalcul du lot via riskUsd / (SL pts * TickValue)
 
 CTrade trade;
 double gMyMasterId = 0.0;
@@ -923,8 +929,25 @@ double NormalizeLots(const string sym, const double rawLots) {
    return NormalizeDouble(MathMax(vmin, stepped), 2);
 }
 
+double ComputeRiskLots(const string sym, const double riskUsd, const double slDist, const double reqLots) {
+   if(!InpRiskSizing || riskUsd <= 0.0 || slDist <= 0.0) return reqLots;
+   double tickSize  = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double point     = SymbolInfoDouble(sym, SYMBOL_POINT);
+   if(tickSize <= 0.0 || tickValue <= 0.0 || point <= 0.0) return reqLots;
+   double slPoints = slDist / point;
+   double tickValuePerPoint = tickValue * (point / tickSize);
+   double calc = riskUsd / (slPoints * tickValuePerPoint);
+   double capped = MathMin(calc, InpMaxLotCap);
+   double finalLot = NormalizeLots(sym, capped);
+   PrintFormat("[LotSizing] %s | Equity=%.2f | RiskAmount=%.2f | SL Distance=%.5f (%.1f pts) | TickValue/pt=%.4f | Calculated Lot=%.4f | Final Lot=%.2f (desk=%.2f, cap=%.2f, step=%.2f)",
+               sym, AccountInfoDouble(ACCOUNT_EQUITY), riskUsd, slDist, slPoints, tickValuePerPoint, calc, finalLot, reqLots, InpMaxLotCap,
+               SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP));
+   return finalLot;
+}
+
 double ComputeBrokerSafeLots(const string sym, const double reqLots, const double notionalUsd, const ENUM_ORDER_TYPE oType, const double px) {
-   double candidate = reqLots > 0.0 ? reqLots : 0.01;
+   double candidate = reqLots > 0.0 ? MathMin(reqLots, InpMaxLotCap) : 0.01;
    if(reqLots <= 0.0 && notionalUsd > 0.0 && px > 0.0) {
       double cSize = SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE);
       if(cSize > 0.0) {
@@ -1289,6 +1312,7 @@ void OnTimer() {
       double entry    = ExtractNum(body, "entry", idPos);
       double sl       = ExtractNum(body, "sl", idPos);
       double tp       = ExtractNum(body, "tp", idPos);
+      double riskUsd  = ExtractNum(body, "riskUsd", idPos);
 
       int objEnd = StringFind(body, "}", idPos);
       cursor = (objEnd > idPos) ? objEnd : (idPos + StringLen(id) + 15);
@@ -1331,6 +1355,9 @@ void OnTimer() {
 
       double slDistRel = (entry > 0.0 && sl > 0.0) ? MathAbs(entry - sl) / entry : 0.0;
       double tpDistRel = (entry > 0.0 && tp > 0.0) ? MathAbs(tp - entry) / entry : 0.0;
+
+      double slAbs = (entry > 0.0 && sl > 0.0) ? MathAbs(entry - sl) : 0.0;
+      lots = ComputeRiskLots(realSym, riskUsd, slAbs, lots);
 
       if(side == "BUY" && ask > 0.0) {
          double normLots = ComputeBrokerSafeLots(realSym, lots, notional, ORDER_TYPE_BUY, ask);

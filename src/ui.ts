@@ -1527,6 +1527,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       .chart-profile-panel { flex: none; max-width: none; width: 100%; max-height: 240px; }
       .draw-toolbar { flex-direction: row; width: 100%; height: auto; overflow-x: auto; }
     }
+    #mobileDeskView { display: none; }
+    @media (max-width: 767px) {
+      #canvas3dWrap, #deskStatusStrip, #deskNodeInspector { display: none !important; }
+      #view-desk { overflow-y: auto; padding: 66px 12px 28px; height: 100vh; box-sizing: border-box; }
+      #mobileDeskView { display: flex; flex-direction: column; gap: 12px; }
+      .mob-card { background: var(--surface-card, rgba(15,23,42,.92)); border: 1px solid var(--ring-1, rgba(148,163,184,.18)); border-radius: 12px; padding: 12px; }
+      .mob-hdr { display: flex; justify-content: space-between; align-items: center; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #94a3b8; margin-bottom: 8px; font-weight: 700; }
+      .mob-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .mob-kpi-lbl { font-size: 10px; color: #94a3b8; }
+      .mob-kpi-val { font-size: 15px; font-weight: 700; margin-top: 2px; }
+      .mob-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-top: 1px solid rgba(148,163,184,.12); font-size: 12px; gap: 8px; }
+      .mob-row:first-child { border-top: 0; }
+      .mob-msg { font-size: 11.5px; line-height: 1.4; padding: 6px 0; border-top: 1px solid rgba(148,163,184,.1); word-break: break-word; }
+      .mob-msg:first-child { border-top: 0; }
+      .mob-btn { background: #1e293b; color: #e2e8f0; border: 1px solid rgba(148,163,184,.25); border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
+    }
   </style>
 </head>
 <body>
@@ -1681,6 +1697,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <div id="deskNodeInspector"></div>
+    <div id="mobileDeskView"></div>
   </section>
 
   <!-- ==================== TAB 2: SALON ET CHAT ==================== -->
@@ -4103,6 +4120,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     function init3dDesk() {
+      if (window.innerWidth < 768) return;
       var host = document.getElementById('canvas3dWrap');
       if (!host || typeof THREE === 'undefined') return;
       var w = host.clientWidth || window.innerWidth;
@@ -7951,9 +7969,101 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
     }
 
+    var mobileOptCache = null;
+    var mobileOptLastFetch = 0;
+    function fetchMobileOptimizer(force) {
+      var now = Date.now();
+      if (!force && now - mobileOptLastFetch < 15000) return;
+      mobileOptLastFetch = now;
+      fetch('/api/strategy-optimizer').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        if (d && d.ok) { mobileOptCache = d; renderMobileDesk(); }
+      }).catch(function () {});
+    }
+    function escMob(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function mobToggleHalt(halt) {
+      fetch('/api/emergency', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: halt ? 'EXECUTION_HALTED_MANUAL' : 'RESUME_DESK' })
+      }).catch(function () {});
+    }
+    function mobRunOpt() {
+      fetch('/api/strategy-optimizer/run', { method: 'POST' })
+        .then(function () { fetchMobileOptimizer(true); })
+        .catch(function () {});
+    }
+    function renderMobileDesk() {
+      var el = document.getElementById('mobileDeskView');
+      if (!el || !deskState || window.innerWidth >= 768) return;
+      fetchMobileOptimizer(false);
+      var live = deskState.mt5Live;
+      var bal = (live && live.connected) ? live.balance : (deskState.startEquity + deskState.realizedPnl);
+      var open = (deskState.tickets || []).filter(function (t) { return t.status === 'open'; });
+      var unreal = open.reduce(function (s, t) { return s + (Number(t.mt5Profit) || 0); }, 0);
+      var eq = (live && live.connected) ? live.equity : (bal + unreal);
+      var dayPnl = eq - (deskState.dayStartEquity || deskState.startEquity || eq);
+      var pnlCls = dayPnl >= 0 ? 'up' : 'down';
+      var halted = Boolean(deskState.halted);
+
+      var posHtml = open.length
+        ? open.map(function (t) {
+            var p = Number(t.mt5Profit || 0);
+            var cls = p >= 0 ? 'up' : 'down';
+            return '<div class="mob-row"><div><strong>' + escMob(t.asset) + '</strong> <span class="mono">' +
+              escMob(String(t.direction || '').toUpperCase()) + ' ' + escMob(t.mt5Lots || '-') + ' lot</span>' +
+              '<div style="font-size:10px;color:#94a3b8">Entrée ' + escMob(t.fillPrice || t.entry) + ' · SL ' + escMob(t.invalidation) + '</div></div>' +
+              '<div class="mono ' + cls + '" style="font-weight:700">' + (p >= 0 ? '+' : '') + p.toFixed(2) + '$</div></div>';
+          }).join('')
+        : '<div style="font-size:12px;color:#94a3b8">Aucune position ouverte.</div>';
+
+      var msgs = (deskState.messages || []).slice(-10).reverse();
+      var feedHtml = msgs.length
+        ? msgs.map(function (m) {
+            var tm = new Date(m.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return '<div class="mob-msg"><span class="mono" style="color:#38bdf8">[' + escMob(m.speaker) + ' ' + tm + ']</span> ' + escMob(m.text) + '</div>';
+          }).join('')
+        : '<div style="font-size:12px;color:#94a3b8">Aucun log récent.</div>';
+
+      var optH = mobileOptCache && mobileOptCache.health;
+      var optR = mobileOptCache && mobileOptCache.lastReport;
+      var optHtml = '<div style="font-size:12px;color:#94a3b8">Statut : ' + escMob(optH ? optH.status + ' — ' + optH.lastAction : 'chargement...') + '</div>';
+      if (optR) {
+        var m = optR.metrics || {};
+        optHtml += '<div class="mono" style="font-size:11.5px;margin-top:6px">v' + escMob(optR.version) + ' · ' + escMob(optR.sampleSize) +
+          ' tr · WR ' + ((m.winRate || 0) * 100).toFixed(0) + '% · PF ' + escMob(m.profitFactor) + ' · DD ' + ((m.maxDrawdownPct || 0) * 100).toFixed(1) + '%</div>';
+        if (optR.changes && optR.changes.length) {
+          optHtml += optR.changes.map(function (c) {
+            return '<div class="mob-msg">• <strong>' + escMob(c.param) + '</strong>: ' + escMob(c.from) + ' → ' + escMob(c.to) + ' (' + escMob(c.why) + ')</div>';
+          }).join('');
+        }
+        if (optR.findings && optR.findings.length) {
+          optHtml += optR.findings.slice(0, 4).map(function (f) {
+            return '<div class="mob-msg" style="color:#cbd5e1">› ' + escMob(f) + '</div>';
+          }).join('');
+        }
+      }
+
+      el.innerHTML =
+        '<div class="mob-card">' +
+          '<div class="mob-hdr"><span>Compte ' + (halted ? '· ⏸ PAUSE' : '· ▶ ACTIF') + '</span>' +
+            '<button class="mob-btn" onclick="mobToggleHalt(' + (!halted) + ')">' + (halted ? 'Reprendre' : 'Pause') + '</button></div>' +
+          '<div class="mob-kpis">' +
+            '<div><div class="mob-kpi-lbl">Balance</div><div class="mob-kpi-val mono">$' + bal.toFixed(2) + '</div></div>' +
+            '<div><div class="mob-kpi-lbl">Equity</div><div class="mob-kpi-val mono">$' + eq.toFixed(2) + '</div></div>' +
+            '<div><div class="mob-kpi-lbl">PnL Jour</div><div class="mob-kpi-val mono ' + pnlCls + '">' + (dayPnl >= 0 ? '+' : '') + dayPnl.toFixed(2) + '$</div></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="mob-card"><div class="mob-hdr"><span>Positions ouvertes (' + open.length + ')</span><span class="mono">' + (live && live.connected ? 'MT5 OK' : 'Paper/Off') + '</span></div>' + posHtml + '</div>' +
+        '<div class="mob-card"><div class="mob-hdr"><span>Strategy_Optimizer</span><button class="mob-btn" onclick="mobRunOpt()">Analyser</button></div>' + optHtml + '</div>' +
+        '<div class="mob-card"><div class="mob-hdr"><span>Flux des agents</span></div>' + feedHtml + '</div>';
+    }
+
     // ==================== MAIN RENDER LOOP ====================
     function renderAll() {
       if (!deskState) return;
+      renderMobileDesk();
       var s = deskState.settings || {};
       var isAuto = s.executionMode === 'auto' || Boolean(s.autoPaperScalp);
       var btnExec = document.getElementById('btnExecMode');

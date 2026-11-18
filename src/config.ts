@@ -69,10 +69,14 @@ export function loadConfig(argv: string[]): Config {
     tokens[id] = env(TOKEN_ENV[id]);
     if (!tokens[id]) missing.push(TOKEN_ENV[id]);
   }
-  const chatId = env("TG_CHAT_ID");
+  // Bot unique (TELEGRAM_BOT_TOKEN) : sert de bot principal ; les agents sans token dédié
+  // publient via ce bot avec un préfixe [Agent].
+  const singleBot = env("TELEGRAM_BOT_TOKEN");
+  if (singleBot && !tokens.lead) tokens.lead = singleBot;
+  const chatId = env("TG_CHAT_ID") || env("TELEGRAM_CHAT_ID");
   const humanRaw = env("TG_HUMAN_USER_ID");
 
-  if (mode === "telegram") {
+  if (mode === "telegram" && !singleBot) {
     if (missing.length) throw new ConfigError(`Tokens manquants dans .env : ${missing.join(", ")}.`);
     if (new Set(Object.values(tokens)).size !== AGENT_IDS.length) {
       throw new ConfigError("Les 6 tokens doivent être différents : chaque agent est son propre bot.");

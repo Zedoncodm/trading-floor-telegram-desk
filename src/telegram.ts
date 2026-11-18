@@ -220,6 +220,26 @@ export class TelegramFloorRoom {
     }
   }
 
+  /** Menu de commandes Telegram (/status, /agents, /pause, /resume, /optimize). */
+  async registerCommands(): Promise<void> {
+    const token = this.getPrimaryToken();
+    if (!token) return;
+    await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        commands: [
+          { command: "status", description: "Balance, Equity, PnL du jour, positions" },
+          { command: "agents", description: "Santé et dernière action des agents" },
+          { command: "pause", description: "Suspendre les nouvelles ouvertures" },
+          { command: "resume", description: "Reprendre les ouvertures" },
+          { command: "optimize", description: "Lancer le Strategy_Optimizer" },
+        ],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+  }
+
   /**
    * Poll updates using Desk Lead's (or primary) token.
    */
