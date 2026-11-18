@@ -2135,7 +2135,6 @@ test("MT5 Bridge test/tmpdir isolation: never touches live MetaQuotes directory 
     const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor("http://127.0.0.1:4080");
     assert.ok(mq5.includes('> 15)'));
     assert.ok(mq5.includes("EnsureMaster();"));
-    assert.ok(mq5.includes("gQuoteResolvedAt"));
     assert.ok(mq5.includes("TERMINAL_CONNECTED"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -2272,7 +2271,7 @@ test("Audit fixes: true curve drawdown (ignores startEquity offset), NGAS lot ca
     assert.ok(mq5.includes("SYMBOL_TRADE_STOPS_LEVEL"));
     assert.ok(mq5.includes("nextSl > bid - minDist"));
     assert.ok(mq5.includes("nextSl < ask + minDist"));
-    assert.ok(mq5.includes('"USTEC", "US500", "US30", "DE40", "USOIL"'));
+    assert.ok(mq5.includes('"EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD", "XAGUSD"'));
 
     const bars: Kline[] = Array.from({ length: 50 }, (_, i) => {
       const p = 1.1 + i * 0.0002;

@@ -708,9 +708,6 @@ string gRejIds[12];
 string gRejSyms[12];
 string gRejReasons[12];
 int    gRejCount = 0;
-string gQuoteSyms[16] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY", "XAUUSD", "XAGUSD", "USTEC", "US500", "US30", "DE40", "USOIL" };
-string gQuoteResolved[16];
-datetime gQuoteResolvedAt = 0;
 
 void RecordRejectedOrder(const string id, const string sym, const string reason) {
    for(int i = 0; i < gRejCount; i++) {
@@ -832,11 +829,10 @@ string TryAliasMatch(const string cand, const string requestedBase = "") {
    int total = SymbolsTotal(false);
    for(int i = 0; i < total; i++) {
       string name = SymbolName(i, false);
-      if(IsStockMismatch(name, requestedBase)) continue;
       string nameKey = NormalizeSymKey(name);
-      if(nameKey == candKey || StringFind(nameKey, candKey) == 0) {
-         if(SymbolSelect(name, true) && SymbolInfoDouble(name, SYMBOL_BID) > 0.0) return name;
-      }
+      if(nameKey != candKey && StringFind(nameKey, candKey) != 0) continue;
+      if(IsStockMismatch(name, requestedBase)) continue;
+      if(SymbolSelect(name, true) && SymbolInfoDouble(name, SYMBOL_BID) > 0.0) return name;
    }
    return "";
 }
@@ -1055,8 +1051,9 @@ void WriteMt5StateToFile() {
    string availCryptos = "";
    int cryptoFound = 0;
 
+   bool isOnline = (TerminalInfoInteger(TERMINAL_CONNECTED) != 0 && bal > 0.0);
    string json = "{";
-   json += "\\"connected\\":true,";
+   json += "\\"connected\\":" + (isOnline ? "true" : "false") + ",";
    json += "\\"timestamp\\":" + IntegerToString((long)TimeGMT() * 1000) + ",";
    json += "\\"serverTimestamp\\":" + IntegerToString((long)TimeCurrent() * 1000) + ",";
    json += "\\"login\\":" + IntegerToString(login) + ",";
@@ -1109,30 +1106,24 @@ void WriteMt5StateToFile() {
    }
    json += "],";
 
-   if(gQuoteResolvedAt == 0 || TimeLocal() - gQuoteResolvedAt >= 300) {
-      for(int q = 0; q < 16; q++) {
-         gQuoteResolved[q] = ResolveBrokerSymbol(gQuoteSyms[q]);
-      }
-      gQuoteResolvedAt = TimeLocal();
-   }
+   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD", "XAGUSD" };
    json += "\\"quotes\\":[";
    bool firstQ = true;
-   for(int q = 0; q < 16; q++) {
-      string qSym = gQuoteSyms[q];
-      string realQ = gQuoteResolved[q];
-      if(realQ == "") continue;
-      double bid = SymbolInfoDouble(realQ, SYMBOL_BID);
-      double ask = SymbolInfoDouble(realQ, SYMBOL_ASK);
+   for(int q = 0; q < ArraySize(quoteSyms); q++) {
+      string qSym = quoteSyms[q];
+      if(!SymbolSelect(qSym, true)) continue;
+      double bid = SymbolInfoDouble(qSym, SYMBOL_BID);
+      double ask = SymbolInfoDouble(qSym, SYMBOL_ASK);
       if(bid <= 0.0) continue;
-      long tMode = SymbolInfoInteger(realQ, SYMBOL_TRADE_MODE);
-      int qDigits = (int)SymbolInfoInteger(realQ, SYMBOL_DIGITS);
+      long tMode = SymbolInfoInteger(qSym, SYMBOL_TRADE_MODE);
+      int qDigits = (int)SymbolInfoInteger(qSym, SYMBOL_DIGITS);
       if(qDigits < 2 || qDigits > 8) qDigits = 5;
 
       if(!firstQ) json += ",";
       firstQ = false;
       json += "{";
       json += "\\"symbol\\":\\"" + qSym + "\\",";
-      json += "\\"brokerSymbol\\":\\"" + JsonEscape(realQ) + "\\",";
+      json += "\\"brokerSymbol\\":\\"" + JsonEscape(qSym) + "\\",";
       json += "\\"bid\\":" + DoubleToString(bid, qDigits) + ",";
       json += "\\"ask\\":" + DoubleToString(ask, qDigits) + ",";
       json += "\\"tradeMode\\":" + IntegerToString(tMode);
@@ -1228,8 +1219,6 @@ int OnInit() {
    if(lowId == 0) lowId = (long)GetTickCount();
    gMyMasterId = (double)lowId;
    gLastFailReset = TimeLocal();
-   for(int i = 0; i < 16; i++) gQuoteResolved[i] = "";
-   gQuoteResolvedAt = 0;
 
    trade.SetExpertMagicNumber(InpMagic);
    EnsureMaster();
@@ -1269,7 +1258,6 @@ string ReadBodyFromBridge() {
 
 void OnTimer() {
    if(!EnsureMaster()) return;
-   if(TerminalInfoInteger(TERMINAL_CONNECTED) == 0 || AccountInfoDouble(ACCOUNT_EQUITY) <= 0.0) return;
 
    if(TimeLocal() - gLastFailReset >= 60) {
       gFailedIds = "|";
@@ -1277,6 +1265,7 @@ void OnTimer() {
    }
 
    WriteMt5StateToFile();
+   if(TerminalInfoInteger(TERMINAL_CONNECTED) == 0 || AccountInfoDouble(ACCOUNT_BALANCE) <= 0.0) return;
 
    bool tradeAllowed = (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) != 0 && MQLInfoInteger(MQL_TRADE_ALLOWED) != 0);
    if(!tradeAllowed) return;

@@ -3430,16 +3430,21 @@ export class TradingFloorDesk {
                 .flatMap((q) => [q.symbol.toUpperCase(), Mt5CloudBridge.mapMt5SymbolToDesk(q.symbol).toUpperCase()]),
             )
           : null;
+      const mt5Configured = Boolean(this.state.mt5Live?.connected || this.state.settings?.mt5Login);
+      const defaultMt5SafeSet = new Set([
+        "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY", "XAUUSD", "XAGUSD",
+      ]);
       const mt5AllowsSymbol = (sym: string) => {
         const symUpper = sym.toUpperCase();
         if (symUpper.endsWith("USDT")) return false;
-        const mt5Live = this.state.mt5Live;
-        if (!mt5Live?.connected) return true;
         const unsup = this.mt5UnsupportedSymbols.get(symUpper);
         if (unsup && now - unsup.at < 600_000) return false;
         if (mt5QuotedSymbols && mt5QuotedSymbols.size > 0) {
           const mapped = Mt5CloudBridge.mapSymbolToMt5(symUpper).toUpperCase();
           return mt5QuotedSymbols.has(symUpper) || mt5QuotedSymbols.has(mapped);
+        }
+        if (mt5Configured) {
+          return defaultMt5SafeSet.has(symUpper);
         }
         return true;
       };
