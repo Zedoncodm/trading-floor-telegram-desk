@@ -1,5 +1,5 @@
 import type { Mt5CloudBridge } from "../mt5.ts";
-import type { MarketProfileSummary, Ticket } from "../types.ts";
+import type { MarketProfileSummary, MarketSnapshot, Ticket, TradingStyle } from "../types.ts";
 
 export type BreakEvenModifyDecision = {
   shouldModify: boolean;
@@ -336,5 +336,83 @@ export class ActiveTradeManager {
     }
 
     return { action: "HOLD", peakProfitUsd, securedFloorUsd };
+  }
+
+  /**
+   * Sortie intelligente pilotée par la structure (SMC CHoCH opposé & bornes Market Profile VAH/VAL).
+   * - Respecte un délai minimum anti-bruit (90s en scalping, 5 min en daytrade/swing) pour ne jamais
+   *   couper un trade sur le spread d'ouverture.
+   * - Encaisse le profit si >= 45% de l'objectif est atteint ET qu'une borne VAH/VAL ou un CHoCH inverse apparaît.
+   * - Coupe une position uniquement si un CHoCH inverse complet (validSignal) invalide la thèse après le délai minimum.
+   */
+  static evaluateAgentStructuralExit(
+    ticket: Ticket,
+    currentPrice: number,
+    netPnlUsd: number,
+    ctx?: {
+      marketProfile?: MarketProfileSummary;
+      smcContext?: MarketSnapshot["smcContext"];
+      tradingStyle?: TradingStyle;
+      now?: number;
+    },
+  ): AgentRealtimeExitDecision {
+    const now = ctx?.now ?? Date.now();
+    const entry = ticket.fillPrice ?? ticket.entry;
+    const isLong = ticket.direction === "long";
+    const fees = Math.max(0.2, Number(ticket.fees || 0));
+    const prevPeak = Number(ticket.peakProfitUsd ?? 0);
+    const peakProfitUsd = Number(Math.max(prevPeak, netPnlUsd).toFixed(2));
+
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0 || !Number.isFinite(entry) || entry <= 0) {
+      return { action: "HOLD", peakProfitUsd };
+    }
+
+    const openedAt = ticket.filledAt ?? ticket.createdAt;
+    const ageMs = Math.max(0, now - openedAt);
+    const minHoldMs = ctx?.tradingStyle === "scalping" ? 90_000 : 300_000;
+    if (ageMs < minHoldMs) {
+      return { action: "HOLD", peakProfitUsd };
+    }
+
+    const totalTpDist = isLong ? ticket.target - entry : entry - ticket.target;
+    const coveredDist = isLong ? currentPrice - entry : entry - currentPrice;
+    const tpProgress = totalTpDist > 0 ? coveredDist / totalTpDist : 0;
+    const minGreenUsd = Math.max(2.0, fees * 2.5);
+
+    const smc = ctx?.smcContext;
+    const oppositeChoch = Boolean(
+      smc &&
+        smc.structureEvent === "CHoCH" &&
+        ((isLong && smc.structureDirection === "SHORT") || (!isLong && smc.structureDirection === "LONG")),
+    );
+    const mp = ctx?.marketProfile;
+    const hitMpEdgeInProfit = Boolean(
+      mp &&
+        netPnlUsd >= minGreenUsd &&
+        tpProgress >= 0.45 &&
+        ((isLong && currentPrice >= mp.vah * 0.9997) || (!isLong && currentPrice <= mp.val * 1.0003)),
+    );
+
+    if (netPnlUsd >= minGreenUsd && tpProgress >= 0.45 && (oppositeChoch || hitMpEdgeInProfit)) {
+      return {
+        action: "CLOSE_PROFIT",
+        closeReason: "flow_exhaustion",
+        peakProfitUsd,
+        reason: oppositeChoch
+          ? `[AGENTS EXIT · CHoCH INVERSE] Retournement structurel détecté en gain (${(tpProgress * 100).toFixed(0)}% TP) -> prise de profit +${netPnlUsd.toFixed(2)}€.`
+          : `[AGENTS EXIT · BORNE ${isLong ? "VAH" : "VAL"}] Cible Market Profile atteinte (${(tpProgress * 100).toFixed(0)}% TP) -> profit encaissé +${netPnlUsd.toFixed(2)}€.`,
+      };
+    }
+
+    if (oppositeChoch && smc?.validSignal && netPnlUsd < 0) {
+      return {
+        action: "CLOSE_STOP",
+        closeReason: "invalidation",
+        peakProfitUsd,
+        reason: `[AGENTS EXIT · INVALIDATION STRUCTURELLE] CHoCH inverse confirmé contre ${ticket.asset} ${ticket.direction.toUpperCase()} (${smc.structureEvent} ${smc.structureDirection}) -> sortie préventive à ${netPnlUsd.toFixed(2)}€ avant SL complet.`,
+      };
+    }
+
+    return { action: "HOLD", peakProfitUsd };
   }
 }

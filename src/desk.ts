@@ -756,6 +756,7 @@ export class TradingFloorDesk {
   private monitoring = false;
   private syncingMt5 = false;
   private latestBarsBySymbol = new Map<string, MarketSnapshot["bars4h"]>();
+  private lastSmcBySymbol = new Map<string, NonNullable<MarketSnapshot["smcContext"]>>();
   private recentTicksBySymbol = new Map<string, Array<{ t: number; px: number }>>();
   private lastKnownEquity = 0;
   private scanCursor = 0;
@@ -3040,6 +3041,7 @@ export class TradingFloorDesk {
         ? SmcEngine.analyzeOhlcv(snap.symbol, smcBars, px, smcAtr, now)
         : (snap.smcContext ?? SmcEngine.analyzeOhlcv(snap.symbol, smcBars, px, smcAtr, now));
     snap.smcContext = smc;
+    this.lastSmcBySymbol.set(snap.symbol, smc);
     const mp: MarketProfileSummary =
       snap.marketProfile ??
       MarketProfileAnalyzer.computeSessionProfile(snap.symbol, mpBars, px, now);
@@ -5401,6 +5403,49 @@ export class TradingFloorDesk {
           this.pushLocalMt5BridgePayload(now);
           setAgentActivity(this.state, "risk", "sizing", agentExit.reason ?? `SL verrouillé ${ticket.id}`, now, { asset: ticket.asset, targetAgent: "execution" });
         }
+      }
+
+      // Sortie intelligente pilotée par la structure (CHoCH inverse SMC / borne Market Profile VAH-VAL, après délai anti-bruit)
+      const structNetPnl = ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit) ? ticket.mt5Profit : curUnrealized;
+      const structExit = ActiveTradeManager.evaluateAgentStructuralExit(ticket, mark, structNetPnl, {
+        marketProfile: this.state.marketProfiles?.[ticket.asset],
+        smcContext: this.lastSmcBySymbol.get(ticket.asset),
+        tradingStyle: this.state.settings.tradingStyle,
+        now,
+      });
+      ticket.peakProfitUsd = structExit.peakProfitUsd;
+      if (structExit.action === "CLOSE_PROFIT" || structExit.action === "CLOSE_STOP") {
+        await this.closeOpenTicket(
+          ticket,
+          mark,
+          structExit.closeReason ?? (structExit.action === "CLOSE_PROFIT" ? "flow_exhaustion" : "invalidation"),
+          now,
+          ticket.mt5Profit !== undefined ? structNetPnl : undefined,
+        );
+        setAgentActivity(
+          this.state,
+          "execution",
+          "executing",
+          `Sortie structurelle ${ticket.id} (${structNetPnl >= 0 ? "+" : ""}${structNetPnl.toFixed(2)}€)`,
+          now,
+          { asset: ticket.asset, targetAgent: "reviewer" },
+        );
+        emitPulse(
+          this.state,
+          "execution",
+          "reviewer",
+          structExit.action === "CLOSE_PROFIT" ? "fill" : "veto",
+          `EXIT ${structNetPnl >= 0 ? "+" : ""}${structNetPnl.toFixed(2)}`,
+          ticket.asset,
+          now,
+        );
+        await this.say(
+          "execution",
+          structExit.reason ?? `[AGENTS EXIT] Clôture structurelle ${ticket.id} (${structNetPnl.toFixed(2)}€).`,
+          structExit.action === "CLOSE_PROFIT" ? "fill" : "veto",
+          ticket.id,
+        );
+        continue;
       }
 
       // PHASE 4 — ActiveTradeManager : Hard Break-Even asynchrone à 50% du TP (+ frais)
