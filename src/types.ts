@@ -123,6 +123,7 @@ export type DeskRuntimeSettings = {
   autoPaperScalp: boolean;
   scalpIntervalSec: number;
   tradesPerMinute?: number;
+  maxConcurrentPositions?: number;
   focusSymbol?: string;
   strictQuotaMode?: boolean;
   executionMode: ExecutionMode;
@@ -397,6 +398,7 @@ export type MarketSnapshot = {
   secondary: VenueSnap | null;
   bars4h: Kline[];
   bars15m?: Kline[];
+  bars5m?: Kline[];
   bars1m?: Kline[];
   channelHi: number | null;
   channelLo: number | null;

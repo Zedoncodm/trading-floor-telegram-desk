@@ -710,12 +710,13 @@ export async function fetchYahooKlines(
 
 async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<MarketSnapshot> {
   const ySym = YAHOO_MAP[symbol] ?? symbol;
-  const [bars1h, bars15m] = await Promise.all([
+  const [bars1h, bars15m, bars5m] = await Promise.all([
     fetchYahooKlines(symbol, "1h", "1mo"),
     fetchYahooKlines(symbol, "15m", "5d").catch(() => [] as Kline[]),
+    fetchYahooKlines(symbol, "5m", "5d").catch(() => [] as Kline[]),
   ]);
   const bars4h = bars1h;
-  const lastClose = bars4h[bars4h.length - 1]?.close ?? bars15m[bars15m.length - 1]?.close ?? 0;
+  const lastClose = bars5m[bars5m.length - 1]?.close ?? bars4h[bars4h.length - 1]?.close ?? bars15m[bars15m.length - 1]?.close ?? 0;
   const price = lastClose;
   const prev1h = bars4h[bars4h.length - 2]?.close ?? price;
   const ret1h = prev1h > 0 ? (price - prev1h) / prev1h : 0;
@@ -739,6 +740,7 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
     secondary: null,
     bars4h,
     bars15m,
+    bars5m,
     channelHi,
     channelLo,
     atr,

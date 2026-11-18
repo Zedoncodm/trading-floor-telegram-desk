@@ -1543,6 +1543,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       .mob-msg:first-child { border-top: 0; }
       .mob-btn { background: #1e293b; color: #e2e8f0; border: 1px solid rgba(148,163,184,.25); border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
     }
+    .strat-modes-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+    @media (max-width: 900px) { .strat-modes-grid { grid-template-columns: 1fr; } }
+    .strat-mode-card { background: var(--surface-card, rgba(15,23,42,.72)); border: 1.5px solid var(--ring-1, rgba(148,163,184,.18)); border-radius: 14px; padding: 14px; cursor: pointer; transition: all .18s ease; text-align: left; display: flex; flex-direction: column; gap: 6px; }
+    .strat-mode-card:hover { border-color: rgba(56,189,248,.55); transform: translateY(-1px); }
+    .strat-mode-card.active { border-color: #38bdf8; background: linear-gradient(160deg, rgba(56,189,248,.16), rgba(15,23,42,.88)); box-shadow: 0 0 0 1px rgba(56,189,248,.35); }
+    .strat-mode-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 999px; width: fit-content; background: rgba(148,163,184,.14); color: #cbd5e1; }
+    .strat-mode-card.active .strat-mode-badge { background: rgba(56,189,248,.22); color: #7dd3fc; }
+    .strat-conc-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 14px; border-radius: 12px; margin-bottom: 12px; }
+    details.adv-manual-details { border: 1px solid var(--ring-1, rgba(148,163,184,.18)); border-radius: 12px; padding: 10px 14px; background: rgba(15,23,42,.42); }
+    details.adv-manual-details > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--fg-2); user-select: none; }
   </style>
 </head>
 <body>
@@ -2079,21 +2089,67 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ==================== TAB 5: STRATÉGIE, RISQUE & ENTRAÎNEMENT IA (BENTO COMPACT) ==================== -->
   <section id="view-strategy" class="view-panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="card-title" style="font-size:14.5px">Entraînement de l'IA (Machine Learning) &amp; Gestion du Risque</span>
-        <button id="btnAutoPilot1Click" class="pill-btn primary" style="padding:7px 13px;font-size:11.5px" onclick="runOneClickAutopilot()">
-          Mode Simple 1-Clic : Entraîner l'IA &amp; Lancer les Trades Automatiquement
-        </button>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <div>
+        <div class="card-title" style="font-size:15px">Pilote Automatique des Stratégies &amp; Fréquence Multi-Paires</div>
+        <div style="font-size:11.5px;color:var(--fg-2);margin-top:2px">
+          Choisissez votre style : les agents et <strong>Strategy_Optimizer</strong> ajustent automatiquement le Stop ATR, le Kelly, le WFO et le Break-Even.
+        </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <button id="btnAutoPilot1Click" class="pill-btn primary" style="padding:7px 13px;font-size:11.5px" onclick="runOneClickAutopilot()">
+          Mode Simple 1-Clic : Entraîner &amp; Lancer en Auto
+        </button>
+      </div>
+    </div>
+
+    <div class="strat-modes-grid">
+      <button type="button" id="stratCard-daytrade" class="strat-mode-card active" onclick="selectDeskStrategyMode('daytrade')">
+        <span class="strat-mode-badge">Recommandé · Actuel</span>
+        <strong style="font-size:14px;color:var(--fg-1)">1. Day Trading Institutionnel</strong>
+        <span style="font-size:11.5px;color:var(--fg-2);line-height:1.4">
+          Unités <strong>1h / 15m</strong> (SMC CHoCH/BOS + Order Block + FVG + WFO). Cible <strong>2.2R</strong>, concurrence débloquée à <strong>3 positions</strong> en parallèle.
+        </span>
+      </button>
+
+      <button type="button" id="stratCard-scalping" class="strat-mode-card" onclick="selectDeskStrategyMode('scalping')">
+        <span class="strat-mode-badge">Haute Fréquence · Multi-Paires</span>
+        <strong style="font-size:14px;color:var(--fg-1)">2. Scalping Multi-Paires (5m / 15m)</strong>
+        <span style="font-size:11.5px;color:var(--fg-2);line-height:1.4">
+          Unités <strong>5m / 15m</strong> en direct, jusqu'à <strong>5 positions simultanées</strong> sur paires décorrélées (même objectif atteint), cible <strong>1.6R</strong>, scan <strong>5s</strong>.
+        </span>
+      </button>
+
+      <button type="button" id="stratCard-longtrade" class="strat-mode-card" onclick="selectDeskStrategyMode('longtrade')">
+        <span class="strat-mode-badge">Swing Macro</span>
+        <strong style="font-size:14px;color:var(--fg-1)">3. Swing Macro SMC (4h)</strong>
+        <span style="font-size:11.5px;color:var(--fg-2);line-height:1.4">
+          Unités <strong>4h / 1h</strong> pour capter les gros mouvements structurels. Cible <strong>2.5R</strong>, concurrence <strong>3 positions</strong>.
+        </span>
+      </button>
+    </div>
+
+    <div class="glass-card strat-conc-bar">
+      <div>
+        <strong style="font-size:12.5px">Positions simultanées autorisées (Multi-Paires)</strong>
+        <div style="font-size:11px;color:var(--fg-2)" id="concModeDesc">Débloque plusieurs paires en parallèle au lieu de rester bloqué sur 1 seul trade.</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button type="button" class="pill-btn conc-btn" data-conc="1" onclick="setMaxConcurrentPositions(1)">1 (Prudent)</button>
+        <button type="button" class="pill-btn conc-btn" data-conc="3" onclick="setMaxConcurrentPositions(3)">3 (Multi-Paires)</button>
+        <button type="button" class="pill-btn conc-btn" data-conc="5" onclick="setMaxConcurrentPositions(5)">5 (Haute Fréquence)</button>
+      </div>
+    </div>
+
+    <details id="advancedManualParams" class="adv-manual-details">
+      <summary>Réglages manuels avancés &amp; Entraînement de l'IA (Machine Learning) — gérés automatiquement par les bots</summary>
+      <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0">
         <button id="btnPresetProPerf" class="pill-btn primary" onclick="applyRiskProfile('performance_pro')" title="Réglage optimal : Levier 20x · Risque 1.5 % · Stop 1.5x ATR · Cible 2.2R · Break-Even 50% ACTIF · Entraînement WFO+GRPO">Performance Pro (IA)</button>
         <button class="pill-btn" onclick="applyRiskProfile('prudent')" title="Levier 2x · Risque 1 % · Perte jour max 3 %">Prudent</button>
         <button class="pill-btn" onclick="applyRiskProfile('equilibre')" title="Levier 5x · Risque 2 % · Perte jour max 5 %">Équilibré</button>
         <button class="pill-btn" onclick="applyRiskProfile('agressif')" title="Levier 25x · Risque 3.5 % · Perte jour max 10 %">Agressif</button>
         <button id="btnLockGrid" class="pill-btn" onclick="toggleGridLock()">VERR Grille Verrouillée</button>
       </div>
-    </div>
 
     <div class="strat-bento-layout">
       <div class="strat-grid" id="strategyWidgetsGrid">
@@ -2464,6 +2520,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
     </div>
+    </details>
   </section>
 
   <!-- DANGER RISK CONFIRM MODAL -->
@@ -8106,6 +8163,85 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         '<div class="mob-card"><div class="mob-hdr"><span>Flux des agents</span></div>' + feedHtml + '</div>';
     }
 
+    function syncStrategyCardsUi() {
+      if (!deskState || !deskState.settings) return;
+      var st = deskState.settings;
+      var style = st.tradingStyle || 'daytrade';
+      ['daytrade', 'scalping', 'longtrade'].forEach(function (m) {
+        var el = document.getElementById('stratCard-' + m);
+        if (el) el.classList.toggle('active', style === m);
+      });
+      var conc = Number(st.maxConcurrentPositions || (style === 'scalping' ? 5 : 3));
+      document.querySelectorAll('.conc-btn').forEach(function (btn) {
+        var val = Number(btn.getAttribute('data-conc'));
+        btn.classList.toggle('primary', val === conc);
+      });
+    }
+
+    function selectDeskStrategyMode(mode) {
+      var presets = {
+        daytrade: {
+          tradingStyle: 'daytrade',
+          maxConcurrentPositions: 3,
+          trainedRewardR: 2.2,
+          trainedAtrMult: 1.6,
+          fixedStopAtr: 1.6,
+          tradesPerMinute: 6,
+          progressiveSlEnabled: true,
+          autoPaperScalp: true,
+          executionMode: 'auto',
+          regime: 'standard'
+        },
+        scalping: {
+          tradingStyle: 'scalping',
+          maxConcurrentPositions: 5,
+          trainedRewardR: 1.6,
+          trainedAtrMult: 1.15,
+          fixedStopAtr: 1.15,
+          tradesPerMinute: 12,
+          progressiveSlEnabled: true,
+          autoPaperScalp: true,
+          executionMode: 'auto',
+          regime: 'standard'
+        },
+        longtrade: {
+          tradingStyle: 'longtrade',
+          maxConcurrentPositions: 3,
+          trainedRewardR: 2.5,
+          trainedAtrMult: 1.75,
+          fixedStopAtr: 1.75,
+          tradesPerMinute: 4,
+          progressiveSlEnabled: true,
+          autoPaperScalp: true,
+          executionMode: 'auto',
+          regime: 'standard'
+        }
+      };
+      var p = presets[mode];
+      if (!p) return;
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ settings: p })
+      }).then(function () {
+        if (deskState && deskState.settings) Object.assign(deskState.settings, p);
+        syncStrategyCardsUi();
+        showToast('Mode activé : ' + (mode === 'scalping' ? 'Scalping Multi-Paires (5 positions)' : mode === 'longtrade' ? 'Swing Macro 4h' : 'Day Trading Institutionnel'), 'ok');
+      }).catch(function () {});
+    }
+
+    function setMaxConcurrentPositions(n) {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ settings: { maxConcurrentPositions: n } })
+      }).then(function () {
+        if (deskState && deskState.settings) deskState.settings.maxConcurrentPositions = n;
+        syncStrategyCardsUi();
+        showToast('Concurrence réglée sur ' + n + ' position(s) simultanée(s)', 'ok');
+      }).catch(function () {});
+    }
+
     // ==================== MAIN RENDER LOOP ====================
     function renderAll() {
       if (!deskState) return;
@@ -8125,6 +8261,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (haltBtn) haltBtn.classList.toggle('resuming', isHalted);
       var emerHaltLbl = document.getElementById('emergencyHaltLabel');
       if (emerHaltLbl) emerHaltLbl.textContent = isHalted ? 'RESUME' : 'HALT DESK';
+      syncStrategyCardsUi();
 
       var lev = (deskState && deskState.settings && deskState.settings.defaultLeverage) || s.defaultLeverage || 5;
       var navLevEl = document.getElementById('navLevBadge');

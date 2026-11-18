@@ -3515,6 +3515,7 @@ export class TradingFloorDesk {
         0.02,
         currentAgg,
         activeRegime,
+        this.state.settings?.maxConcurrentPositions,
       );
 
       if (openCount >= maxConcurrent) {
@@ -3675,6 +3676,7 @@ export class TradingFloorDesk {
         const bars1hFrom15m = bars15m.length >= 160 ? aggregateKlines(bars15m, 4) : [];
         const bars4h = candidate.bars4h ?? [];
         const bars4hFrom1h = !candidate.symbol.endsWith("USDT") && bars4h.length >= 240 ? aggregateKlines(bars4h, 4) : [];
+        const bars5m = candidate.bars5m ?? [];
         const bars1m = candidate.bars1m ?? [];
 
         for (const pTf of preferredTfs) {
@@ -3695,7 +3697,7 @@ export class TradingFloorDesk {
           } else if (pTf === "4h") {
             addTfSet("4h", bars4hFrom1h.length >= 220 ? bars4hFrom1h : bars4h);
           } else if (pTf === "1m") {
-            addTfSet("1m", bars1m);
+            addTfSet("1m", bars1m.length >= 60 ? bars1m : bars5m);
           }
         }
         if (!tfSets.length && bars4h.length >= 60) addTfSet("4h", bars4h);

@@ -24,6 +24,7 @@ export class RiskManagerAgent {
     volatility: number,
     aggressiveness: AggressivenessState,
     regime: TradingRegime = "standard",
+    maxConcurrentOverride?: number,
   ): number {
     if (regime === "hft_kamikaze" || aggressiveness === "lagging_aggressive") {
       // In High Aggressiveness / Kamikaze mode, allow up to 50 simultaneous micro-positions
@@ -33,9 +34,18 @@ export class RiskManagerAgent {
       return Math.min(50, Math.max(10, marginCapacity));
     }
 
+    const override =
+      typeof maxConcurrentOverride === "number" && Number.isFinite(maxConcurrentOverride) && maxConcurrentOverride >= 1
+        ? Math.min(8, Math.round(maxConcurrentOverride))
+        : null;
+
     if (aggressiveness === "target_reached" || aggressiveness === "secured") {
-      // Reduce risk once goal is achieved or deadline met
-      return 1;
+      // Par défaut prudent (1) sauf si le pilote multi-paires est explicitement débloqué
+      return override !== null ? Math.min(override, aggressiveness === "secured" ? 3 : override) : 1;
+    }
+
+    if (override !== null) {
+      return override;
     }
 
     // Standard regime
