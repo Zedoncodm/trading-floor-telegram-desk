@@ -37,6 +37,7 @@ import {
   computeSessionVwap,
   detectLatestFvg,
   fetchBinanceKlines,
+  fetchMacroEconomicCalendar,
   fetchMarketSnapshot,
   fetchMicrostructureTick,
   fetchYahooKlines,
@@ -3531,8 +3532,24 @@ export class TradingFloorDesk {
       });
       emitPulse(this.state, "lead", "analyst", "flag", "Scan lancé", undefined, now);
 
-      setAgentActivity(this.state, "analyst", "scanning", "Lecture Binance + Bybit (2e source)", now);
+      setAgentActivity(this.state, "analyst", "scanning", "Lecture MT5 + Yahoo + Calendrier Éco", now);
       const snaps = await this.refreshTape();
+      if (trigger !== "initial") {
+        const cal = await fetchMacroEconomicCalendar(now).catch(() => ({ events: [] as DeskState["macroEvents"], imminentHighImpact: undefined }));
+        if (cal.events.length > 0) {
+          const existing = (this.state.macroEvents ?? []).filter((e) => e.timestamp >= now - 24 * 3600_000);
+          const merged = [...cal.events.slice(0, 20), ...existing].slice(0, 30);
+          this.state.macroEvents = merged;
+          if (cal.imminentHighImpact && !this.isVolatilityShieldActive(now)) {
+            this.state.volatilityShieldUntil = now + 15 * 60_000;
+            await this.say(
+              "analyst",
+              `🛡️ [CALENDRIER ÉCO AUTO · VOLATILITY_SHIELD] Annonce HIGH IMPACT imminente : ${cal.imminentHighImpact.event}. Bouclier de volatilité activé 15 min.`,
+              "report",
+            );
+          }
+        }
+      }
 
       const openCount = this.state.tickets.filter((t) => t.status === "open").length;
       const isScalp =
@@ -3703,6 +3720,23 @@ export class TradingFloorDesk {
             await this.say(preQ.vetoAgent, preQ.selfQuestioningLog, "veto");
           }
           continue;
+        }
+
+        // VÉRIFICATION CORRÉLATION PORTEFEUILLE (Positive / Négative / Neutre vs positions ouvertes)
+        const openTicketsNow = this.state.tickets.filter((t) => t.status === "open");
+        const corrCheck = RiskManagerAgent.evaluatePortfolioCorrelation(
+          candidate.symbol,
+          idea.dir,
+          openTicketsNow,
+          this.latestBarsBySymbol,
+        );
+        if (!corrCheck.allowed) {
+          emitPulse(this.state, "risk", "strategist", "veto", `CORRÉLATION ${candidate.symbol}`, candidate.symbol, now);
+          await this.say("risk", corrCheck.summary, "veto");
+          continue;
+        }
+        if (corrCheck.details.length > 0) {
+          idea.thesis = `${idea.thesis} | ${corrCheck.summary}`;
         }
 
         // Construction multi-timeframes réelle (Forex + Or + Indices)

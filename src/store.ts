@@ -1,5 +1,7 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DeskDatabase } from "./db.ts";
+import { Mt5CloudBridge } from "./mt5.ts";
 import { createDefaultSettings, DEFAULT_AGENT_PROMPTS, PROMPT_SCHEMA_VERSION } from "./llm.ts";
 import { dayKey, isoWeek, ticketDay } from "./time.ts";
 import {
@@ -29,10 +31,19 @@ export class DeskStore {
   readonly statePath: string;
   readonly blotterPath: string;
   readonly historyPath: string;
+  private db: DeskDatabase | null = null;
+  private lastDbSyncAt = 0;
 
   constructor(dataDir: string) {
     this.dir = dataDir;
     mkdirSync(this.dir, { recursive: true });
+    try {
+      if (!Mt5CloudBridge.isTestOrTempEnv(this.dir)) {
+        this.db = new DeskDatabase(this.dir);
+      }
+    } catch {
+      this.db = null;
+    }
     this.statePath = join(this.dir, "state.json");
     this.blotterPath = join(this.dir, "blotter.jsonl");
     this.historyPath = join(this.dir, "full_history.json");
@@ -382,6 +393,11 @@ export class DeskStore {
     writeFileSync(tmp, JSON.stringify(state, null, 2), "utf8");
     renameSync(tmp, this.statePath);
     this.saveFullHistory(state);
+    const now = Date.now();
+    if (this.db && now - this.lastDbSyncAt >= 2500) {
+      this.lastDbSyncAt = now;
+      this.db.syncState(state);
+    }
   }
 
   saveFullHistory(state: DeskState): void {

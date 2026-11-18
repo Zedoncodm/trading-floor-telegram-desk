@@ -22,6 +22,8 @@ export type LocalMt5Quote = {
   bid: number;
   ask: number;
   tradeMode?: number;
+  /** Bougies natives MT5 M5 : [openTimeMs, open, high, low, close, volume] */
+  barsM5?: number[][];
 };
 
 export type LocalMt5RejectedOrder = {
@@ -1149,7 +1151,16 @@ void WriteMt5StateToFile() {
       json += "\\"brokerSymbol\\":\\"" + JsonEscape(qSym) + "\\",";
       json += "\\"bid\\":" + DoubleToString(bid, qDigits) + ",";
       json += "\\"ask\\":" + DoubleToString(ask, qDigits) + ",";
-      json += "\\"tradeMode\\":" + IntegerToString(tMode);
+      json += "\\"tradeMode\\":" + IntegerToString(tMode) + ",";
+      json += "\\"barsM5\\":[";
+      MqlRates m5Rates[];
+      ArraySetAsSeries(m5Rates, false);
+      int copiedM5 = CopyRates(qSym, PERIOD_M5, 0, 60, m5Rates);
+      for(int b = 0; b < copiedM5; b++) {
+         if(b > 0) json += ",";
+         json += "[" + IntegerToString((long)m5Rates[b].time * 1000) + "," + DoubleToString(m5Rates[b].open, qDigits) + "," + DoubleToString(m5Rates[b].high, qDigits) + "," + DoubleToString(m5Rates[b].low, qDigits) + "," + DoubleToString(m5Rates[b].close, qDigits) + "," + IntegerToString((long)m5Rates[b].tick_volume) + "]";
+      }
+      json += "]";
       json += "}";
    }
    json += "],";

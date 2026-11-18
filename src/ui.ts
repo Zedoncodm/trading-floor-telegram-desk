@@ -3278,8 +3278,32 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           cachedMobileUrl = d.url;
           var el = document.getElementById('mobileAccessUrl');
           if (el) el.textContent = d.url + (d.isTunnel ? ' (HTTPS Tunnel)' : ' (LAN local)');
+          var pinEl = document.getElementById('mobilePinDisplay');
+          if (pinEl) pinEl.textContent = d.pinCode || 'Désactivé';
         }
       }).catch(function () {});
+    }
+    function saveCustomMobilePin() {
+      var inp = document.getElementById('mobilePinInput');
+      var pin = inp ? String(inp.value || '').trim() : '';
+      if (pin.length < 4) {
+        showToast('Le PIN doit contenir au moins 4 caractères', 'err');
+        return;
+      }
+      fetch('/api/mobile-pin', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pin: pin })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.ok) {
+          var pinEl = document.getElementById('mobilePinDisplay');
+          if (pinEl) pinEl.textContent = d.pin;
+          if (inp) inp.value = '';
+          showToast('Nouveau PIN mobile enregistré : ' + d.pin, 'ok');
+        } else {
+          showToast((d && d.error) || 'Erreur PIN', 'err');
+        }
+      }).catch(function () { showToast('Erreur réseau PIN', 'err'); });
     }
     function copyMobileUrl() {
       if (!cachedMobileUrl) return;

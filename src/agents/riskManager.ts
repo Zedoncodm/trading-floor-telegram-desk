@@ -1,4 +1,4 @@
-import type { AggressivenessState, TradingRegime } from "../types.ts";
+import type { AggressivenessState, Direction, Kline, Ticket, TradingRegime } from "../types.ts";
 
 export type HftSizingResult = {
   ok: boolean;
@@ -172,5 +172,134 @@ export class RiskManagerAgent {
     if (stopLossPrice >= liqPrice) return { safe: false, liqPrice, bufferRatio: 0 };
     const ratio = (liqPrice - stopLossPrice) / liqDist;
     return { safe: ratio >= 0.15, liqPrice, bufferRatio: Number(ratio.toFixed(4)) };
+  }
+
+  /**
+   * Calcule la corrélation de Pearson sur les rendements des 40 dernières bougies
+   * et qualifie la relation : POSITIVE (>= +0.60), NÉGATIVE (<= -0.60) ou NEUTRE.
+   */
+  static computePairPearson(barsA: Kline[], barsB: Kline[]): {
+    r: number;
+    regime: "POSITIVE" | "NEGATIVE" | "NEUTRE";
+  } {
+    const n = Math.min(barsA.length, barsB.length, 45);
+    if (n < 12) return { r: 0, regime: "NEUTRE" };
+    const a = barsA.slice(-n);
+    const b = barsB.slice(-n);
+    const retA: number[] = [];
+    const retB: number[] = [];
+    for (let i = 1; i < n; i++) {
+      const ra = a[i - 1].close > 0 ? (a[i].close - a[i - 1].close) / a[i - 1].close : 0;
+      const rb = b[i - 1].close > 0 ? (b[i].close - b[i - 1].close) / b[i - 1].close : 0;
+      retA.push(ra);
+      retB.push(rb);
+    }
+    const m = retA.length;
+    const meanA = retA.reduce((s, x) => s + x, 0) / m;
+    const meanB = retB.reduce((s, x) => s + x, 0) / m;
+    let num = 0;
+    let denA = 0;
+    let denB = 0;
+    for (let i = 0; i < m; i++) {
+      const da = retA[i] - meanA;
+      const db = retB[i] - meanB;
+      num += da * db;
+      denA += da * da;
+      denB += db * db;
+    }
+    const den = Math.sqrt(denA * denB);
+    const r = den > 1e-12 ? Math.max(-1, Math.min(1, num / den)) : 0;
+    const regime: "POSITIVE" | "NEGATIVE" | "NEUTRE" =
+      r >= 0.60 ? "POSITIVE" : r <= -0.60 ? "NEGATIVE" : "NEUTRE";
+    return { r: Number(r.toFixed(2)), regime };
+  }
+
+  private static currencyNetExposure(symbol: string, dir: Direction): Record<string, number> {
+    const s = symbol.toUpperCase();
+    const sign = dir === "long" ? 1 : -1;
+    if (/^[A-Z]{6}$/.test(s)) {
+      const base = s.slice(0, 3);
+      const quote = s.slice(3, 6);
+      return { [base]: sign, [quote]: -sign };
+    }
+    if (s.startsWith("XAU")) return { XAU: sign, USD: -sign };
+    if (s.startsWith("XAG")) return { XAG: sign, USD: -sign };
+    return { [s]: sign };
+  }
+
+  /**
+   * Vérifie les corrélations (Positive / Négative / Neutre) entre la paire candidate
+   * et les positions déjà ouvertes pour éviter de doubler une même exposition directionnelle.
+   */
+  static evaluatePortfolioCorrelation(
+    candidateSymbol: string,
+    candidateDir: Direction,
+    openTickets: Ticket[],
+    barsBySymbol: Map<string, Kline[]>,
+  ): {
+    allowed: boolean;
+    summary: string;
+    details: Array<{ openAsset: string; openDir: Direction; r: number; regime: "POSITIVE" | "NEGATIVE" | "NEUTRE"; redundant: boolean }>;
+  } {
+    if (!openTickets.length) {
+      return {
+        allowed: true,
+        summary: "Corrélation portefeuille : NEUTRE (aucune position ouverte concurrente).",
+        details: [],
+      };
+    }
+
+    const candBars = barsBySymbol.get(candidateSymbol) ?? [];
+    const details: Array<{ openAsset: string; openDir: Direction; r: number; regime: "POSITIVE" | "NEGATIVE" | "NEUTRE"; redundant: boolean }> = [];
+    const currencyCounts: Record<string, number> = {};
+    for (const t of openTickets) {
+      const exp = RiskManagerAgent.currencyNetExposure(t.asset, t.direction);
+      for (const [ccy, sgn] of Object.entries(exp)) {
+        const key = `${ccy}:${sgn > 0 ? "+" : "-"}`;
+        currencyCounts[key] = (currencyCounts[key] ?? 0) + 1;
+      }
+      const openBars = barsBySymbol.get(t.asset) ?? [];
+      const pearson = RiskManagerAgent.computePairPearson(candBars, openBars);
+      const redundant =
+        (pearson.regime === "POSITIVE" && pearson.r >= 0.70 && candidateDir === t.direction) ||
+        (pearson.regime === "NEGATIVE" && pearson.r <= -0.70 && candidateDir !== t.direction);
+      details.push({
+        openAsset: t.asset,
+        openDir: t.direction,
+        r: pearson.r,
+        regime: pearson.regime,
+        redundant,
+      });
+    }
+
+    const blockedCorr = details.find((d) => d.redundant);
+    if (blockedCorr) {
+      return {
+        allowed: false,
+        summary: `[CORRÉLATION ${blockedCorr.regime} r=${blockedCorr.r >= 0 ? "+" : ""}${blockedCorr.r.toFixed(2)}] ${candidateSymbol} ${candidateDir.toUpperCase()} redondant avec ${blockedCorr.openAsset} ${blockedCorr.openDir.toUpperCase()} -> rejeté pour éviter le sur-risque corrélé.`,
+        details,
+      };
+    }
+
+    const candExp = RiskManagerAgent.currencyNetExposure(candidateSymbol, candidateDir);
+    for (const [ccy, sgn] of Object.entries(candExp)) {
+      const key = `${ccy}:${sgn > 0 ? "+" : "-"}`;
+      if ((currencyCounts[key] ?? 0) >= 2) {
+        return {
+          allowed: false,
+          summary: `[EXPOSITION DEVISE SATURÉE] ${candidateSymbol} ${candidateDir.toUpperCase()} ajouterait une 3e exposition ${ccy} (${sgn > 0 ? "LONG" : "SHORT"}) -> rejeté par le Risk Manager.`,
+          details,
+        };
+      }
+    }
+
+    const summaryList = details
+      .map((d) => `${d.openAsset}(${d.regime} ${d.r >= 0 ? "+" : ""}${d.r.toFixed(2)})`)
+      .join(", ");
+    return {
+      allowed: true,
+      summary: `Corrélation validée (${summaryList}) : diversification OK.`,
+      details,
+    };
   }
 }

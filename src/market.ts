@@ -1,9 +1,11 @@
 import { SmcEngine } from "./agents/smcEngine.ts";
 import { errMsg, getJson } from "./http.ts";
+import { Mt5CloudBridge } from "./mt5.ts";
 import type {
   FvgZone,
   Headline,
   Kline,
+  MacroWebhookPayload,
   MarketSnapshot,
   MicrostructureContext,
   VenueSnap,
@@ -710,13 +712,30 @@ export async function fetchYahooKlines(
 
 async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<MarketSnapshot> {
   const ySym = YAHOO_MAP[symbol] ?? symbol;
-  const [bars1h, bars15m, bars5m] = await Promise.all([
+  const mt5Local = Mt5CloudBridge.readLocalMt5State(25_000);
+  const mt5Quote = mt5Local?.quotes?.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase() || Mt5CloudBridge.mapMt5SymbolToDesk(q.symbol).toUpperCase() === symbol.toUpperCase());
+  const nativeMt5Bars5m: Kline[] = (mt5Quote?.barsM5 ?? [])
+    .filter((r) => Array.isArray(r) && r.length >= 5 && r[4] > 0)
+    .map((r) => ({
+      openTime: Number(r[0]),
+      open: Number(r[1]),
+      high: Number(r[2]),
+      low: Number(r[3]),
+      close: Number(r[4]),
+      volume: Number(r[5] ?? 1),
+      closeTime: Number(r[0]) + 300_000 - 1,
+    }));
+  const [bars1h, bars15m, yahooBars5m] = await Promise.all([
     fetchYahooKlines(symbol, "1h", "1mo"),
     fetchYahooKlines(symbol, "15m", "5d").catch(() => [] as Kline[]),
-    fetchYahooKlines(symbol, "5m", "5d").catch(() => [] as Kline[]),
+    nativeMt5Bars5m.length >= 25 ? Promise.resolve([] as Kline[]) : fetchYahooKlines(symbol, "5m", "5d").catch(() => [] as Kline[]),
   ]);
+  const bars5m = nativeMt5Bars5m.length >= 25 ? nativeMt5Bars5m : yahooBars5m;
   const bars4h = bars1h;
-  const lastClose = bars5m[bars5m.length - 1]?.close ?? bars4h[bars4h.length - 1]?.close ?? bars15m[bars15m.length - 1]?.close ?? 0;
+  const lastClose =
+    mt5Quote && mt5Quote.bid > 0
+      ? (mt5Quote.ask > 0 ? (mt5Quote.bid + mt5Quote.ask) * 0.5 : mt5Quote.bid)
+      : (bars5m[bars5m.length - 1]?.close ?? bars4h[bars4h.length - 1]?.close ?? bars15m[bars15m.length - 1]?.close ?? 0);
   const price = lastClose;
   const prev1h = bars4h[bars4h.length - 2]?.close ?? price;
   const ret1h = prev1h > 0 ? (price - prev1h) / prev1h : 0;
@@ -940,4 +959,63 @@ export function verifySecondSource(snap: MarketSnapshot): {
     verified: false,
     reason: `Prix alignés entre ${p.venue} et ${s.venue}, mais ni l'Open Interest ni le carnet ne confirment l'impulsion. Drapeau retiré.`,
   };
+}
+
+let cachedMacroCalendar: { at: number; events: MacroWebhookPayload[] } = { at: 0, events: [] };
+
+/**
+ * Calendrier économique temps réel (ForexFactory / FairEconomy hebdomadaire) avec cache 30 min.
+ * Détecte les annonces High/Medium impact imminentes pour activer VOLATILITY_SHIELD automatiquement.
+ */
+export async function fetchMacroEconomicCalendar(now = Date.now()): Promise<{
+  events: MacroWebhookPayload[];
+  imminentHighImpact?: MacroWebhookPayload;
+}> {
+  if (now - cachedMacroCalendar.at < 30 * 60_000 && cachedMacroCalendar.events.length > 0) {
+    const imm = cachedMacroCalendar.events.find(
+      (e) => e.impact === "HIGH" && e.timestamp >= now - 10 * 60_000 && e.timestamp <= now + 15 * 60_000,
+    );
+    return { events: cachedMacroCalendar.events, imminentHighImpact: imm };
+  }
+
+  try {
+    const raw = await getJson<
+      Array<{ title?: string; country?: string; date?: string; impact?: string; actual?: string; forecast?: string; previous?: string }>
+    >("https://nfs.faireconomy.media/ff_calendar_thisweek.json", { timeoutMs: 4500 });
+    const RELEVANT_CCY = new Set(["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD"]);
+    const events: MacroWebhookPayload[] = [];
+    for (const row of Array.isArray(raw) ? raw : []) {
+      const ccy = String(row.country ?? "").toUpperCase();
+      if (!RELEVANT_CCY.has(ccy)) continue;
+      const ts = row.date ? Date.parse(row.date) : NaN;
+      if (!Number.isFinite(ts)) continue;
+      const impRaw = String(row.impact ?? "Low").toUpperCase();
+      const impact: MacroWebhookPayload["impact"] = impRaw === "HIGH" ? "HIGH" : impRaw === "MEDIUM" ? "MED" : "LOW";
+      if (impact === "LOW") continue;
+      const parseNum = (v?: string) => {
+        if (!v) return 0;
+        const n = Number(String(v).replace(/[^0-9.+-]/g, ""));
+        return Number.isFinite(n) ? n : 0;
+      };
+      const actual = parseNum(row.actual);
+      const forecast = parseNum(row.forecast);
+      const previous = parseNum(row.previous);
+      events.push({
+        event: `${ccy} · ${row.title ?? "Macro Event"}`,
+        actual,
+        forecast,
+        previous,
+        timestamp: ts,
+        impact,
+        surpriseIndex: forecast !== 0 ? (actual - forecast) / Math.abs(forecast) : 0,
+      });
+    }
+    cachedMacroCalendar = { at: now, events };
+    const imm = events.find(
+      (e) => e.impact === "HIGH" && e.timestamp >= now - 10 * 60_000 && e.timestamp <= now + 15 * 60_000,
+    );
+    return { events, imminentHighImpact: imm };
+  } catch {
+    return { events: cachedMacroCalendar.events };
+  }
 }
