@@ -505,6 +505,10 @@ export type Ticket = {
   timeMachineWinPct?: number;
   orbSetup?: boolean;
   washSaleFlag?: boolean;
+  /** Gouvernance Quantitative Modules 1-3 */
+  xaiAudit?: XaiCognitiveAuditReport;
+  atrKellySizing?: AtrKellySizingRecord;
+  tcaRecord?: TcaTransactionRecord;
 };
 
 export type WakeKind = "invalidation" | "conflict" | "halt";
@@ -641,6 +645,78 @@ export type DeskState = {
   traderSkills?: TraderSkillsSummary;
   selfAuditHistory?: AgentSelfAuditEntry[];
   structuralGates?: Record<string, AssetStructuralGate>;
+  tcaHistory?: TcaTransactionRecord[];
+  xaiAuditHistory?: XaiCognitiveAuditReport[];
+  atrKellyHistory?: AtrKellySizingRecord[];
+  dailyEvolutionState?: DailyEvolutionState;
+};
+
+export type TcaTransactionRecord = {
+  transaction_id: string;
+  instrument_ticker: string;
+  direction: "LONG" | "SHORT";
+  temporal_markers: {
+    decision_timestamp_iso8601: string;
+    arrival_timestamp_iso8601: string;
+    final_execution_timestamp_iso8601: string;
+  };
+  execution_metrics: {
+    decision_price_p0: number;
+    arrival_price_pa: number;
+    vwap_benchmark: number;
+    average_fill_price: number;
+    delay_cost_bps: number;
+    trading_slippage_bps: number;
+  };
+  realized_outcome: {
+    net_pnl_usd: number;
+    explicit_fees_usd: number;
+    opportunity_cost_usd: number;
+  };
+};
+
+export type XaiCognitiveAuditReport = {
+  audit_id: string;
+  instrument_ticker?: string;
+  direction?: "LONG" | "SHORT";
+  temporal_horizon_pit?: string;
+  technical_confluence: {
+    macro_trend_alignment: string;
+    mathematical_indicators: string[];
+  };
+  disagree_or_commit_deliberation: {
+    bear_thesis_advocate: string;
+    resolution_and_commit: string;
+  };
+};
+
+export type AtrKellySizingRecord = {
+  instrument_ticker: string;
+  direction: "LONG" | "SHORT";
+  atr_14: number;
+  adaptive_atr_multiplier: number;
+  current_risk_fraction: number;
+  stop_loss_level: number;
+  take_profit_level: number;
+  position_size_units: number;
+};
+
+export type DailyEvolutionState = {
+  session_date: string;
+  inferred_market_regime: "TRENDING" | "RANGE" | "HIGH_VOLATILITY";
+  win_rate_p: number;
+  win_loss_ratio_b: number;
+  full_kelly_f_star: number;
+  current_risk_fraction: number;
+  max_drawdown_pct: number;
+  regime_shift_detected: boolean;
+  prompt_genome_mutation_directive: string;
+  overwritten_parameters: {
+    strategy_mode: string;
+    adaptive_atr_multiplier: number;
+    reward_to_risk_ratio: number;
+    current_risk_fraction: number;
+  };
 };
 
 export type AgentSelfAuditEntry = {

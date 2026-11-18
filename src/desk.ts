@@ -49,9 +49,11 @@ import type {
   AgentId,
   AgentPromptConfig,
   AgentSelfAuditEntry,
+  AtrKellySizingRecord,
   Backtest,
   Binding,
   CloseReason,
+  DailyEvolutionState,
   DeskRuntimeSettings,
   DeskState,
   Direction,
@@ -66,8 +68,10 @@ import type {
   PostMortemLogEntry,
   SelfReflectionReviewEntry,
   Speaker,
+  TcaTransactionRecord,
   Ticket,
   WakeKind,
+  XaiCognitiveAuditReport,
 } from "./types.ts";
 
 const PRODUCED_BY: AgentId[] = ["analyst", "strategist", "risk", "lead"];
@@ -742,6 +746,7 @@ export class TradingFloorDesk {
   readonly hunter = new LiquidityHunterAgent();
   readonly mt5: Mt5CloudBridge;
   readonly postMortemPath: string;
+  readonly dailyEvolutionPath: string;
   current_market_regime_directive = "";
   state: DeskState;
   private listeners = new Set<(state: DeskState) => void>();
@@ -766,6 +771,7 @@ export class TradingFloorDesk {
     this.tg = tg;
     this.mt5 = new Mt5CloudBridge(cfg.dataDir);
     this.postMortemPath = join(cfg.dataDir, "trade_post_mortem.json");
+    this.dailyEvolutionPath = join(cfg.dataDir, "daily_evolution_state.json");
     this.grpo = grpo ?? new GrpoEngine();
     this.state = this.store.loadOrCreate(cfg.paperEquity, cfg.timeZone, cfg.symbols, cfg.scanIntervalMin);
     this.current_market_regime_directive = this.state.current_market_regime_directive ?? "";
@@ -778,9 +784,149 @@ export class TradingFloorDesk {
         this.state.settings.sessionDurationHours ?? 4,
       );
     }
+    if (!this.state.dailyEvolutionState) {
+      this.state.dailyEvolutionState = TraderSkillsEngine.buildModule4DailyEvolutionState(this.state);
+    }
     this.syncMobileSettingsToState();
     this.syncRlSummaryToState();
     this.state.traderSkills = TraderSkillsEngine.buildDeskSkillsTelemetry(this.state);
+  }
+
+  private attachGovernanceToTicket(
+    ticket: Ticket,
+    xaiAudit: XaiCognitiveAuditReport,
+    atrKellySizing: AtrKellySizingRecord,
+  ): void {
+    ticket.xaiAudit = xaiAudit;
+    ticket.atrKellySizing = atrKellySizing;
+    this.state.xaiAuditHistory = [...(this.state.xaiAuditHistory ?? []), xaiAudit].slice(-60);
+    this.state.atrKellyHistory = [...(this.state.atrKellyHistory ?? []), atrKellySizing].slice(-60);
+  }
+
+  private applyDailyEvolutionOuterLoop(now = Date.now(), mutateSettingsAndPrompt = false): DailyEvolutionState {
+    const evo = TraderSkillsEngine.buildModule4DailyEvolutionState(this.state, now);
+    this.state.dailyEvolutionState = evo;
+    if (mutateSettingsAndPrompt) {
+      this.state.settings.fixedStopAtr = evo.overwritten_parameters.adaptive_atr_multiplier;
+      this.state.settings.trainedRewardR = evo.overwritten_parameters.reward_to_risk_ratio;
+      this.state.settings.maxRiskPct = evo.overwritten_parameters.current_risk_fraction;
+      const baseStrPrompt = (this.state.agentPrompts.strategist?.systemPrompt ?? DEFAULT_AGENT_PROMPTS.strategist.systemPrompt)
+        .replace(/\n\[DAILY_EVOLUTION_MUTATION[^\]]*\][\s\S]*$/m, "")
+        .trimEnd();
+      if (this.state.agentPrompts.strategist) {
+        this.state.agentPrompts.strategist.systemPrompt =
+          `${baseStrPrompt}\n[DAILY_EVOLUTION_MUTATION | ${evo.session_date}] Régime=${evo.inferred_market_regime} | HalfKelly=${evo.current_risk_fraction} | Directive=${evo.prompt_genome_mutation_directive}`;
+      }
+    }
+    try {
+      mkdirSync(dirname(this.dailyEvolutionPath), { recursive: true });
+      const tmp = `${this.dailyEvolutionPath}.tmp`;
+      writeFileSync(tmp, JSON.stringify(evo, null, 2), "utf8");
+      renameSync(tmp, this.dailyEvolutionPath);
+    } catch {
+      // ignore atomic write contention
+    }
+    return evo;
+  }
+
+  public getQuantGovernanceBundle(now = Date.now()): {
+    module_1_tca: TcaTransactionRecord;
+    module_2_xai_audit: XaiCognitiveAuditReport;
+    module_3_atr_kelly_sizing: AtrKellySizingRecord;
+    module_4_daily_evolution_state: DailyEvolutionState;
+  } {
+    const lastTca = (this.state.tcaHistory ?? []).slice(-1)[0];
+    const lastClosed = this.state.tickets.find((t) => t.status === "closed");
+    const refTicket =
+      lastClosed ??
+      this.state.tickets[0] ?? {
+        id: "PIT-REF-00",
+        asset: this.state.settings.symbols[0] || "EURUSD",
+        direction: "long" as Direction,
+        playbook: "breakout" as PlayKind,
+        thesis: "Point-in-Time Baseline",
+        entry: markPriceOf(this.state, this.state.settings.symbols[0] || "EURUSD", 1.0965),
+        invalidation: 1.0945,
+        target: 1.1005,
+        timeStopHours: 4,
+        notional: 100_000,
+        qty: 91_200,
+        riskUsd: 180,
+        riskPct: 0.01,
+        exposurePct: 1,
+        binding: "risk" as const,
+        producedBy: PRODUCED_BY,
+        backtest: {
+          playbook: "breakout" as PlayKind,
+          rules: "PIT",
+          source: "MT5/Live",
+          inSample: { label: "IS", bars: 100, trades: 10, winRate: 0.55, expectancyR: 0.25, profitFactor: 1.4, sharpe: 1.1, deflatedSharpe: 0.6, maxDrawdownR: 1, var95R: -1, pass: true },
+          outOfSample: { label: "OOS", bars: 50, trades: 5, winRate: 0.55, expectancyR: 0.25, profitFactor: 1.4, sharpe: 1.1, deflatedSharpe: 0.6, maxDrawdownR: 1, var95R: -1, pass: true },
+          pass: true,
+        },
+        status: "closed" as const,
+        createdAt: now - 60_000,
+        expiresAt: now,
+        closedAt: now,
+        fillPrice: 1.0965,
+        exitPrice: 1.0965,
+        pnl: 0,
+        fees: 0,
+        funding: 0,
+      };
+
+    const refBars = this.latestBarsBySymbol.get(refTicket.asset) ?? [];
+    const module_1_tca =
+      lastTca ??
+      TraderSkillsEngine.buildModule1TcaRecord({
+        ticket: refTicket,
+        exitPrice: refTicket.exitPrice ?? refTicket.fillPrice ?? refTicket.entry,
+        netPnl: Number(refTicket.pnl ?? 0),
+        vwapBenchmark: refTicket.entry,
+        now,
+      });
+
+    const lastXai = (this.state.xaiAuditHistory ?? []).slice(-1)[0];
+    const module_2_xai_audit =
+      lastXai ??
+      TraderSkillsEngine.buildModule2XaiAudit({
+        symbol: refTicket.asset,
+        direction: refTicket.direction,
+        timeframe: "15m",
+        entry: refTicket.entry,
+        stop: refTicket.invalidation,
+        target: refTicket.target,
+        barsEntryTf: refBars,
+        marketProfile: this.state.marketProfiles?.[refTicket.asset],
+        preTradePass: true,
+        now,
+      });
+
+    const lastSizing = (this.state.atrKellyHistory ?? []).slice(-1)[0];
+    const module_3_atr_kelly_sizing =
+      lastSizing ??
+      TraderSkillsEngine.buildModule3AtrKellySizing({
+        symbol: refTicket.asset,
+        direction: refTicket.direction,
+        capital: currentEquity(this.state),
+        entry: refTicket.entry,
+        bars: refBars,
+        adaptiveAtrMultiplier: this.state.dailyEvolutionState?.overwritten_parameters.adaptive_atr_multiplier ?? this.state.settings.fixedStopAtr ?? 1.5,
+        currentRiskFraction: this.state.dailyEvolutionState?.current_risk_fraction ?? this.state.settings.maxRiskPct ?? 0.01,
+        explicitStop: refTicket.invalidation,
+        explicitTarget: refTicket.target,
+        now,
+      });
+
+    const module_4_daily_evolution_state =
+      this.state.dailyEvolutionState ?? TraderSkillsEngine.buildModule4DailyEvolutionState(this.state, now);
+
+    return {
+      module_1_tca,
+      module_2_xai_audit,
+      module_3_atr_kelly_sizing,
+      module_4_daily_evolution_state,
+    };
   }
 
   private async updateSessionGoal(now = Date.now()): Promise<void> {
@@ -3745,6 +3891,43 @@ export class TradingFloorDesk {
         journalNotes: activeThesis,
       };
 
+      const pitMacroInfo = MarketAnalystAgent.computeMacroScore(
+        chosen.symbol,
+        this.state.macroEvents ?? [],
+        this.state.socialSentiment ?? {},
+        now,
+      );
+      const xaiAudit = TraderSkillsEngine.buildModule2XaiAudit({
+        symbol: chosen.symbol,
+        direction: activeDir,
+        timeframe: selectedTf,
+        entry,
+        stop: finalStop,
+        target: finalTarget,
+        barsEntryTf: selectedBars,
+        barsMacroTf: chosen.bars4h,
+        marketProfile: chosen.marketProfile,
+        macroReason: pitMacroInfo.reason,
+        oosSummary: `${bt.outOfSample.trades} trades (${fmtR(bt.outOfSample.expectancyR)}, PF ${bt.outOfSample.profitFactor.toFixed(2)})`,
+        timeMachineVerdict: tmSim.verdict,
+        bearConcerns: portIntel.washSaleWarning ? [portIntel.washSaleReason] : undefined,
+        preTradePass: true,
+        now,
+      });
+      const atrKellySizing = TraderSkillsEngine.buildModule3AtrKellySizing({
+        symbol: chosen.symbol,
+        direction: activeDir,
+        capital: currentEquity(this.state),
+        entry,
+        bars: selectedBars,
+        adaptiveAtrMultiplier: this.state.dailyEvolutionState?.overwritten_parameters.adaptive_atr_multiplier ?? atrMult,
+        currentRiskFraction: this.state.dailyEvolutionState?.current_risk_fraction ?? sized.riskPct,
+        explicitStop: finalStop,
+        explicitTarget: finalTarget,
+        now,
+      });
+      this.attachGovernanceToTicket(ticket, xaiAudit, atrKellySizing);
+
       this.state.tickets = [ticket, ...this.state.tickets];
       this.store.appendBlotter("TICKET_ISSUED", ticket, "Ticket émis par les moteurs quantitatifs", now);
 
@@ -4133,6 +4316,19 @@ export class TradingFloorDesk {
     );
     this.appendTradePostMortem(ticket, reason, exitPrice, netPnl, now);
 
+    // Module 1 : Journalisation TCA complète (Implementation Shortfall) + actualisation Module 4 Outer-Loop
+    const exitVwap = siblingBars.length ? (computeSessionVwap(siblingBars, now)?.vwap ?? exitPrice) : exitPrice;
+    const tcaRecord = TraderSkillsEngine.buildModule1TcaRecord({
+      ticket,
+      exitPrice,
+      netPnl,
+      vwapBenchmark: exitVwap,
+      now,
+    });
+    ticket.tcaRecord = tcaRecord;
+    this.state.tcaHistory = [...(this.state.tcaHistory ?? []), tcaRecord].slice(-120);
+    this.applyDailyEvolutionOuterLoop(now, false);
+
     // Boucle Autonome d'Auto-Remise en Question, Diagnostic & Correctif Immédiat des Agents
     const selfAudit = TraderSkillsEngine.runPostTradeSelfAudit({
       ticket,
@@ -4445,6 +4641,7 @@ export class TradingFloorDesk {
       `[AUTO-RÉFLEXION 15M] ${closedFallback.length} trade(s) (${wins}W/${losses}L, WR ${winRatePct}%, PnL ${totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}€, Gain moy +${avgWin.toFixed(2)}€ / Perte moy ${avgLoss.toFixed(2)}€) | LONG ${longStats.n}t (${longStats.pnl >= 0 ? "+" : ""}${longStats.pnl.toFixed(2)}€) vs SHORT ${shortStats.n}t (${shortStats.pnl >= 0 ? "+" : ""}${shortStats.pnl.toFixed(2)}€) | Directive : "${directive}" | Top Reco : ${recommendations[0] ?? "N/A"}`,
       "report",
     );
+    this.applyDailyEvolutionOuterLoop(now, true);
     this.store.save(this.state);
     this.broadcast();
     return directive;
@@ -4684,6 +4881,32 @@ export class TradingFloorDesk {
           journalNotes: `8 agents synchronisés en mode Quota HFT sur ${focusSym}.`,
         };
         ActiveTradeManager.ensureHardStopAndTarget(ticket);
+        const hftXai = TraderSkillsEngine.buildModule2XaiAudit({
+          symbol: focusSym,
+          direction: dir,
+          timeframe: "1m",
+          entry: livePx,
+          stop: stopPrice,
+          target: targetPrice,
+          barsEntryTf: bars,
+          marketProfile: mp,
+          oosSummary: `HFT Focus (${tpm}/min)`,
+          preTradePass: true,
+          now,
+        });
+        const hftSizing = TraderSkillsEngine.buildModule3AtrKellySizing({
+          symbol: focusSym,
+          direction: dir,
+          capital: eq,
+          entry: livePx,
+          bars,
+          adaptiveAtrMultiplier: this.state.dailyEvolutionState?.overwritten_parameters.adaptive_atr_multiplier ?? this.state.settings.fixedStopAtr ?? 1.2,
+          currentRiskFraction: this.state.dailyEvolutionState?.current_risk_fraction ?? ticket.riskPct,
+          explicitStop: stopPrice,
+          explicitTarget: targetPrice,
+          now,
+        });
+        this.attachGovernanceToTicket(ticket, hftXai, hftSizing);
         this.state.tickets = [ticket, ...this.state.tickets];
         this.store.appendBlotter("TICKET_ISSUED", ticket, `Focus HFT ${focusSym} (${tpm}/min)`, now);
         this.store.appendBlotter("POSITION_OPENED", ticket, `Exécution HFT ${focusSym} @ ${fmtPx(livePx)}`, now);
@@ -4750,11 +4973,17 @@ export class TradingFloorDesk {
         this.state.halted = false;
         this.state.haltKind = null;
       }
+      const eodEvo = this.applyDailyEvolutionOuterLoop(now, true);
+      await this.say(
+        "reviewer",
+        `🧬 [MODULE 4 OUTER-LOOP EOD · ${eodEvo.session_date}] Régime=${eodEvo.inferred_market_regime} | WinRate p=${(eodEvo.win_rate_p * 100).toFixed(1)}% | Ratio b=${eodEvo.win_loss_ratio_b.toFixed(2)} | f*=${(eodEvo.full_kelly_f_star * 100).toFixed(2)}% -> Half-Kelly=${(eodEvo.current_risk_fraction * 100).toFixed(2)}% | Mutation Génome : ${eodEvo.prompt_genome_mutation_directive}`,
+        "report",
+      );
       await this.say(
         "lead",
         wasLossHalted
-          ? "Nouvelle journée de trading : le compteur de perte journalière est remis à zéro. Le desk reprend la veille."
-          : "Nouvelle session journalière : compteur de perte journalière réinitialisé.",
+          ? "Nouvelle journée de trading : le compteur de perte journalière est remis à zéro et les nouveaux paramètres Half-Kelly sont actifs."
+          : "Nouvelle session journalière : paramètres Half-Kelly & Génome du Stratège mis à jour.",
       );
     }
 

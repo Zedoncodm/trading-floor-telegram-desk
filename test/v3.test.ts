@@ -1609,7 +1609,7 @@ test("Audit Overhaul: asset-class fees, net PnL BE lock, technical confluence, c
 
 test("Jakeschincariol 15 Trader Skills pack installed & integrated across all 8 agents + Reviewer UI", () => {
   assert.equal(INSTALLED_TRADER_SKILLS.length, 15);
-  assert.equal(PROMPT_SCHEMA_VERSION, 3);
+  assert.equal(PROMPT_SCHEMA_VERSION, 4);
   for (const agentId of ["lead", "analyst", "strategist", "risk", "execution", "reviewer", "sentinel", "hunter"] as const) {
     assert.ok(
       DEFAULT_AGENT_PROMPTS[agentId].systemPrompt.includes("SKILLS ACTIFS"),
@@ -1921,4 +1921,171 @@ test("MT5 bridge strict idempotency + Cognitive Self-Audit & Pre-Trade Self-Ques
   const scriptMatch5 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
   assert.ok(scriptMatch5 && scriptMatch5[1]);
   assert.doesNotThrow(() => new Function(scriptMatch5[1]));
+});
+
+test("Quantitative Governance Modules 1-4: strict TCA, XAI Disagree-or-Commit PIT, ATR/Half-Kelly & Outer-Loop EOD evolution", () => {
+  const now = Date.now();
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-gov-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const tg = new TelegramFloorRoom(cfg);
+    const grpo = new GrpoEngine(join(dir, "rl.json"), join(dir, "rev.json"));
+    const desk = new TradingFloorDesk(cfg, store, tg, grpo);
+
+    // Point-in-Time test bars (including future look-ahead poison bar after `now` that MUST be excluded)
+    const entryBars: Kline[] = Array.from({ length: 35 }, (_, i) => {
+      const p = 100 + i * 0.25;
+      return {
+        openTime: now - (35 - i) * 900_000,
+        closeTime: now - (34 - i) * 900_000,
+        open: p - 0.1,
+        high: p + 0.4,
+        low: p - 0.4,
+        close: p,
+        volume: 1000,
+      };
+    });
+    entryBars.push({
+      openTime: now + 60_000,
+      closeTime: now + 900_000,
+      open: 108,
+      high: 9999,
+      low: 10,
+      close: 9999,
+      volume: 1,
+    });
+
+    // Module 2: XAI Disagree-or-Commit (Point-in-Time excludes look-ahead bar)
+    const xai = TraderSkillsEngine.buildModule2XaiAudit({
+      symbol: "EURUSD",
+      direction: "long",
+      timeframe: "15m",
+      entry: 108.5,
+      stop: 107.3,
+      target: 111.0,
+      barsEntryTf: entryBars,
+      barsMacroTf: entryBars.slice(0, 35),
+      vwapBenchmark: 108.1,
+      oosSummary: "14 trades (+0.32R)",
+      timeMachineVerdict: "PASS TimeMachine (62%)",
+      preTradePass: true,
+      now,
+    });
+    assert.ok(xai.audit_id.length >= 16);
+    assert.ok(xai.technical_confluence.macro_trend_alignment.includes("Point-in-Time"));
+    assert.ok(xai.technical_confluence.mathematical_indicators.length >= 4);
+    assert.ok(!xai.technical_confluence.mathematical_indicators.join(" ").includes("9999"), "Look-Ahead bar must be strictly excluded");
+    assert.ok(xai.disagree_or_commit_deliberation.bear_thesis_advocate.length > 10);
+    assert.ok(xai.disagree_or_commit_deliberation.resolution_and_commit.includes("COMMIT"));
+
+    // Module 3: Dynamic ATR_14 & Half-Kelly position_size_units formula
+    const sizing = TraderSkillsEngine.buildModule3AtrKellySizing({
+      symbol: "EURUSD",
+      direction: "long",
+      capital: 100_000,
+      entry: 108.5,
+      bars: entryBars,
+      adaptiveAtrMultiplier: 1.5,
+      currentRiskFraction: 0.0125,
+      rewardToRisk: 2.0,
+      pointValue: 1.0,
+      now,
+    });
+    assert.ok(sizing.atr_14 > 0 && sizing.atr_14 < 5, "ATR_14 must ignore look-ahead bar");
+    const stopDist = Math.abs(108.5 - sizing.stop_loss_level);
+    const expectedUnits = (100_000 * 0.0125) / stopDist;
+    assert.ok(Math.abs(sizing.position_size_units - expectedUnits) < 1.0);
+    assert.ok(sizing.take_profit_level > 108.5 && sizing.stop_loss_level < 108.5);
+
+    // Module 1: TCA Implementation Shortfall exact schema
+    const tcaTicket: Ticket = {
+      id: "TF-GOV-01",
+      asset: "EURUSD",
+      direction: "long",
+      playbook: "breakout",
+      thesis: "TCA test",
+      entry: 108.5,
+      fillPrice: 108.55,
+      exitPrice: 110.5,
+      invalidation: sizing.stop_loss_level,
+      target: sizing.take_profit_level,
+      timeStopHours: 4,
+      notional: 50_000,
+      qty: 460.83,
+      riskUsd: 550,
+      riskPct: 0.0055,
+      exposurePct: 0.5,
+      binding: "risk",
+      producedBy: ["strategist"],
+      backtest: {
+        playbook: "breakout",
+        rules: "test",
+        source: "test",
+        inSample: { label: "IS", bars: 100, trades: 10, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.2, deflatedSharpe: 0.6, maxDrawdownR: 1, var95R: -1, pass: true },
+        outOfSample: { label: "OOS", bars: 50, trades: 5, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.2, deflatedSharpe: 0.6, maxDrawdownR: 1, var95R: -1, pass: true },
+        pass: true,
+      },
+      status: "closed",
+      createdAt: now - 120_000,
+      decidedAt: now - 118_000,
+      filledAt: now - 118_000,
+      closedAt: now,
+      expiresAt: now + 60_000,
+      fees: 3.0,
+      funding: 0,
+      pnl: 895.0,
+    };
+    const tca = TraderSkillsEngine.buildModule1TcaRecord({
+      ticket: tcaTicket,
+      exitPrice: 110.5,
+      netPnl: 895.0,
+      vwapBenchmark: 109.2,
+      now,
+    });
+    assert.ok(tca.transaction_id.length >= 16);
+    assert.equal(tca.instrument_ticker, "EURUSD");
+    assert.equal(tca.direction, "LONG");
+    assert.ok(tca.temporal_markers.decision_timestamp_iso8601.endsWith("Z"));
+    assert.equal(tca.execution_metrics.decision_price_p0, 108.5);
+    assert.equal(tca.execution_metrics.arrival_price_pa, 108.55);
+    assert.equal(tca.execution_metrics.vwap_benchmark, 109.2);
+    assert.equal(tca.execution_metrics.average_fill_price, 110.5);
+    assert.ok(Number.isFinite(tca.execution_metrics.delay_cost_bps));
+    assert.ok(Number.isFinite(tca.execution_metrics.trading_slippage_bps));
+    assert.equal(tca.realized_outcome.net_pnl_usd, 895);
+    assert.equal(tca.realized_outcome.explicit_fees_usd, 3);
+    assert.ok(tca.realized_outcome.opportunity_cost_usd > 20);
+
+    // Module 4: Exact Half-Kelly (p=0.40, b=1.60 -> f*=0.025 -> Half-Kelly=0.0125)
+    desk.state.tcaHistory = [
+      { ...tca, realized_outcome: { net_pnl_usd: 160, explicit_fees_usd: 1, opportunity_cost_usd: 0 } },
+      { ...tca, realized_outcome: { net_pnl_usd: 160, explicit_fees_usd: 1, opportunity_cost_usd: 0 } },
+      { ...tca, realized_outcome: { net_pnl_usd: -100, explicit_fees_usd: 1, opportunity_cost_usd: 0 } },
+      { ...tca, realized_outcome: { net_pnl_usd: -100, explicit_fees_usd: 1, opportunity_cost_usd: 0 } },
+      { ...tca, realized_outcome: { net_pnl_usd: -100, explicit_fees_usd: 1, opportunity_cost_usd: 0 } },
+    ];
+    const evo = TraderSkillsEngine.buildModule4DailyEvolutionState(desk.state, now);
+    assert.equal(evo.win_rate_p, 0.4);
+    assert.equal(evo.win_loss_ratio_b, 1.6);
+    assert.equal(evo.full_kelly_f_star, 0.025);
+    assert.equal(evo.current_risk_fraction, 0.0125);
+    assert.ok(evo.prompt_genome_mutation_directive.length > 10);
+
+    desk.state.xaiAuditHistory = [xai];
+    desk.state.atrKellyHistory = [sizing];
+    desk.state.dailyEvolutionState = evo;
+    const bundle = desk.getQuantGovernanceBundle(now);
+    assert.equal(bundle.module_1_tca.instrument_ticker, "EURUSD");
+    assert.equal(bundle.module_2_xai_audit.audit_id, xai.audit_id);
+    assert.equal(bundle.module_3_atr_kelly_sizing.current_risk_fraction, 0.0125);
+    assert.equal(bundle.module_4_daily_evolution_state.full_kelly_f_star, 0.025);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  assert.ok(DASHBOARD_HTML.includes("revQuantGovHost"));
+  const scriptMatchGov = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(scriptMatchGov && scriptMatchGov[1]);
+  assert.doesNotThrow(() => new Function(scriptMatchGov[1]));
 });

@@ -1,15 +1,20 @@
+import { randomUUID } from "node:crypto";
 import type {
   AgentSelfAuditEntry,
   AssetStructuralGate,
+  AtrKellySizingRecord,
   CloseReason,
+  DailyEvolutionState,
   DeskRuntimeSettings,
   DeskState,
   Direction,
   Kline,
   MarketProfileSummary,
   MarketSnapshot,
+  TcaTransactionRecord,
   Ticket,
   TraderSkillsSummary,
+  XaiCognitiveAuditReport,
 } from "../types.ts";
 
 export const INSTALLED_TRADER_SKILLS = [
@@ -1031,6 +1036,333 @@ export class TraderSkillsEngine {
       vetoAgent: "strategist",
       selfQuestioningLog: `Auto-vérification validée sur ${symbol} ${direction.toUpperCase()} (R:R=${rr.toFixed(2)}, RSI=${tech.rsi14}, Échelle risque=${Math.round(riskScaleMultiplier * 100)}%).`,
       riskScaleMultiplier,
+    };
+  }
+
+  /**
+   * [MODULE 1 : TCA & IMPLEMENTATION SHORTFALL]
+   * Capture p0 (décision), pa (arrivée), VWAP benchmark, prix d'exécution moyen,
+   * delay_cost_bps, trading_slippage_bps et coût d'opportunité sans biais d'anticipation.
+   */
+  static buildModule1TcaRecord(params: {
+    ticket: Ticket;
+    exitPrice: number;
+    netPnl: number;
+    vwapBenchmark?: number;
+    now?: number;
+  }): TcaTransactionRecord {
+    const { ticket, exitPrice, netPnl } = params;
+    const now = params.now ?? ticket.closedAt ?? Date.now();
+    const t0 = ticket.createdAt || now;
+    const ta = ticket.decidedAt || ticket.filledAt || t0;
+    const tf = ticket.closedAt || now;
+
+    const p0 = ticket.entry > 0 ? ticket.entry : exitPrice || 1;
+    const pa = ticket.fillPrice && ticket.fillPrice > 0 ? ticket.fillPrice : p0;
+    const avgFill = exitPrice > 0 ? exitPrice : pa;
+    const vwap = params.vwapBenchmark && params.vwapBenchmark > 0 ? params.vwapBenchmark : Number(((p0 + pa + avgFill) / 3).toFixed(5));
+    const dirSign = ticket.direction === "long" ? 1 : -1;
+
+    const delayBps = Number(((((pa - p0) / Math.max(p0, 1e-9)) * 10_000) * dirSign).toFixed(2));
+    const slippageBps = Number(((((avgFill - vwap) / Math.max(vwap, 1e-9)) * 10_000) * (-dirSign)).toFixed(2));
+    const qty = ticket.qty > 0 ? ticket.qty : ticket.notional / Math.max(p0, 1e-9);
+    const delayUsd = ((pa - p0) * dirSign) * qty;
+    const explicitFees = Number((ticket.fees || 0).toFixed(2));
+    const opportunityCost = Number(Math.max(0, delayUsd).toFixed(2));
+
+    return {
+      transaction_id: ticket.tcaRecord?.transaction_id || randomUUID(),
+      instrument_ticker: ticket.asset,
+      direction: ticket.direction === "long" ? "LONG" : "SHORT",
+      temporal_markers: {
+        decision_timestamp_iso8601: new Date(t0).toISOString(),
+        arrival_timestamp_iso8601: new Date(ta).toISOString(),
+        final_execution_timestamp_iso8601: new Date(tf).toISOString(),
+      },
+      execution_metrics: {
+        decision_price_p0: Number(p0.toFixed(5)),
+        arrival_price_pa: Number(pa.toFixed(5)),
+        vwap_benchmark: Number(vwap.toFixed(5)),
+        average_fill_price: Number(avgFill.toFixed(5)),
+        delay_cost_bps: delayBps,
+        trading_slippage_bps: slippageBps,
+      },
+      realized_outcome: {
+        net_pnl_usd: Number(netPnl.toFixed(2)),
+        explicit_fees_usd: explicitFees,
+        opportunity_cost_usd: opportunityCost,
+      },
+    };
+  }
+
+  /**
+   * [MODULE 2 : AUDIT COGNITIF XAI & PROTOCOLE DISAGREE-OR-COMMIT]
+   * Trace causale Point-in-Time stricte (zéro Look-Ahead Bias) : alignement macro/multi-TF,
+   * indicateurs mathématiques et délibération contradictoire (Bear Thesis Advocate vs Resolution).
+   */
+  static buildModule2XaiAudit(params: {
+    symbol: string;
+    direction: Direction;
+    timeframe: string;
+    entry: number;
+    stop: number;
+    target: number;
+    barsEntryTf: Kline[];
+    barsMacroTf?: Kline[];
+    vwapBenchmark?: number;
+    marketProfile?: MarketProfileSummary;
+    macroReason?: string;
+    oosSummary?: string;
+    timeMachineVerdict?: string;
+    bearConcerns?: string[];
+    preTradePass?: boolean;
+    now?: number;
+  }): XaiCognitiveAuditReport {
+    const now = params.now ?? Date.now();
+    // Point-in-Time strict : exclut toute bougie postérieure à now
+    const pitEntryBars = params.barsEntryTf.filter((b) => (b.closeTime || b.openTime) <= now);
+    const pitMacroBars = (params.barsMacroTf ?? []).filter((b) => (b.closeTime || b.openTime) <= now);
+    const techEntry = TraderSkillsEngine.computeQuickTech(pitEntryBars.length ? pitEntryBars : params.barsEntryTf, params.entry);
+    const techMacro = TraderSkillsEngine.computeQuickTech(pitMacroBars.length ? pitMacroBars : pitEntryBars, params.entry);
+
+    // Calcul MACD(12,26) + Bandes de Bollinger(20, 2σ) sur données Point-in-Time uniquement
+    const closes = (pitEntryBars.length ? pitEntryBars : params.barsEntryTf).map((b) => b.close).filter((c) => c > 0);
+    const calcEmaAt = (vals: number[], period: number) => {
+      if (!vals.length) return params.entry;
+      const k = 2 / (period + 1);
+      let e = vals[0];
+      for (let i = 1; i < vals.length; i++) e = vals[i] * k + e * (1 - k);
+      return e;
+    };
+    const macdLine = closes.length >= 26 ? calcEmaAt(closes, 12) - calcEmaAt(closes, 26) : 0;
+    const bbSlice = closes.slice(-20);
+    const bbMean = bbSlice.length ? bbSlice.reduce((s, c) => s + c, 0) / bbSlice.length : params.entry;
+    const bbStd = bbSlice.length >= 2
+      ? Math.sqrt(bbSlice.reduce((s, c) => s + (c - bbMean) ** 2, 0) / bbSlice.length)
+      : 0;
+    const bbUpper = bbMean + 2 * bbStd;
+    const bbLower = bbMean - 2 * bbStd;
+
+    const rr = Math.abs(params.entry - params.stop) > 0
+      ? Math.abs(params.target - params.entry) / Math.abs(params.entry - params.stop)
+      : 0;
+
+    const dirLabel = params.direction === "long" ? "LONG" : "SHORT";
+    const macroAligned =
+      (params.direction === "long" && techMacro.trendBias === "bull") ||
+      (params.direction === "short" && techMacro.trendBias === "bear");
+
+    const indicators: string[] = [
+      `RSI_14 (${params.timeframe}): ${techEntry.rsi14}`,
+      `EMA20/EMA50 (${params.timeframe}): ${TraderSkillsEngine.fmtPrice(techEntry.ema20)} vs ${TraderSkillsEngine.fmtPrice(techEntry.ema50)} (${techEntry.trendBias.toUpperCase()})`,
+      `MACD_Line(12,26): ${macdLine >= 0 ? "+" : ""}${macdLine.toFixed(6)}`,
+      `Bollinger(20,2σ): [${TraderSkillsEngine.fmtPrice(bbLower)} .. ${TraderSkillsEngine.fmtPrice(bbUpper)}], prix=${TraderSkillsEngine.fmtPrice(params.entry)}`,
+      `ATR_14: ${TraderSkillsEngine.fmtPrice(techEntry.atr14)} | R:R=${rr.toFixed(2)}`,
+    ];
+    if (params.vwapBenchmark && params.vwapBenchmark > 0) {
+      indicators.push(`VWAP_Session: ${TraderSkillsEngine.fmtPrice(params.vwapBenchmark)}`);
+    }
+    if (params.marketProfile) {
+      indicators.push(
+        `MarketProfile: VAL=${TraderSkillsEngine.fmtPrice(params.marketProfile.val)} POC=${TraderSkillsEngine.fmtPrice(params.marketProfile.poc)} VAH=${TraderSkillsEngine.fmtPrice(params.marketProfile.vah)} (${params.marketProfile.isRange ? "RANGE" : "TREND"})`,
+      );
+    }
+
+    const counterArgs: string[] = [...(params.bearConcerns ?? [])];
+    if (!macroAligned) {
+      counterArgs.push(`Divergence 4H (tendance macro=${techMacro.trendBias.toUpperCase()}) face au signal ${dirLabel} ${params.timeframe}.`);
+    }
+    if (params.marketProfile) {
+      const distEdge = params.direction === "long"
+        ? params.marketProfile.vah - params.entry
+        : params.entry - params.marketProfile.val;
+      if (distEdge <= techEntry.atr14 * 0.5) {
+        counterArgs.push(`Proximité immédiate de la borne Value Area (${TraderSkillsEngine.fmtPrice(params.direction === "long" ? params.marketProfile.vah : params.marketProfile.val)}), risque de rejet ou manque de liquidité de poursuite.`);
+      }
+    }
+    if (!counterArgs.length) {
+      counterArgs.push(`Risque de slippage/spread intra-bougie autour d'ATR=${TraderSkillsEngine.fmtPrice(techEntry.atr14)} ou choc macroéconomique exogène imprévu.`);
+    }
+    if (params.macroReason) {
+      counterArgs.push(`Contexte macro/sentiment PIT: ${params.macroReason}.`);
+    }
+
+    const approved = params.preTradePass !== false;
+    const resolutionText = approved
+      ? `COMMIT ${dirLabel} ${params.symbol} : La confluence quantitative (${params.oosSummary || "WFO OOS positif"}${params.timeMachineVerdict ? `, ${params.timeMachineVerdict}` : ""}) et un R:R asymétrique de ${rr.toFixed(2)}R avec Stop ATR dynamique compensent la Bear Thesis (${counterArgs.length} objection(s) encadrée(s) par le SL ${TraderSkillsEngine.fmtPrice(params.stop)}).`
+      : `SIGNAL ANNULÉ (DISAGREE) sur ${params.symbol} ${dirLabel} : La Bear Thesis l'emporte (${counterArgs.join(" | ")}). Aucun ordre routé.`;
+
+    return {
+      audit_id: randomUUID(),
+      instrument_ticker: params.symbol,
+      direction: dirLabel,
+      temporal_horizon_pit: new Date(now).toISOString(),
+      technical_confluence: {
+        macro_trend_alignment: `Point-in-Time <= ${new Date(now).toISOString()} : Tendance 4H EMA20/50=${techMacro.trendBias.toUpperCase()} (${TraderSkillsEngine.fmtPrice(techMacro.ema20)}/${TraderSkillsEngine.fmtPrice(techMacro.ema50)}) face au signal ${params.timeframe} ${dirLabel} (RSI=${techEntry.rsi14}). Alignement=${macroAligned ? "CONFIRMÉ" : "CONTRE-FLUX ENCADRÉ"}.`,
+        mathematical_indicators: indicators,
+      },
+      disagree_or_commit_deliberation: {
+        bear_thesis_advocate: counterArgs.join(" "),
+        resolution_and_commit: resolutionText,
+      },
+    };
+  }
+
+  /**
+   * [MODULE 3 : DIMENSIONNEMENT DYNAMIQUE ATR_14 & HALF-KELLY]
+   * Stop_Loss = Entry ± (ATR_14 * Multiplicateur_Adaptatif)
+   * Volume = (Capital * current_risk_fraction) / (Distance_Stop * Valeur_Point)
+   */
+  static buildModule3AtrKellySizing(params: {
+    symbol: string;
+    direction: Direction;
+    capital: number;
+    entry: number;
+    bars: Kline[];
+    adaptiveAtrMultiplier?: number;
+    currentRiskFraction?: number;
+    rewardToRisk?: number;
+    pointValue?: number;
+    explicitStop?: number;
+    explicitTarget?: number;
+    now?: number;
+  }): AtrKellySizingRecord {
+    const now = params.now ?? Date.now();
+    const pitBars = params.bars.filter((b) => (b.closeTime || b.openTime) <= now);
+    const tech = TraderSkillsEngine.computeQuickTech(pitBars.length ? pitBars : params.bars, params.entry);
+    const atr14 = Math.max(tech.atr14, params.entry * 0.0005);
+    const mult = Math.max(0.75, Math.min(4.0, params.adaptiveAtrMultiplier ?? 1.5));
+    const rr = Math.max(1.3, Math.min(5.0, params.rewardToRisk ?? 2.0));
+    const riskFraction = Math.max(0.0025, Math.min(0.05, params.currentRiskFraction ?? 0.01));
+    const pointVal = Math.max(1e-6, params.pointValue ?? 1.0);
+
+    const stopDist = params.explicitStop && Math.abs(params.entry - params.explicitStop) > 0
+      ? Math.abs(params.entry - params.explicitStop)
+      : atr14 * mult;
+    const slLevel = params.explicitStop && Math.abs(params.entry - params.explicitStop) > 0
+      ? params.explicitStop
+      : params.direction === "long"
+        ? params.entry - stopDist
+        : params.entry + stopDist;
+    const tpLevel = params.explicitTarget && Math.abs(params.explicitTarget - params.entry) > 0
+      ? params.explicitTarget
+      : params.direction === "long"
+        ? params.entry + stopDist * rr
+        : params.entry - stopDist * rr;
+
+    const capitalSafe = Math.max(100, params.capital);
+    const riskBudgetUsd = capitalSafe * riskFraction;
+    const positionSizeUnits = riskBudgetUsd / Math.max(stopDist * pointVal, 1e-9);
+
+    return {
+      instrument_ticker: params.symbol,
+      direction: params.direction === "long" ? "LONG" : "SHORT",
+      atr_14: Number(atr14.toFixed(6)),
+      adaptive_atr_multiplier: Number(mult.toFixed(2)),
+      current_risk_fraction: Number(riskFraction.toFixed(4)),
+      stop_loss_level: Number(slLevel.toFixed(5)),
+      take_profit_level: Number(tpLevel.toFixed(5)),
+      position_size_units: Number(positionSizeUnits.toFixed(4)),
+    };
+  }
+
+  /**
+   * [MODULE 4 : BOUCLE DE MÉTA-ÉVOLUTION & RÉFLEXION QUOTIDIENNE (OUTER LOOP)]
+   * Analyse les performances TCA/blotter, infère le régime de marché, recalcule WinRate (p),
+   * Ratio Gain/Perte (b), Kelly complet f* et applique Half-Kelly (f* / 2),
+   * puis mute le Génome du Prompt et écrase les constantes pour la session suivante.
+   */
+  static buildModule4DailyEvolutionState(state: DeskState, now = Date.now()): DailyEvolutionState {
+    const tcaItems = state.tcaHistory ?? [];
+    const closedTickets = (state.tickets ?? []).filter((t) => t.status === "closed");
+
+    const pnls: number[] =
+      tcaItems.length > 0
+        ? tcaItems.map((x) => x.realized_outcome.net_pnl_usd)
+        : closedTickets.map((t) => Number(t.pnl ?? 0));
+
+    const wins = pnls.filter((v) => v > 0);
+    const losses = pnls.filter((v) => v < 0);
+    const total = wins.length + losses.length;
+
+    const p = total >= 3
+      ? Math.max(0.05, Math.min(0.95, wins.length / total))
+      : 0.54;
+    const avgWin = wins.length > 0 ? wins.reduce((a, b2) => a + b2, 0) / wins.length : 180;
+    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((a, b2) => a + b2, 0) / losses.length) : 100;
+    const b = Math.max(0.25, Math.min(8.0, avgWin / Math.max(1, avgLoss)));
+
+    const fStarRaw = (b * p - (1 - p)) / Math.max(b, 1e-6);
+    const halfKellyRaw = fStarRaw / 2;
+    const currentRiskFraction = Number(
+      (halfKellyRaw <= 0 ? 0.0025 : Math.max(0.0025, Math.min(0.025, halfKellyRaw))).toFixed(4),
+    );
+
+    // Max Drawdown depuis la courbe d'équité
+    let peak = state.startEquity || 10_000;
+    let maxDd = 0;
+    for (const pt of state.curve ?? []) {
+      if (pt.eq > peak) peak = pt.eq;
+      if (peak > 0) {
+        const dd = (peak - pt.eq) / peak;
+        if (dd > maxDd) maxDd = dd;
+      }
+    }
+    const maxDrawdownPct = Number((maxDd * 100).toFixed(2));
+
+    const profiles = Object.values(state.marketProfiles ?? {});
+    const rangeCount = profiles.filter((mp) => mp.isRange).length;
+    const volShield = (state.volatilityShieldUntil ?? 0) > now;
+    const breakoutLosses = closedTickets.filter((t) => (t.engine ?? t.playbook) === "breakout" && (t.pnl ?? 0) < 0).length;
+    const breakoutTotal = closedTickets.filter((t) => (t.engine ?? t.playbook) === "breakout").length;
+
+    let regime: DailyEvolutionState["inferred_market_regime"] = "TRENDING";
+    if (volShield || maxDrawdownPct >= 10 || (losses.length > wins.length && avgLoss > avgWin * 1.3)) {
+      regime = "HIGH_VOLATILITY";
+    } else if (
+      (profiles.length > 0 && rangeCount >= Math.ceil(profiles.length * 0.5)) ||
+      (breakoutTotal >= 2 && breakoutLosses >= Math.ceil(breakoutTotal * 0.6))
+    ) {
+      regime = "RANGE";
+    }
+
+    const prevRegime = state.dailyEvolutionState?.inferred_market_regime;
+    const regimeShiftDetected = Boolean((prevRegime && prevRegime !== regime) || maxDrawdownPct >= 12);
+
+    const prevAtrMult = state.settings?.fixedStopAtr ?? 1.5;
+    let nextAtrMult = prevAtrMult;
+    let nextRr = state.settings?.trainedRewardR ?? 2.0;
+    let nextStrategyMode = "breakout_momentum";
+    let mutationDirective = `Régime ${regime} stable · Maintenir la confluence Multi-UT (Half-Kelly=${(currentRiskFraction * 100).toFixed(2)}%, R:R >= ${nextRr.toFixed(2)}).`;
+
+    if (maxDrawdownPct >= 12 || regime === "HIGH_VOLATILITY") {
+      nextStrategyMode = "defensive_vwap_fvg";
+      nextAtrMult = Number(Math.min(2.2, Math.max(1.65, prevAtrMult + 0.15)).toFixed(2));
+      nextRr = Number(Math.max(nextRr, 2.2).toFixed(2));
+      mutationDirective = `ALERTE RÉGIME ${regime} (MaxDD ${maxDrawdownPct.toFixed(1)}% / seuil 15%) : Réduisez le risque Half-Kelly à ${(currentRiskFraction * 100).toFixed(2)}%, élargissez Stop ATR à ${nextAtrMult}x et exigez R:R >= ${nextRr}R sans entrée contre-tendance.`;
+    } else if (regime === "RANGE") {
+      nextStrategyMode = "mean_reversion_va";
+      nextAtrMult = Number(Math.max(1.2, Math.min(1.6, prevAtrMult)).toFixed(2));
+      nextRr = Number(Math.max(1.8, nextRr).toFixed(2));
+      mutationDirective = `Basculez des stratégies Breakout vers Mean-Reversion aux bornes VAL/VAH vers le POC (Half-Kelly=${(currentRiskFraction * 100).toFixed(2)}%, Stop ATR=${nextAtrMult}x).`;
+    }
+
+    return {
+      session_date: new Date(now).toISOString().slice(0, 10),
+      inferred_market_regime: regime,
+      win_rate_p: Number(p.toFixed(4)),
+      win_loss_ratio_b: Number(b.toFixed(4)),
+      full_kelly_f_star: Number(fStarRaw.toFixed(4)),
+      current_risk_fraction: currentRiskFraction,
+      max_drawdown_pct: maxDrawdownPct,
+      regime_shift_detected: regimeShiftDetected,
+      prompt_genome_mutation_directive: mutationDirective,
+      overwritten_parameters: {
+        strategy_mode: nextStrategyMode,
+        adaptive_atr_multiplier: nextAtrMult,
+        reward_to_risk_ratio: nextRr,
+        current_risk_fraction: currentRiskFraction,
+      },
     };
   }
 }

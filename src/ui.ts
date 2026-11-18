@@ -2040,6 +2040,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <div class="glass-card" style="padding:14px;margin-top:12px">
+      <div class="card-hdr" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="card-title">Gouvernance Quantitative Institutionnelle (Modules 1-4 : TCA · XAI DoC · ATR/Half-Kelly · Outer-Loop EOD)</span>
+        <a href="/api/quant-governance" target="_blank" class="pill-btn" style="font-size:10px;padding:3px 9px;text-decoration:none">JSON Pydantic (/api/quant-governance)</a>
+      </div>
+      <div id="revQuantGovHost" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;font-size:11px"></div>
+    </div>
+
+    <div class="glass-card" style="padding:14px;margin-top:12px">
       <div class="card-hdr" style="margin-bottom:8px">
         <span class="card-title">Pack 15 Skills Actifs — Jakeschincariol Trader-Skill &amp; Day-Trader-Skill</span>
         <span id="revSkillsBadge" class="chip mono" style="font-size:10.5px">15 / 15 ACTIFS</span>
@@ -8455,6 +8463,61 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             '</div>';
           }).join('');
         }
+      }
+
+      var govHost = document.getElementById('revQuantGovHost');
+      if (govHost) {
+        var tcaLast = (deskState && Array.isArray(deskState.tcaHistory) && deskState.tcaHistory.length) ? deskState.tcaHistory[deskState.tcaHistory.length - 1] : null;
+        var xaiLast = (deskState && Array.isArray(deskState.xaiAuditHistory) && deskState.xaiAuditHistory.length) ? deskState.xaiAuditHistory[deskState.xaiAuditHistory.length - 1] : null;
+        var kellyLast = (deskState && Array.isArray(deskState.atrKellyHistory) && deskState.atrKellyHistory.length) ? deskState.atrKellyHistory[deskState.atrKellyHistory.length - 1] : null;
+        var evoLast = deskState && deskState.dailyEvolutionState;
+        var govCards = [];
+
+        govCards.push(
+          '<div style="padding:9px;border-radius:8px;background:rgba(15,23,42,0.45);border-left:3px solid #38bdf8">' +
+            '<div style="font-weight:700;color:#38bdf8;margin-bottom:4px">Module 1 · TCA Implementation Shortfall</div>' +
+            (tcaLast
+              ? ('<div><strong>' + escHtml(tcaLast.instrument_ticker + ' ' + tcaLast.direction) + '</strong> · Net <span class="mono">' + Number(tcaLast.realized_outcome.net_pnl_usd).toFixed(2) + '$</span></div>' +
+                 '<div class="mono" style="color:var(--fg-2);margin-top:2px">p0=' + tcaLast.execution_metrics.decision_price_p0 + ' | pa=' + tcaLast.execution_metrics.arrival_price_pa + ' | VWAP=' + tcaLast.execution_metrics.vwap_benchmark + '</div>' +
+                 '<div class="mono" style="color:var(--fg-2)">Delay=' + tcaLast.execution_metrics.delay_cost_bps + 'bps | Slip=' + tcaLast.execution_metrics.trading_slippage_bps + 'bps | Frais=' + tcaLast.realized_outcome.explicit_fees_usd + '$</div>')
+              : '<div style="color:var(--fg-3)">En attente de la prochaine clôture TCA</div>') +
+          '</div>'
+        );
+
+        govCards.push(
+          '<div style="padding:9px;border-radius:8px;background:rgba(15,23,42,0.45);border-left:3px solid #a78bfa">' +
+            '<div style="font-weight:700;color:#a78bfa;margin-bottom:4px">Module 2 · Audit XAI Disagree-or-Commit</div>' +
+            (xaiLast
+              ? ('<div style="color:var(--fg-1);line-height:1.35"><strong>Confluence :</strong> ' + escHtml(xaiLast.technical_confluence.macro_trend_alignment) + '</div>' +
+                 '<div style="color:#fbbf24;margin-top:3px;line-height:1.35"><strong>Bear Thesis :</strong> ' + escHtml(xaiLast.disagree_or_commit_deliberation.bear_thesis_advocate) + '</div>' +
+                 '<div style="color:#10b981;margin-top:3px;line-height:1.35"><strong>Commit :</strong> ' + escHtml(xaiLast.disagree_or_commit_deliberation.resolution_and_commit) + '</div>')
+              : '<div style="color:var(--fg-3)">En attente du prochain rapport Disagree-or-Commit</div>') +
+          '</div>'
+        );
+
+        govCards.push(
+          '<div style="padding:9px;border-radius:8px;background:rgba(15,23,42,0.45);border-left:3px solid #f472b6">' +
+            '<div style="font-weight:700;color:#f472b6;margin-bottom:4px">Module 3 · Dimensionnement ATR_14 &amp; Half-Kelly</div>' +
+            (kellyLast
+              ? ('<div><strong>' + escHtml(kellyLast.instrument_ticker + ' ' + kellyLast.direction) + '</strong> · Fraction risque <span class="mono">' + (Number(kellyLast.current_risk_fraction) * 100).toFixed(2) + '%</span></div>' +
+                 '<div class="mono" style="color:var(--fg-2);margin-top:2px">ATR14=' + kellyLast.atr_14 + ' × ' + kellyLast.adaptive_atr_multiplier + ' | Units=' + kellyLast.position_size_units + '</div>' +
+                 '<div class="mono" style="color:var(--fg-2)">SL=' + kellyLast.stop_loss_level + ' · TP=' + kellyLast.take_profit_level + '</div>')
+              : '<div style="color:var(--fg-3)">En attente du prochain calcul ATR/Kelly</div>') +
+          '</div>'
+        );
+
+        govCards.push(
+          '<div style="padding:9px;border-radius:8px;background:rgba(15,23,42,0.45);border-left:3px solid #34d399">' +
+            '<div style="font-weight:700;color:#34d399;margin-bottom:4px">Module 4 · Outer-Loop Daily_Evolution_State</div>' +
+            (evoLast
+              ? ('<div><strong>Régime : ' + escHtml(evoLast.inferred_market_regime) + '</strong> · MaxDD <span class="mono">' + evoLast.max_drawdown_pct + '%</span></div>' +
+                 '<div class="mono" style="color:var(--fg-2);margin-top:2px">p=' + (Number(evoLast.win_rate_p) * 100).toFixed(1) + '% | b=' + evoLast.win_loss_ratio_b + ' | f*=' + (Number(evoLast.full_kelly_f_star) * 100).toFixed(2) + '% -> Half-Kelly=' + (Number(evoLast.current_risk_fraction) * 100).toFixed(2) + '%</div>' +
+                 '<div style="color:var(--fg-1);margin-top:3px;line-height:1.35">' + escHtml(evoLast.prompt_genome_mutation_directive) + '</div>')
+              : '<div style="color:var(--fg-3)">Initialisation Outer-Loop EOD en cours...</div>') +
+          '</div>'
+        );
+
+        govHost.innerHTML = govCards.join('');
       }
 
       var skBadge = document.getElementById('revSkillsBadge');

@@ -295,6 +295,12 @@ export function startDashboardServer(desk: TradingFloorDesk, port = 4080): { url
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/quant-governance") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(desk.getQuantGovernanceBundle()));
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/mt5-bridge/poll") {
       await desk.syncWithLocalMt5Bridge();
       const payload = Mt5CloudBridge.buildLocalBridgePayload(
