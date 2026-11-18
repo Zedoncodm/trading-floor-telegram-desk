@@ -1173,6 +1173,15 @@ export class TradingFloorDesk {
           this.recordEquityPoint(now);
           structuralChange = true;
         }
+        if ((this.state.dailyEvolutionState?.max_drawdown_pct ?? 0) > 25 || !this.state.dailyEvolutionState) {
+          let runningPeak = this.state.curve[0]?.eq ?? mt5State.balance;
+          for (const pt of this.state.curve) {
+            if (pt.eq > runningPeak) runningPeak = pt.eq;
+            pt.drawdownPct = runningPeak > 0 ? Math.max(0, (runningPeak - pt.eq) / runningPeak) : 0;
+          }
+          this.state.dailyEvolutionState = TraderSkillsEngine.buildModule4DailyEvolutionState(this.state, now);
+          structuralChange = true;
+        }
       }
 
       // 2. Synchronisation des cotations live MT5 dans le Tape
@@ -2401,7 +2410,7 @@ export class TradingFloorDesk {
       }
     }
     const merged = DeskStore.sanitizeEquityCurve([...archivedBuckets.values(), ...recentPoints]);
-    const peak = merged.reduce((m, p) => Math.max(m, p.eq), this.state.startEquity);
+    const peak = merged.reduce((m, p) => Math.max(m, p.eq), eq);
     const drawdownPct = peak > 0 ? Math.max(0, (peak - eq) / peak) : 0;
     const last = merged[merged.length - 1];
     if (!Number.isFinite(eq) || eq <= 0) return;
@@ -3254,15 +3263,23 @@ export class TradingFloorDesk {
       }
     }
     if (directiveForcesMeanRev && mp.vah > mp.val) {
+      const stopBand = Math.max((snap.atr || px * 0.01) * 1.1, (mp.vah - mp.val) * 0.35);
       const mrDir: Direction = px >= mp.poc ? "short" : "long";
+      const withinVaVicinity = px <= mp.vah + stopBand * 1.15 && px >= mp.val - stopBand * 1.15;
       const minPocDist = Math.max(snap.atr || px * 0.0004, (mp.vah - mp.val) * 0.25) * 1.5;
       const nearBoundary = mrDir === "short" ? px >= mp.poc + (mp.vah - mp.poc) * 0.55 : px <= mp.poc - (mp.poc - mp.val) * 0.55;
-      if (nearBoundary && Math.abs(px - mp.poc) >= minPocDist) {
+      if (withinVaVicinity && nearBoundary && Math.abs(px - mp.poc) >= minPocDist) {
+        const cappedTarget = mrDir === "short"
+          ? Math.max(mp.poc, px - stopBand * 2.2)
+          : Math.min(mp.poc, px + stopBand * 2.2);
+        const customStop = mrDir === "short" ? px + stopBand : Math.max(px * 0.5, px - stopBand);
         return withConfluence({
           dir: mrDir,
           playbook: "fade",
-          thesis: `Directive Reviewer Mean-Reversion (${fmtPx(px)} vs POC ${fmtPx(mp.poc)}) : retour à la moyenne depuis borne VA [${fmtPx(mp.val)} - ${fmtPx(mp.vah)}].`,
-          customTarget: mp.poc,
+          thesis: `Directive Reviewer Mean-Reversion (${fmtPx(px)} vs POC ${fmtPx(mp.poc)}) : retour à la moyenne depuis borne VA [${fmtPx(mp.val)} - ${fmtPx(mp.vah)}] (cible ${fmtPx(cappedTarget)}).`,
+          customEntry: px,
+          customStop,
+          customTarget: cappedTarget,
         });
       }
     }
@@ -3400,6 +3417,17 @@ export class TradingFloorDesk {
       const notCooledDown = (sym: string) => (this.state.cooldowns?.[sym] ?? 0) <= now;
       const hasActiveTicket = (sym: string) =>
         this.state.tickets.some((t) => t.asset === sym && (t.status === "open" || t.status === "pending"));
+      const mt5SnapshotNow = this.state.mt5Live?.connected
+        ? Mt5CloudBridge.readLocalMt5State(25_000, this.cfg.dataDir)
+        : null;
+      const mt5QuotedSymbols =
+        mt5SnapshotNow?.quotes?.length
+          ? new Set(
+              mt5SnapshotNow.quotes
+                .filter((q) => q.bid > 0)
+                .flatMap((q) => [q.symbol.toUpperCase(), Mt5CloudBridge.mapMt5SymbolToDesk(q.symbol).toUpperCase()]),
+            )
+          : null;
       const mt5AllowsSymbol = (sym: string) => {
         const symUpper = sym.toUpperCase();
         if (symUpper.endsWith("USDT")) return false;
@@ -3407,6 +3435,10 @@ export class TradingFloorDesk {
         if (!mt5Live?.connected) return true;
         const unsup = this.mt5UnsupportedSymbols.get(symUpper);
         if (unsup && now - unsup.at < 600_000) return false;
+        if (mt5QuotedSymbols && mt5QuotedSymbols.size > 0) {
+          const mapped = Mt5CloudBridge.mapSymbolToMt5(symUpper).toUpperCase();
+          return mt5QuotedSymbols.has(symUpper) || mt5QuotedSymbols.has(mapped);
+        }
         return true;
       };
       const focusSym = (this.state.settings?.focusSymbol ?? "").trim().toUpperCase();

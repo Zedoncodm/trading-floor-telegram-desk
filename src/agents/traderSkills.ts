@@ -288,43 +288,87 @@ export class TraderSkillsEngine {
       };
     }
 
-    const barRets: number[] = [];
+    const dirSign = direction === "long" ? 1 : -1;
+    const weightedSteps: Array<{ closeRet: number; favExcursion: number; advExcursion: number }> = [];
+    const recentThreshold = Math.max(1, bars.length - 25);
     for (let i = 1; i < bars.length; i++) {
-      if (bars[i - 1].close > 0) {
-        barRets.push((bars[i].close - bars[i - 1].close) / bars[i - 1].close);
+      const prevClose = bars[i - 1].close;
+      if (prevClose > 0) {
+        const closeRet = ((bars[i].close - prevClose) / prevClose) * dirSign;
+        const upEx = Math.max(0, (bars[i].high - prevClose) / prevClose);
+        const dnEx = Math.max(0, (prevClose - bars[i].low) / prevClose);
+        const step = {
+          closeRet,
+          favExcursion: direction === "long" ? upEx : dnEx,
+          advExcursion: direction === "long" ? dnEx : upEx,
+        };
+        weightedSteps.push(step);
+        if (i >= recentThreshold) {
+          weightedSteps.push(step); // Pondération 2x des 25 dernières barres
+        }
       }
     }
+    if (!weightedSteps.length) {
+      return {
+        simulations: 0,
+        targetFirstPct: 50,
+        stopFirstPct: 35,
+        openAtClosePct: 15,
+        historicalFires: 0,
+        historicalWins: 0,
+        historicalLosses: 0,
+        historicalWinPct: 55,
+        winEdgePct: 15,
+        pass: true,
+        verdict: "Historique insuffisant — validation neutre autorisée.",
+      };
+    }
+
     const stopPct = riskDist / Math.max(entryPrice, 1e-9);
     const targetPct = rewardDist / Math.max(entryPrice, 1e-9);
-    const dirSign = direction === "long" ? 1 : -1;
+    const horizonBars = Math.max(24, Math.min(72, Math.round(18 * Math.max(1, rr))));
 
     const rng = seededRandomFactory(Math.round(entryPrice * 100) + bars.length);
-    const horizonBars = 12;
     let targetFirst = 0;
     let stopFirst = 0;
     let openAtClose = 0;
+    let openSumR = 0;
 
     for (let sim = 0; sim < simulations; sim++) {
       let cumRet = 0;
       let resolved = false;
       for (let step = 0; step < horizonBars; step++) {
-        const idx = Math.floor(rng() * barRets.length);
-        cumRet += barRets[idx] * dirSign;
-        if (cumRet >= targetPct) {
+        const s = weightedSteps[Math.floor(rng() * weightedSteps.length)];
+        const peakFav = cumRet + s.favExcursion;
+        const peakAdv = cumRet - s.advExcursion;
+        if (peakAdv <= -stopPct && peakFav >= targetPct) {
+          if (s.closeRet >= 0) {
+            targetFirst++;
+          } else {
+            stopFirst++;
+          }
+          resolved = true;
+          break;
+        }
+        if (peakFav >= targetPct) {
           targetFirst++;
           resolved = true;
           break;
         }
-        if (cumRet <= -stopPct) {
+        if (peakAdv <= -stopPct) {
           stopFirst++;
           resolved = true;
           break;
         }
+        cumRet += s.closeRet;
       }
-      if (!resolved) openAtClose++;
+      if (!resolved) {
+        openAtClose++;
+        openSumR += Math.max(-1, Math.min(rr, cumRet / Math.max(stopPct, 1e-9)));
+      }
     }
 
-    // Rejeu historique réel barre par barre sur la fenêtre
+    // Rejeu historique réel barre par barre avec excursion intra-barre sur l'horizon complet
     let historicalFires = 0;
     let historicalWins = 0;
     let historicalLosses = 0;
@@ -333,13 +377,23 @@ export class TraderSkillsEngine {
       const ref = bars[i].close;
       if (ref <= 0) continue;
       historicalFires++;
-      for (let j = i + 1; j < Math.min(bars.length, i + 12); j++) {
-        const ret = ((bars[j].close - ref) / ref) * dirSign;
-        if (ret >= targetPct) {
+      const endJ = Math.min(bars.length, i + horizonBars);
+      for (let j = i + 1; j < endJ; j++) {
+        const fav = direction === "long" ? (bars[j].high - ref) / ref : (ref - bars[j].low) / ref;
+        const adv = direction === "long" ? (ref - bars[j].low) / ref : (bars[j].high - ref) / ref;
+        if (adv >= stopPct && fav >= targetPct) {
+          if (((bars[j].close - ref) / ref) * dirSign >= 0) {
+            historicalWins++;
+          } else {
+            historicalLosses++;
+          }
+          break;
+        }
+        if (fav >= targetPct) {
           historicalWins++;
           break;
         }
-        if (ret <= -stopPct) {
+        if (adv >= stopPct) {
           historicalLosses++;
           break;
         }
@@ -351,12 +405,13 @@ export class TraderSkillsEngine {
     const openAtClosePct = Number(((openAtClose / simulations) * 100).toFixed(1));
     const resolvedHist = historicalWins + historicalLosses;
     const historicalWinPct = resolvedHist > 0 ? Number(((historicalWins / resolvedHist) * 100).toFixed(1)) : targetFirstPct;
-    const expectedR = (targetFirstPct / 100) * rr - (stopFirstPct / 100) * 1.0;
+    const openContributionR = Math.max(-0.35, Math.min(0.35, openSumR / simulations));
+    const expectedR = (targetFirstPct / 100) * rr - (stopFirstPct / 100) * 1.0 + openContributionR;
     const winEdgePct = Number((targetFirstPct - stopFirstPct).toFixed(1));
     const pass = expectedR > -0.05 && stopFirstPct <= Math.max(58, targetFirstPct * 1.45);
     const verdict = pass
-      ? `PASS TimeMachine (${simulations} sims) : Cible ${targetFirstPct}% vs Stop ${stopFirstPct}% (Ouvert EOD ${openAtClosePct}%, Hist ${historicalWins}W/${historicalLosses}L).`
-      : `BLOCK TimeMachine (${simulations} sims) : Probabilité Stop (${stopFirstPct}%) défavorable vs Cible (${targetFirstPct}%, E=${expectedR.toFixed(2)}R).`;
+      ? `PASS TimeMachine (${simulations} sims, H=${horizonBars}b) : Cible ${targetFirstPct}% vs Stop ${stopFirstPct}% (E=${expectedR >= 0 ? "+" : ""}${expectedR.toFixed(2)}R, Hist ${historicalWins}W/${historicalLosses}L).`
+      : `BLOCK TimeMachine (${simulations} sims, H=${horizonBars}b) : Probabilité Stop (${stopFirstPct}%) défavorable vs Cible (${targetFirstPct}%, E=${expectedR.toFixed(2)}R).`;
 
     return {
       simulations,
@@ -1273,8 +1328,13 @@ export class TraderSkillsEngine {
    * puis mute le Génome du Prompt et écrase les constantes pour la session suivante.
    */
   static buildModule4DailyEvolutionState(state: DeskState, now = Date.now()): DailyEvolutionState {
-    const tcaItems = state.tcaHistory ?? [];
-    const closedTickets = (state.tickets ?? []).filter((t) => t.status === "closed");
+    const tcaItems = (state.tcaHistory ?? [])
+      .filter((x) => !x.instrument_ticker.toUpperCase().endsWith("USDT"))
+      .slice(-50);
+    const closedTickets = (state.tickets ?? [])
+      .filter((t) => t.status === "closed" && !t.asset.toUpperCase().endsWith("USDT"))
+      .sort((a, b2) => (b2.closedAt ?? b2.createdAt) - (a.closedAt ?? a.createdAt))
+      .slice(0, 50);
 
     const pnls: number[] =
       tcaItems.length > 0
@@ -1298,10 +1358,11 @@ export class TraderSkillsEngine {
       (halfKellyRaw <= 0 ? 0.0025 : Math.max(0.0025, Math.min(0.025, halfKellyRaw))).toFixed(4),
     );
 
-    // Max Drawdown depuis la courbe d'équité
-    let peak = state.startEquity || 10_000;
+    // Max Drawdown réel calculé exclusivement sur la courbe d'équité (sans le décalage algébrique startEquity)
+    const curvePts = (state.curve ?? []).filter((pt) => Number.isFinite(pt.eq) && pt.eq > 0);
+    let peak = curvePts[0]?.eq ?? (state.dayStartEquity || 10_000);
     let maxDd = 0;
-    for (const pt of state.curve ?? []) {
+    for (const pt of curvePts) {
       if (pt.eq > peak) peak = pt.eq;
       if (peak > 0) {
         const dd = (peak - pt.eq) / peak;

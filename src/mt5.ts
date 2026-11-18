@@ -575,6 +575,13 @@ export class Mt5CloudBridge {
       return Number(Math.max(0.01, Math.min(100, Math.round(lots * 100) / 100)).toFixed(2));
     }
 
+    // 4b. Gaz naturel (NGAS, XNGUSD, NATGAS) -> 1 lot standard = 10 000 MMBtu, plafonné à 5.0 lots
+    if (sym === "NGAS" || sym === "XNGUSD" || sym === "NATGAS") {
+      const mmbtu = effectiveQty;
+      const lots = mmbtu / 10_000;
+      return Number(Math.max(0.01, Math.min(5.0, Math.round(lots * 100) / 100)).toFixed(2));
+    }
+
     // 5. Crypto (BTCUSDT, ETHUSDT, SOLUSDT, etc.) -> 1 lot = 1 coin / contrat
     if (/USDT$|USD$/.test(sym) && (sym.startsWith("BTC") || sym.startsWith("ETH") || sym.startsWith("SOL") || sym.startsWith("BNB") || sym.startsWith("XRP") || sym.startsWith("DOGE") || sym.startsWith("AVAX") || sym.startsWith("LINK"))) {
       const coins = effectiveQty;
@@ -587,9 +594,14 @@ export class Mt5CloudBridge {
       return Number(Math.max(0.01, Math.min(100, Math.round(contracts * 100) / 100)).toFixed(2));
     }
 
-    // 7. Actions US (TSLA, MSFT, AAPL, NVDA, AMZN) -> 1 lot = 1 action
-    const shares = effectiveQty;
-    return Number(Math.max(0.01, Math.min(500, Math.round(shares * 100) / 100)).toFixed(2));
+    // 7. Actions US explicites (TSLA, MSFT, AAPL, NVDA, AMZN) -> 1 lot = 1 action
+    if (US_EQUITY_SYMBOLS.has(sym)) {
+      const shares = effectiveQty;
+      return Number(Math.max(0.01, Math.min(500, Math.round(shares * 100) / 100)).toFixed(2));
+    }
+
+    // 8. Repli sécurisé pour tout autre contrat inconnu -> plafonné strictement à 5.0 lots
+    return Number(Math.max(0.01, Math.min(5.0, Math.round((effectiveQty / 100) * 100) / 100)).toFixed(2));
   }
 
   static buildLocalBridgePayload(
@@ -989,12 +1001,34 @@ bool SyncOpenPositionStops(const string id, double targetSl, double targetTp) {
       if(ticket == 0) continue;
       if(PositionGetInteger(POSITION_MAGIC) != InpMagic || PositionGetString(POSITION_COMMENT) != id) continue;
       string pSym = PositionGetString(POSITION_SYMBOL);
+      long posType = PositionGetInteger(POSITION_TYPE);
       int digits = (int)SymbolInfoInteger(pSym, SYMBOL_DIGITS);
       double point = SymbolInfoDouble(pSym, SYMBOL_POINT);
+      double bid = SymbolInfoDouble(pSym, SYMBOL_BID);
+      double ask = SymbolInfoDouble(pSym, SYMBOL_ASK);
+      double stopLevelPts = (double)SymbolInfoInteger(pSym, SYMBOL_TRADE_STOPS_LEVEL);
+      double minDist = (stopLevelPts + 3.0) * point;
       double curSl = PositionGetDouble(POSITION_SL);
       double curTp = PositionGetDouble(POSITION_TP);
       double nextSl = (targetSl > 0.0) ? NormalizeDouble(targetSl, digits) : curSl;
       double nextTp = (targetTp > 0.0) ? NormalizeDouble(targetTp, digits) : curTp;
+      if(posType == POSITION_TYPE_BUY) {
+         if(nextSl > 0.0 && bid > 0.0 && nextSl > bid - minDist) {
+            double clampedSl = NormalizeDouble(bid - minDist, digits);
+            nextSl = (curSl <= 0.0 || clampedSl >= curSl) ? clampedSl : curSl;
+         }
+         if(nextTp > 0.0 && ask > 0.0 && nextTp < ask + minDist) {
+            nextTp = NormalizeDouble(ask + minDist, digits);
+         }
+      } else if(posType == POSITION_TYPE_SELL) {
+         if(nextSl > 0.0 && ask > 0.0 && nextSl < ask + minDist) {
+            double clampedSl = NormalizeDouble(ask + minDist, digits);
+            nextSl = (curSl <= 0.0 || clampedSl <= curSl) ? clampedSl : curSl;
+         }
+         if(nextTp > 0.0 && bid > 0.0 && nextTp > bid - minDist) {
+            nextTp = NormalizeDouble(bid - minDist, digits);
+         }
+      }
       double tol = MathMax(point * 5.0, 1e-6);
       if(MathAbs(nextSl - curSl) > tol || MathAbs(nextTp - curTp) > tol) {
          return trade.PositionModify(ticket, nextSl, nextTp);
@@ -1072,7 +1106,7 @@ void WriteMt5StateToFile() {
    }
    json += "],";
 
-   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY", "XAUUSD", "XAGUSD" };
+   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURGBP", "EURJPY", "XAUUSD", "XAGUSD", "USTEC", "US500", "US30", "DE40", "USOIL" };
    json += "\\"quotes\\":[";
    bool firstQ = true;
    for(int q = 0; q < ArraySize(quoteSyms); q++) {

@@ -2245,3 +2245,48 @@ test("Strategist coherence: 5-decimal FX formatting, bounded Market Profile Mean
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Audit fixes: true curve drawdown (ignores startEquity offset), NGAS lot cap <= 5.0, adaptive TimeMachine horizon & EA stops-level clamp", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-audit5-"));
+  try {
+    const store = new DeskStore(dir);
+    const now = Date.now();
+    const state = store.loadOrCreate(173_618.07, "Europe/Paris", ["EURUSD", "XAUUSD"], 15, now);
+    state.realizedPnl = -88_219.8;
+    state.dayStartEquity = 85_398.27;
+    state.curve = [
+      { t: now - 120_000, eq: 87_933.49, realized: -85_684.58, unrealized: 0, drawdownPct: 0 },
+      { t: now - 60_000, eq: 84_636.8, realized: -88_981.27, unrealized: 0, drawdownPct: 0.0375 },
+      { t: now, eq: 85_398.27, realized: -88_219.8, unrealized: 0, drawdownPct: 0.0288 },
+    ];
+    const evo = TraderSkillsEngine.buildModule4DailyEvolutionState(state, now);
+    assert.ok(evo.max_drawdown_pct < 5.0, `Expected real curve max drawdown < 5%, got ${evo.max_drawdown_pct}%`);
+    assert.ok(Math.abs(evo.max_drawdown_pct - 3.75) < 0.2, `Expected ~3.75% drawdown, got ${evo.max_drawdown_pct}%`);
+
+    const ngasLots = Mt5CloudBridge.computeAssetLots("NGAS", 140_000, 3.19);
+    assert.ok(ngasLots <= 5.0 && ngasLots >= 0.01, `Expected NGAS lots capped <= 5.0, got ${ngasLots}`);
+
+    const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor("http://127.0.0.1:4080");
+    assert.ok(mq5.includes("SYMBOL_TRADE_STOPS_LEVEL"));
+    assert.ok(mq5.includes("nextSl > bid - minDist"));
+    assert.ok(mq5.includes("nextSl < ask + minDist"));
+    assert.ok(mq5.includes('"USTEC", "US500", "US30", "DE40", "USOIL"'));
+
+    const bars: Kline[] = Array.from({ length: 50 }, (_, i) => {
+      const p = 1.1 + i * 0.0002;
+      return {
+        openTime: now - (50 - i) * 900_000,
+        closeTime: now - (49 - i) * 900_000 - 1,
+        open: p - 0.0001,
+        high: p + 0.0004,
+        low: p - 0.0003,
+        close: p,
+        volume: 1000,
+      };
+    });
+    const tm = TraderSkillsEngine.runTimeMachineSimulation(bars, "long", 1.11, 1.109, 1.1122, 2500);
+    assert.ok(tm.verdict.includes("H=40b"), `Expected adaptive horizon H=40b for 2.2R in verdict: ${tm.verdict}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
