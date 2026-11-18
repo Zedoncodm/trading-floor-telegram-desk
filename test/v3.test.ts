@@ -1684,3 +1684,241 @@ test("Jakeschincariol 15 Trader Skills pack installed & integrated across all 8 
   assert.ok(scriptMatch4 && scriptMatch4[1]);
   assert.doesNotThrow(() => new Function(scriptMatch4[1]));
 });
+
+test("MT5 bridge strict idempotency + Cognitive Self-Audit & Pre-Trade Self-Questioning (price-structure based)", () => {
+  // 1. MQL5 EA contains deal-history idempotency & locked reqLots
+  const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor("http://127.0.0.1:4080");
+  assert.ok(mq5.includes("gExecutedIds"));
+  assert.ok(mq5.includes("MarkIdExecuted(id)"));
+  assert.ok(mq5.includes("HasHistoricalDealForId(id)"));
+  assert.ok(mq5.includes("if(reqLots <= 0.0 && notionalUsd > 0.0 && px > 0.0)"));
+  assert.ok(mq5.includes("DEAL_REASON_MOBILE"));
+  assert.ok(mq5.includes('if(inCmt != "" && (dCmt == "" || StringFind(dCmt, "[") == 0)) dCmt = inCmt;'));
+
+  // FX default safe ceiling <= 5.0 lots (while GBPUSD 400k -> 3.03 still works)
+  assert.equal(Mt5CloudBridge.computeAssetLots("GBPUSD", 400_000, 1.32), 3.03);
+  assert.equal(Mt5CloudBridge.computeAssetLots("NZDUSD", 850_000, 0.54878), 5.0);
+
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-selfaudit-"));
+  try {
+    const store = new DeskStore(dir);
+    const state = store.loadOrCreate(85_000, "Europe/Paris", ["AUDUSD", "NZDUSD"], 15);
+    const now = Date.now();
+
+    // Build flat/slight bull bars around 0.6720 for AUDUSD TP chasing scenario
+    const audBars: Kline[] = Array.from({ length: 40 }, (_, i) => {
+      const p = 0.6700 + i * 0.00006;
+      return {
+        openTime: now - (40 - i) * 900_000,
+        closeTime: now - (39 - i) * 900_000 - 1,
+        open: p - 0.0001,
+        high: p + 0.00025,
+        low: p - 0.00025,
+        close: p,
+        volume: 1000,
+      };
+    });
+
+    const audTpTicket: Ticket = {
+      id: "TF-20261118-03",
+      asset: "AUDUSD",
+      direction: "long",
+      playbook: "breakout",
+      engine: "breakout",
+      thesis: "AUDUSD TP test",
+      entry: 0.67194,
+      fillPrice: 0.67194,
+      invalidation: 0.67100,
+      target: 0.67234,
+      timeStopHours: 4,
+      notional: 1_090_000,
+      qty: 1_624_000,
+      mt5Lots: 16.24,
+      riskUsd: 1000,
+      riskPct: 0.012,
+      exposurePct: 12.8,
+      binding: "risk",
+      producedBy: ["strategist"],
+      backtest: {
+        playbook: "breakout",
+        rules: "test",
+        source: "unit-test",
+        inSample: { label: "IS", bars: 100, trades: 10, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.2, deflatedSharpe: 0.6, maxDrawdownR: 1, var95R: -1, pass: true },
+        outOfSample: { label: "OOS", bars: 50, trades: 5, winRate: 0.6, expectancyR: 0.3, profitFactor: 1.5, sharpe: 1.2, deflatedSharpe: 0.6, maxDrawdownR: 1, var95R: -1, pass: true },
+        pass: true,
+      },
+      status: "closed",
+      createdAt: now - 60_000,
+      expiresAt: now + 60_000,
+      fees: 0,
+      funding: 0,
+    };
+
+    // 2. Post-TP self audit sets price-structure pullback gate on AUDUSD
+    const audAudit = TraderSkillsEngine.runPostTradeSelfAudit({
+      ticket: audTpTicket,
+      exitPrice: 0.67234,
+      netPnl: 591.98,
+      reason: "target",
+      mt5DealReason: "TP",
+      bars: audBars,
+      settings: state.settings,
+      now,
+    });
+    assert.equal(audAudit.structuralGate.lastOutcome, "WIN_TP");
+    state.structuralGates = { AUDUSD: audAudit.structuralGate };
+
+    // Immediate chasing at 0.67233 (1 pip below exit) MUST be rejected by structural gate
+    const chaseVeto = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+      state,
+      symbol: "AUDUSD",
+      direction: "long",
+      entry: 0.67233,
+      stop: 0.67150,
+      target: 0.67410,
+      bars: audBars,
+      atr: 0.0005,
+      now: now + 4000,
+    });
+    assert.equal(chaseVeto.pass, false);
+    assert.equal(chaseVeto.flawCode, "POST_TP_EXHAUSTION_CHASING");
+
+    // Once price genuinely pulls back below requiredPullbackPrice, re-entry IS allowed (even 10s later -> NOT a timer!)
+    const pullbackPrice = (audAudit.structuralGate.requiredPullbackPrice ?? 0.6710) - 0.0001;
+    const pullbackPass = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+      state,
+      symbol: "AUDUSD",
+      direction: "long",
+      entry: pullbackPrice,
+      stop: pullbackPrice - 0.0008,
+      target: pullbackPrice + 0.0016,
+      bars: audBars,
+      marketProfile: {
+        symbol: "AUDUSD",
+        poc: 0.6715,
+        vah: 0.6728,
+        val: 0.6702,
+        sessionHigh: 0.6729,
+        sessionLow: 0.6700,
+        totalVolume: 1000,
+        valueAreaPct: 0.7,
+        isRange: true,
+        pricePosition: "inside_va",
+        updatedAt: now,
+      },
+      atr: 0.0005,
+      now: now + 10_000,
+    });
+    assert.equal(pullbackPass.pass, true);
+
+    // 3. Post-manual human cut on falling NZDUSD detects flaws, reduces riskScale, raises R:R, and blocks stubborn re-long
+    const bearNzdBars: Kline[] = Array.from({ length: 40 }, (_, i) => {
+      const p = 0.5530 - i * 0.00011;
+      return {
+        openTime: now - (40 - i) * 900_000,
+        closeTime: now - (39 - i) * 900_000 - 1,
+        open: p + 0.0001,
+        high: p + 0.0002,
+        low: p - 0.0002,
+        close: p,
+        volume: 1000,
+      };
+    });
+    const nzdCutTicket: Ticket = {
+      ...audTpTicket,
+      id: "TF-20261118-09",
+      asset: "NZDUSD",
+      entry: 0.54929,
+      fillPrice: 0.54929,
+      invalidation: 0.54847,
+      target: 0.54939, // tiny TP vs wide SL
+      notional: 818_000,
+      mt5Lots: 14.9,
+      riskUsd: 650,
+    };
+
+    state.settings.trainedRewardR = 1.6;
+    const nzdAudit = TraderSkillsEngine.runPostTradeSelfAudit({
+      ticket: nzdCutTicket,
+      exitPrice: 0.54872,
+      netPnl: -774.55,
+      reason: "flatten",
+      mt5DealReason: "MANUAL",
+      bars: bearNzdBars,
+      settings: state.settings,
+      now,
+    });
+    assert.equal(nzdAudit.auditEntry.outcome, "HUMAN_MANUAL_CUT");
+    assert.ok(nzdAudit.auditEntry.flawsIdentified.includes("HUMAN_EMERGENCY_CUT"));
+    assert.ok(nzdAudit.auditEntry.flawsIdentified.includes("COUNTER_TREND_ENTRY"));
+    assert.ok(nzdAudit.auditEntry.flawsIdentified.includes("OVERSIZED_LOT_EXPOSURE"));
+    assert.ok(nzdAudit.structuralGate.riskScaleMultiplier < 0.7);
+    assert.ok((nzdAudit.settingsPatch.trainedRewardR ?? 0) >= 1.85);
+
+    state.structuralGates.NZDUSD = nzdAudit.structuralGate;
+
+    // Immediate stubborn re-buy in the falling knife MUST be self-vetoed
+    const stubbornVeto = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+      state,
+      symbol: "NZDUSD",
+      direction: "long",
+      entry: 0.54878,
+      stop: 0.54796,
+      target: 0.55060,
+      bars: bearNzdBars,
+      atr: 0.0005,
+      now: now + 3000,
+    });
+    assert.equal(stubbornVeto.pass, false);
+    assert.equal(stubbornVeto.flawCode, "STUBBORN_SAME_DIRECTION_REENTRY");
+
+    // Once price structurally reclaims bullish trend above EMA20 + POC + RSI >= 50, gate unlocks with reduced risk scale
+    const bullReclaimBars: Kline[] = Array.from({ length: 40 }, (_, i) => {
+      const p = 0.5480 + i * 0.00015;
+      return {
+        openTime: now - (40 - i) * 900_000,
+        closeTime: now - (39 - i) * 900_000 - 1,
+        open: p - 0.0001,
+        high: p + 0.0002,
+        low: p - 0.0002,
+        close: p,
+        volume: 1200,
+      };
+    });
+    const unlockedPass = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+      state,
+      symbol: "NZDUSD",
+      direction: "long",
+      entry: 0.5542,
+      stop: 0.5532,
+      target: 0.5565,
+      bars: bullReclaimBars,
+      marketProfile: {
+        symbol: "NZDUSD",
+        poc: 0.5520,
+        vah: 0.5548,
+        val: 0.5495,
+        sessionHigh: 0.5550,
+        sessionLow: 0.5485,
+        totalVolume: 1000,
+        valueAreaPct: 0.7,
+        isRange: false,
+        pricePosition: "above_vah",
+        updatedAt: now,
+      },
+      atr: 0.0005,
+      now: now + 60_000,
+    });
+    assert.equal(unlockedPass.pass, true);
+    assert.ok(unlockedPass.riskScaleMultiplier < 0.7);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // 4. Reviewer UI contains self-audit hosts and compiles cleanly
+  assert.ok(DASHBOARD_HTML.includes("revStructuralGatesHost"));
+  assert.ok(DASHBOARD_HTML.includes("revSelfAuditHost"));
+  const scriptMatch5 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(scriptMatch5 && scriptMatch5[1]);
+  assert.doesNotThrow(() => new Function(scriptMatch5[1]));
+});

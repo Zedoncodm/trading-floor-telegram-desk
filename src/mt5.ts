@@ -40,6 +40,7 @@ export type LocalMt5ClosedDeal = {
   exit: number;
   profit: number;
   closedAt: number;
+  dealReason?: "SL" | "TP" | "MANUAL" | "EA" | "OTHER";
 };
 
 export type LocalMt5State = {
@@ -507,7 +508,7 @@ export class Mt5CloudBridge {
     }
   }
 
-  static computeAssetLots(asset: string, notional: number, entryPrice: number, qty?: number): number {
+  static computeAssetLots(asset: string, notional: number, entryPrice: number, qty?: number, maxFxLots = 5.0): number {
     if (!notional || notional <= 0 || !entryPrice || entryPrice <= 0) return 0.01;
     const sym = (asset || "").trim().toUpperCase();
     const effectiveQty = qty && qty > 0 ? qty : notional / entryPrice;
@@ -517,7 +518,8 @@ export class Mt5CloudBridge {
     if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}/.test(sym)) {
       const baseUnits = sym.startsWith("USD") ? notional : notional / entryPrice;
       const lots = baseUnits / 100_000;
-      return Number(Math.max(0.01, Math.min(100, Math.round(lots * 100) / 100)).toFixed(2));
+      const fxCeil = Math.max(0.01, Math.min(100, maxFxLots));
+      return Number(Math.max(0.01, Math.min(fxCeil, Math.round(lots * 100) / 100)).toFixed(2));
     }
 
     // 2. Or (XAUUSD, GOLD) -> 1 lot standard = 100 onces troy
@@ -655,6 +657,7 @@ input long   InpMagic       = 4080;
 CTrade trade;
 double gMyMasterId = 0.0;
 string gFailedIds  = "|";
+string gExecutedIds = "|";
 datetime gLastFailReset = 0;
 
 string gRejIds[12];
@@ -879,10 +882,12 @@ double NormalizeLots(const string sym, const double rawLots) {
 
 double ComputeBrokerSafeLots(const string sym, const double reqLots, const double notionalUsd, const ENUM_ORDER_TYPE oType, const double px) {
    double candidate = reqLots > 0.0 ? reqLots : 0.01;
-   double cSize = SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE);
-   if(notionalUsd > 0.0 && px > 0.0 && cSize > 0.0) {
-      double exactLots = notionalUsd / (px * cSize);
-      if(exactLots > 0.0) candidate = exactLots;
+   if(reqLots <= 0.0 && notionalUsd > 0.0 && px > 0.0) {
+      double cSize = SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE);
+      if(cSize > 0.0) {
+         double exactLots = notionalUsd / (px * cSize);
+         if(exactLots > 0.0) candidate = exactLots;
+      }
    }
    double lots = NormalizeLots(sym, candidate);
    double freeM = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
@@ -892,6 +897,34 @@ double ComputeBrokerSafeLots(const string sym, const double reqLots, const doubl
       lots = NormalizeLots(sym, scaled);
    }
    return lots;
+}
+
+void MarkIdExecuted(const string id) {
+   if(id == "") return;
+   if(StringFind(gExecutedIds, "|" + id + "|") >= 0) return;
+   if(StringLen(gExecutedIds) > 4000) {
+      int cut = StringFind(gExecutedIds, "|", 1500);
+      if(cut > 0) gExecutedIds = StringSubstr(gExecutedIds, cut);
+      else gExecutedIds = "|";
+   }
+   gExecutedIds += id + "|";
+}
+
+bool HasHistoricalDealForId(const string id) {
+   if(id == "") return false;
+   datetime fromT = TimeCurrent() - 14 * 86400;
+   datetime toT = TimeCurrent() + 3600;
+   if(!HistorySelect(fromT, toT)) return false;
+   int total = HistoryDealsTotal();
+   for(int i = total - 1; i >= 0; i--) {
+      ulong dTicket = HistoryDealGetTicket(i);
+      if(dTicket == 0) continue;
+      long dEntry = HistoryDealGetInteger(dTicket, DEAL_ENTRY);
+      if(dEntry != DEAL_ENTRY_IN && dEntry != DEAL_ENTRY_OUT && dEntry != DEAL_ENTRY_INOUT) continue;
+      string cmt = HistoryDealGetString(dTicket, DEAL_COMMENT);
+      if(cmt == id) return true;
+   }
+   return false;
 }
 
 bool HasOpenPositionForId(const string id) {
@@ -1079,6 +1112,12 @@ void WriteMt5StateToFile() {
          double dNet = HistoryDealGetDouble(dealTicket, DEAL_PROFIT) + HistoryDealGetDouble(dealTicket, DEAL_SWAP) + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
          long dTimeSec = (long)HistoryDealGetInteger(dealTicket, DEAL_TIME);
          string dCmt = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+         long dReasonCode = HistoryDealGetInteger(dealTicket, DEAL_REASON);
+         string dReasonStr = "OTHER";
+         if(dReasonCode == DEAL_REASON_SL) dReasonStr = "SL";
+         else if(dReasonCode == DEAL_REASON_TP) dReasonStr = "TP";
+         else if(dReasonCode == DEAL_REASON_EXPERT) dReasonStr = "EA";
+         else if(dReasonCode == DEAL_REASON_CLIENT || dReasonCode == DEAL_REASON_MOBILE || dReasonCode == DEAL_REASON_WEB) dReasonStr = "MANUAL";
          double dEntryPx = dExitPx;
          for(int k = d - 1; k >= 0; k--) {
             ulong inTicket = HistoryDealGetTicket(k);
@@ -1088,7 +1127,7 @@ void WriteMt5StateToFile() {
                double pxIn = HistoryDealGetDouble(inTicket, DEAL_PRICE);
                if(pxIn > 0.0) dEntryPx = pxIn;
                string inCmt = HistoryDealGetString(inTicket, DEAL_COMMENT);
-               if(inCmt != "" && dCmt == "") dCmt = inCmt;
+               if(inCmt != "" && (dCmt == "" || StringFind(dCmt, "[") == 0)) dCmt = inCmt;
                break;
             }
          }
@@ -1107,6 +1146,7 @@ void WriteMt5StateToFile() {
          json += "\\"entry\\":" + DoubleToString(dEntryPx, dDigits) + ",";
          json += "\\"exit\\":" + DoubleToString(dExitPx, dDigits) + ",";
          json += "\\"profit\\":" + DoubleToString(dNet, 2) + ",";
+         json += "\\"dealReason\\":\\"" + dReasonStr + "\\",";
          json += "\\"closedAt\\":" + IntegerToString((dTimeSec + tzOffsetSec) * 1000);
          json += "}";
       }
@@ -1202,10 +1242,15 @@ void OnTimer() {
       activeIds += id + "|";
 
       if(HasOpenPositionForId(id)) {
+         MarkIdExecuted(id);
          if(SyncOpenPositionStops(id, sl, tp)) stateDirty = true;
          continue;
       }
       if(StringFind(id, "MT5-") == 0) continue;
+      if(StringFind(gExecutedIds, "|" + id + "|") >= 0 || HasHistoricalDealForId(id)) {
+         MarkIdExecuted(id);
+         continue;
+      }
       if(StringFind(gFailedIds, "|" + id + "|") >= 0) continue;
 
       string realSym = ResolveBrokerSymbol(symRaw);
@@ -1238,11 +1283,13 @@ void OnTimer() {
          double slPx = (slDistRel > 0.0) ? NormalizeDouble(ask - MathMax(minDist, ask * slDistRel), digits) : 0.0;
          double tpPx = (tpDistRel > 0.0) ? NormalizeDouble(ask + MathMax(minDist, ask * tpDistRel), digits) : 0.0;
          if(trade.Buy(normLots, realSym, ask, slPx, tpPx, id)) {
+            MarkIdExecuted(id);
             stateDirty = true;
          } else {
             uint ret = trade.ResultRetcode();
             if(ret == TRADE_RETCODE_INVALID_STOPS || ret == 10016) {
                if(trade.Buy(normLots, realSym, ask, 0.0, 0.0, id)) {
+                  MarkIdExecuted(id);
                   ModifyPositionByComment(id, realSym, slPx, tpPx);
                   stateDirty = true;
                } else {
@@ -1263,11 +1310,13 @@ void OnTimer() {
          double slPx = (slDistRel > 0.0) ? NormalizeDouble(bid + MathMax(minDist, bid * slDistRel), digits) : 0.0;
          double tpPx = (tpDistRel > 0.0) ? NormalizeDouble(bid - MathMax(minDist, bid * tpDistRel), digits) : 0.0;
          if(trade.Sell(normLots, realSym, bid, slPx, tpPx, id)) {
+            MarkIdExecuted(id);
             stateDirty = true;
          } else {
             uint ret = trade.ResultRetcode();
             if(ret == TRADE_RETCODE_INVALID_STOPS || ret == 10016) {
                if(trade.Sell(normLots, realSym, bid, 0.0, 0.0, id)) {
+                  MarkIdExecuted(id);
                   ModifyPositionByComment(id, realSym, slPx, tpPx);
                   stateDirty = true;
                } else {

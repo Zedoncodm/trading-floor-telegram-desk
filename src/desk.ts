@@ -48,6 +48,7 @@ import { dayKey, isOvernight, isoWeek, localParts, ticketDay } from "./time.ts";
 import type {
   AgentId,
   AgentPromptConfig,
+  AgentSelfAuditEntry,
   Backtest,
   Binding,
   CloseReason,
@@ -1070,10 +1071,42 @@ export class TradingFloorDesk {
 
       // 3. Réconciliation 1:1 des positions ouvertes (Desk <-> MT5)
       const matchedPosTickets = new Set<number>();
-      const phantomIdsToRemove = new Set<string>();
+      const closedDealByPosId = new Map<string, NonNullable<LocalMt5State["closedDeals"]>[number]>();
+      for (const deal of mt5State.closedDeals ?? []) {
+        if (deal && deal.positionId) {
+          closedDealByPosId.set(String(deal.positionId), deal);
+        }
+      }
       const openTickets = this.state.tickets.filter((t) => t.status === "open");
+      let closedInPass = false;
 
       for (const t of openTickets) {
+        const closedForTrackedPos = t.mt5PositionId ? closedDealByPosId.get(String(t.mt5PositionId)) : undefined;
+        if (closedForTrackedPos) {
+          const dReason = closedForTrackedPos.dealReason;
+          const mappedReason: CloseReason =
+            dReason === "MANUAL"
+              ? "flatten"
+              : dReason === "SL"
+                ? "invalidation"
+                : dReason === "TP"
+                  ? "target"
+                  : closedForTrackedPos.profit >= 0
+                    ? "target"
+                    : "invalidation";
+          await this.closeOpenTicket(
+            t,
+            closedForTrackedPos.exit || t.fillPrice || t.entry,
+            mappedReason,
+            closedForTrackedPos.closedAt || now,
+            closedForTrackedPos.profit,
+            dReason,
+          );
+          structuralChange = true;
+          closedInPass = true;
+          continue;
+        }
+
         const pos = mt5State.positions.find(
           (p) =>
             (p.id && p.id === t.id) ||
@@ -1091,9 +1124,13 @@ export class TradingFloorDesk {
           ) {
             telemetryChange = true;
           }
+          const isFirstBind = !t.mt5PositionId;
           t.mt5PositionId = ticketStr;
-          t.fillPrice = pos.entry;
-          t.entry = pos.entry;
+          if (isFirstBind || !t.fillPrice) {
+            t.fillPrice = pos.entry;
+            t.entry = pos.entry;
+            t.mt5Lots = pos.lots;
+          }
           const keepStricterBeSl =
             Boolean(t.hardSlSyncedAt && now - t.hardSlSyncedAt < 15_000) ||
             Boolean(t.breakEvenActive && pos.sl > 0 && (t.direction === "long" ? pos.sl < t.invalidation : pos.sl > t.invalidation));
@@ -1101,7 +1138,6 @@ export class TradingFloorDesk {
           if (pos.tp > 0) t.target = pos.tp;
           t.mt5CurrentPrice = pos.current;
           t.mt5Profit = pos.profit;
-          t.mt5Lots = pos.lots;
         } else if (t.mt5PositionId) {
           const exitPx = t.mt5CurrentPrice ?? markPriceOf(this.state, t.asset, t.fillPrice ?? t.entry);
           const hitTp = t.direction === "long" ? exitPx >= t.target * 0.9995 : exitPx <= t.target * 1.0005;
@@ -1116,6 +1152,7 @@ export class TradingFloorDesk {
             t.mt5Profit,
           );
           structuralChange = true;
+          closedInPass = true;
         } else if (mt5State.tradeAllowed && !(t.asset.toUpperCase().endsWith("USDT") && mt5State.cryptoSupported === false)) {
           const rej = (mt5State.rejectedOrders ?? []).find((r) => r.id === t.id);
           const ageMs = now - (t.filledAt ?? t.createdAt);
@@ -1155,8 +1192,8 @@ export class TradingFloorDesk {
         }
       }
 
-      if (phantomIdsToRemove.size > 0) {
-        this.state.tickets = this.state.tickets.filter((t) => !phantomIdsToRemove.has(t.id));
+      if (closedInPass) {
+        this.pushLocalMt5BridgePayload(now);
       }
 
       // Importer les positions présentes sur MT5 mais absentes du Desk
@@ -1165,9 +1202,10 @@ export class TradingFloorDesk {
         const importId = pos.id && pos.id.trim() ? pos.id.trim() : `MT5-${pos.ticket}`;
         const existingOrRecent = this.state.tickets.find(
           (x) =>
-            x.id === importId ||
+            (x.id === importId &&
+              (x.status === "open" || (x.status === "closed" && x.closedAt && now - x.closedAt < 60_000))) ||
             (x.mt5PositionId === String(pos.ticket) &&
-              (x.status === "open" || (x.closedAt && now - x.closedAt < 20_000))),
+              (x.status === "open" || (x.closedAt && now - x.closedAt < 60_000))),
         );
         if (existingOrRecent) continue;
 
@@ -1191,8 +1229,25 @@ export class TradingFloorDesk {
         );
         if (existing) {
           if (existing.status === "open") {
-            const closeReason: CloseReason = deal.profit >= 0 ? "target" : "invalidation";
-            await this.closeOpenTicket(existing, deal.exit || existing.fillPrice || existing.entry, closeReason, deal.closedAt || now, deal.profit);
+            const closeReason: CloseReason =
+              deal.dealReason === "MANUAL"
+                ? "flatten"
+                : deal.dealReason === "SL"
+                  ? "invalidation"
+                  : deal.dealReason === "TP"
+                    ? "target"
+                    : deal.profit >= 0
+                      ? "target"
+                      : "invalidation";
+            await this.closeOpenTicket(
+              existing,
+              deal.exit || existing.fillPrice || existing.entry,
+              closeReason,
+              deal.closedAt || now,
+              deal.profit,
+              deal.dealReason,
+            );
+            this.pushLocalMt5BridgePayload(now);
             structuralChange = true;
           } else if (
             existing.status === "closed" &&
@@ -2958,11 +3013,33 @@ export class TradingFloorDesk {
     });
   }
 
+  private recordSelfAuditEntry(entry: AgentSelfAuditEntry, now = Date.now()): boolean {
+    const existing = this.state.selfAuditHistory ?? [];
+    const recentDup = existing.some(
+      (x) =>
+        x.symbol === entry.symbol &&
+        x.outcome === entry.outcome &&
+        x.flawsIdentified[0] === entry.flawsIdentified[0] &&
+        now - x.at < 60_000,
+    );
+    if (recentDup && entry.outcome === "PRE_TRADE_SELF_VETO") return false;
+    this.state.selfAuditHistory = [...existing, entry].slice(-80);
+    return true;
+  }
+
   private nextTicketId(now: number): string {
     const d = ticketDay(now, this.cfg.timeZone);
-    this.state.seq = this.state.seqDay === d ? this.state.seq + 1 : 1;
+    const prefix = `TF-${d}-`;
+    let maxUsed = this.state.seqDay === d ? this.state.seq : 0;
+    for (const t of this.state.tickets) {
+      if (t.id.startsWith(prefix)) {
+        const n = Number.parseInt(t.id.slice(prefix.length), 10);
+        if (Number.isFinite(n) && n > maxUsed) maxUsed = n;
+      }
+    }
+    this.state.seq = maxUsed + 1;
     this.state.seqDay = d;
-    return `TF-${d}-${String(this.state.seq).padStart(2, "0")}`;
+    return `${prefix}${String(this.state.seq).padStart(2, "0")}`;
   }
 
   async runDeskScan(trigger: "manual" | "scheduled" | "initial" = "manual"): Promise<void> {
@@ -3149,6 +3226,29 @@ export class TradingFloorDesk {
             `[MACRO FILTER] ${candidate.symbol} ${idea.dir.toUpperCase()} bloqué (${macroEval.reason} contre la tendance fondamentale).`,
             "plain",
           );
+          continue;
+        }
+
+        // AUTO-REMISE EN QUESTION COGNITIVE PRÉ-TRADE (Structure de prix, anti-chasing post-TP & anti-obstination post-perte)
+        const preCandPrice = idea.customEntry ?? candidate.primary.price;
+        const preBars = (candidate.bars15m?.length ?? 0) >= 25 ? candidate.bars15m! : (candidate.bars4h ?? []);
+        const preQ = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+          state: this.state,
+          symbol: candidate.symbol,
+          direction: idea.dir,
+          entry: preCandPrice,
+          stop: preCandPrice * (idea.dir === "long" ? 0.99 : 1.01),
+          target: preCandPrice * (idea.dir === "long" ? 1.02 : 0.98),
+          bars: preBars,
+          marketProfile: candidate.marketProfile,
+          atr: candidate.atr || preCandPrice * 0.002,
+          now,
+        });
+        if (!preQ.pass) {
+          if (preQ.auditEntry && this.recordSelfAuditEntry(preQ.auditEntry, now)) {
+            emitPulse(this.state, preQ.vetoAgent, "reviewer", "veto", `AUTO-CRITIQUE ${candidate.symbol}`, candidate.symbol, now);
+            await this.say(preQ.vetoAgent, preQ.selfQuestioningLog, "veto");
+          }
           continue;
         }
 
@@ -3556,6 +3656,36 @@ export class TradingFloorDesk {
         return;
       }
 
+      // Auto-Critique Finale avec SL/TP exacts + Ajustement autonome d'échelle de risque post-audit
+      const finalSelfQ = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+        state: this.state,
+        symbol: chosen.symbol,
+        direction: activeDir,
+        entry,
+        stop: finalStop,
+        target: finalTarget,
+        bars: selectedBars,
+        marketProfile: chosen.marketProfile,
+        atr: localAtr || chosen.atr || entry * 0.002,
+        now,
+      });
+      if (!finalSelfQ.pass) {
+        if (finalSelfQ.auditEntry) {
+          this.recordSelfAuditEntry(finalSelfQ.auditEntry, now);
+        }
+        setAgentActivity(this.state, finalSelfQ.vetoAgent, "veto", `Auto-Critique (${chosen.symbol})`, now, { asset: chosen.symbol });
+        emitPulse(this.state, finalSelfQ.vetoAgent, "reviewer", "veto", `SELF-VETO ${chosen.symbol}`, chosen.symbol, now);
+        await this.say(finalSelfQ.vetoAgent, finalSelfQ.selfQuestioningLog, "veto");
+        return;
+      }
+      if (finalSelfQ.riskScaleMultiplier < 0.99) {
+        sized.notional = Number(Math.max(100, sized.notional * finalSelfQ.riskScaleMultiplier).toFixed(2));
+        sized.qty = Number((sized.notional / Math.max(entry, 1e-9)).toFixed(6));
+        sized.riskUsd = Number((sized.riskUsd * finalSelfQ.riskScaleMultiplier).toFixed(2));
+        sized.riskPct = sized.riskUsd / Math.max(currentEquity(this.state), 1);
+        sized.exposurePct = sized.notional / Math.max(currentEquity(this.state), 1);
+      }
+
       const id = this.nextTicketId(now);
       const currentRegime = selectedIdea?.regime ?? this.grpo.classifyRegime({
         ret24h: chosen.ret24h ?? 0,
@@ -3597,7 +3727,7 @@ export class TradingFloorDesk {
         kellyRiskPct: sized.riskPct,
         notional: sized.notional,
         qty: sized.qty,
-        mt5Lots: Mt5CloudBridge.computeAssetLots(chosen.symbol, sized.notional, entry, sized.qty),
+        mt5Lots: Mt5CloudBridge.computeAssetLots(chosen.symbol, sized.notional, entry, sized.qty, isKamikazeTrade ? 25 : 5),
         riskUsd: sized.riskUsd,
         riskPct: sized.riskPct,
         exposurePct: sized.exposurePct,
@@ -3661,6 +3791,7 @@ export class TradingFloorDesk {
       if (isFullAuto) {
         await this.approveTicket(ticket.id);
       }
+      this.store.save(this.state);
     } finally {
       this.busy = false;
       this.broadcast();
@@ -3813,6 +3944,7 @@ export class TradingFloorDesk {
     reason: CloseReason,
     now = Date.now(),
     realizedOverridePnl?: number,
+    mt5DealReason?: "SL" | "TP" | "MANUAL" | "EA" | "OTHER",
   ): Promise<void> {
     if (ticket.status !== "open") return;
     const rawPnl = ticketPnlAt(ticket, exitPrice);
@@ -4000,8 +4132,33 @@ export class TradingFloorDesk {
       ticket.id,
     );
     this.appendTradePostMortem(ticket, reason, exitPrice, netPnl, now);
+
+    // Boucle Autonome d'Auto-Remise en Question, Diagnostic & Correctif Immédiat des Agents
+    const selfAudit = TraderSkillsEngine.runPostTradeSelfAudit({
+      ticket,
+      exitPrice,
+      netPnl,
+      reason,
+      mt5DealReason,
+      bars: siblingBars,
+      marketProfile: this.state.marketProfiles?.[ticket.asset],
+      settings: this.state.settings,
+      now,
+    });
+    if (!this.state.structuralGates) {
+      this.state.structuralGates = {};
+    }
+    this.state.structuralGates[ticket.asset] = selfAudit.structuralGate;
+    this.recordSelfAuditEntry(selfAudit.auditEntry, now);
+    if (Object.keys(selfAudit.settingsPatch).length > 0) {
+      this.state.settings = { ...this.state.settings, ...selfAudit.settingsPatch };
+    }
+    emitPulse(this.state, "reviewer", "strategist", "log", `AUTO-AUDIT ${ticket.asset}`, ticket.asset, now);
+    await this.say("reviewer", selfAudit.chatNarrative, netPnl < 0 ? "veto" : "report", ticket.id);
+
     this.recordEquityPoint(now);
     this.pushLocalMt5BridgePayload(now);
+    this.store.save(this.state);
   }
 
   readTradePostMortems(limit = 50): PostMortemLogEntry[] {
@@ -4442,6 +4599,30 @@ export class TradingFloorDesk {
           targetPrice = dir === "long" ? livePx + d : livePx - d;
         }
 
+        const hftSelfQ = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+          state: this.state,
+          symbol: focusSym,
+          direction: dir,
+          entry: livePx,
+          stop: stopPrice,
+          target: targetPrice,
+          bars,
+          marketProfile: mp,
+          atr: stopDist,
+          allowPostTpContinuation: Boolean(this.state.settings?.strictQuotaMode),
+          now,
+        });
+        if (!hftSelfQ.pass) {
+          if (hftSelfQ.auditEntry && this.recordSelfAuditEntry(hftSelfQ.auditEntry, now)) {
+            emitPulse(this.state, hftSelfQ.vetoAgent, "reviewer", "veto", `AUTO-CRITIQUE HFT ${focusSym}`, focusSym, now);
+            await this.say(hftSelfQ.vetoAgent, hftSelfQ.selfQuestioningLog, "veto");
+          }
+          break;
+        }
+        const scaledHftNotional = Number(Math.max(100, notional * hftSelfQ.riskScaleMultiplier).toFixed(2));
+        const scaledHftQty = Number((scaledHftNotional / Math.max(livePx, 1e-9)).toFixed(6));
+        const scaledHftRisk = Number((riskUsdBudget * hftSelfQ.riskScaleMultiplier).toFixed(2));
+
         const fastWin = {
           label: "HFT Focus 1m",
           bars: Math.max(60, bars.length),
@@ -4472,13 +4653,13 @@ export class TradingFloorDesk {
           liqPrice: dir === "long" ? livePx * Math.max(0.05, 1 - 1 / targetLev) : livePx * (1 + 1 / targetLev),
           regime: "VOLATILE_BREAKOUT",
           dsrScore: 0.68,
-          kellyRiskPct: Number((riskUsdBudget / eq).toFixed(4)),
-          notional,
-          qty,
-          mt5Lots: Mt5CloudBridge.computeAssetLots(focusSym, notional, livePx, qty),
-          riskUsd: Number(riskUsdBudget.toFixed(2)),
-          riskPct: Number((riskUsdBudget / eq).toFixed(4)),
-          exposurePct: Number((notional / eq).toFixed(4)),
+          kellyRiskPct: Number((scaledHftRisk / eq).toFixed(4)),
+          notional: scaledHftNotional,
+          qty: scaledHftQty,
+          mt5Lots: Mt5CloudBridge.computeAssetLots(focusSym, scaledHftNotional, livePx, scaledHftQty, targetLev >= 100 ? 25 : 5),
+          riskUsd: scaledHftRisk,
+          riskPct: Number((scaledHftRisk / eq).toFixed(4)),
+          exposurePct: Number((scaledHftNotional / eq).toFixed(4)),
           binding: "risk",
           producedBy: PRODUCED_BY,
           backtest: {

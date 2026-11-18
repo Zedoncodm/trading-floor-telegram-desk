@@ -639,6 +639,42 @@ export type DeskState = {
     rejectedOrders?: Array<{ id: string; symbol: string; reason: string }>;
   };
   traderSkills?: TraderSkillsSummary;
+  selfAuditHistory?: AgentSelfAuditEntry[];
+  structuralGates?: Record<string, AssetStructuralGate>;
+};
+
+export type AgentSelfAuditEntry = {
+  id: string;
+  at: number;
+  atIso: string;
+  ticketId: string;
+  symbol: string;
+  direction: Direction;
+  outcome: "WIN_TP" | "LOSS_SL" | "HUMAN_MANUAL_CUT" | "PRE_TRADE_SELF_VETO";
+  pnl: number;
+  flawsIdentified: string[];
+  selfQuestioningSummary: string;
+  rootCauseDiagnosis: string;
+  autonomousSolutionApplied: string;
+  structuralReentryRule: string;
+  parameterPatch?: Record<string, string | number>;
+};
+
+export type AssetStructuralGate = {
+  symbol: string;
+  lastDirection: Direction;
+  lastExitPrice: number;
+  lastEntryPrice: number;
+  lastPnl: number;
+  lastOutcome: "WIN_TP" | "LOSS_SL" | "HUMAN_MANUAL_CUT";
+  at: number;
+  requiredPullbackPrice?: number;
+  requiredBreakoutPrice?: number;
+  requireTrendAlignment: boolean;
+  requirePriceAboveEma20?: boolean;
+  requirePriceBelowEma20?: boolean;
+  riskScaleMultiplier: number;
+  reason: string;
 };
 
 export type TraderSkillsSummary = {

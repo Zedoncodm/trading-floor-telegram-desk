@@ -1,7 +1,12 @@
 import type {
+  AgentSelfAuditEntry,
+  AssetStructuralGate,
+  CloseReason,
+  DeskRuntimeSettings,
   DeskState,
   Direction,
   Kline,
+  MarketProfileSummary,
   MarketSnapshot,
   Ticket,
   TraderSkillsSummary,
@@ -591,6 +596,441 @@ export class TraderSkillsEngine {
         bias: v.bias,
       })),
       updatedAt: now,
+    };
+  }
+
+  /** Calcul léger EMA20 / EMA50 / RSI14 / ATR14 pour l'auto-critique cognitive pré et post-trade */
+  static computeQuickTech(bars: Kline[], refPrice: number): {
+    close: number;
+    open: number;
+    ema20: number;
+    ema50: number;
+    rsi14: number;
+    atr14: number;
+    trendBias: "bull" | "bear" | "neutral";
+    lastCandleBull: boolean;
+    lastCandleBear: boolean;
+  } {
+    const valid = bars.filter((b) => Number.isFinite(b.close) && b.close > 0);
+    if (!valid.length) {
+      return {
+        close: refPrice,
+        open: refPrice,
+        ema20: refPrice,
+        ema50: refPrice,
+        rsi14: 50,
+        atr14: refPrice * 0.002,
+        trendBias: "neutral",
+        lastCandleBull: false,
+        lastCandleBear: false,
+      };
+    }
+    const closes = valid.map((b) => b.close);
+    const calcEma = (period: number) => {
+      const k = 2 / (period + 1);
+      let ema = closes[0];
+      for (let i = 1; i < closes.length; i++) {
+        ema = closes[i] * k + ema * (1 - k);
+      }
+      return ema;
+    };
+    const ema20 = calcEma(Math.min(20, closes.length));
+    const ema50 = calcEma(Math.min(50, closes.length));
+
+    let gains = 0;
+    let losses = 0;
+    const rsiSlice = closes.slice(-15);
+    for (let i = 1; i < rsiSlice.length; i++) {
+      const diff = rsiSlice[i] - rsiSlice[i - 1];
+      if (diff >= 0) gains += diff;
+      else losses += Math.abs(diff);
+    }
+    const avgG = gains / Math.max(1, rsiSlice.length - 1);
+    const avgL = losses / Math.max(1, rsiSlice.length - 1);
+    const rsi14 = avgL <= 1e-9 ? (avgG > 0 ? 78 : 50) : Number((100 - 100 / (1 + avgG / avgL)).toFixed(1));
+
+    const atrSlice = valid.slice(-14);
+    const atr14 =
+      atrSlice.reduce((s, b) => s + Math.max(0, b.high - b.low), 0) / Math.max(1, atrSlice.length);
+
+    const last = valid[valid.length - 1];
+    const close = refPrice > 0 ? refPrice : last.close;
+    let trendBias: "bull" | "bear" | "neutral" = "neutral";
+    if (ema20 > ema50 * 1.0002 && close >= ema20 * 0.9992) trendBias = "bull";
+    else if (ema20 < ema50 * 0.9998 && close <= ema20 * 1.0008) trendBias = "bear";
+
+    return {
+      close,
+      open: last.open,
+      ema20,
+      ema50,
+      rsi14,
+      atr14: atr14 > 0 ? atr14 : close * 0.002,
+      trendBias,
+      lastCandleBull: last.close > last.open,
+      lastCandleBear: last.close < last.open,
+    };
+  }
+
+  /** Formatteur lisible adapté Forex/Crypto */
+  private static fmtPrice(v: number): string {
+    if (!Number.isFinite(v)) return "0";
+    if (Math.abs(v) < 5) return v.toFixed(5);
+    if (Math.abs(v) < 200) return v.toFixed(3);
+    return v.toFixed(2);
+  }
+
+  /**
+   * Auto-Audit Post-Trade & Résolution Autonome :
+   * Dès qu'un trade se clôture (TP, SL ou coupure manuelle de l'opérateur sur MT5),
+   * les agents s'auto-questionnent, identifient les défauts de décision, posent une porte structurelle
+   * basée sur la structure de prix (JAMAIS un simple timer), et corrigent leurs propres paramètres.
+   */
+  static runPostTradeSelfAudit(params: {
+    ticket: Ticket;
+    exitPrice: number;
+    netPnl: number;
+    reason: CloseReason;
+    mt5DealReason?: "SL" | "TP" | "MANUAL" | "EA" | "OTHER";
+    bars: Kline[];
+    marketProfile?: MarketProfileSummary;
+    settings: DeskRuntimeSettings;
+    now?: number;
+  }): {
+    auditEntry: AgentSelfAuditEntry;
+    structuralGate: AssetStructuralGate;
+    settingsPatch: Partial<DeskRuntimeSettings>;
+    chatNarrative: string;
+  } {
+    const { ticket, exitPrice, netPnl, reason, mt5DealReason, bars, marketProfile, settings } = params;
+    const now = params.now ?? Date.now();
+    const entry = ticket.fillPrice ?? ticket.entry;
+    const tech = TraderSkillsEngine.computeQuickTech(bars, exitPrice);
+    const atr = Math.max(tech.atr14, entry * 0.0012);
+
+    const isManualCut =
+      netPnl < 0 && (mt5DealReason === "MANUAL" || reason === "flatten");
+    const outcome: AssetStructuralGate["lastOutcome"] =
+      isManualCut ? "HUMAN_MANUAL_CUT" : netPnl >= 0 ? "WIN_TP" : "LOSS_SL";
+
+    const flawsIdentified: string[] = [];
+    if (isManualCut) flawsIdentified.push("HUMAN_EMERGENCY_CUT");
+
+    const counterTrend =
+      (ticket.direction === "long" && tech.ema20 < tech.ema50 && entry < tech.ema20) ||
+      (ticket.direction === "short" && tech.ema20 > tech.ema50 && entry > tech.ema20);
+    if (counterTrend) flawsIdentified.push("COUNTER_TREND_ENTRY");
+
+    if (
+      marketProfile &&
+      ((ticket.direction === "long" && entry >= marketProfile.vah - atr * 0.25) ||
+        (ticket.direction === "short" && entry <= marketProfile.val + atr * 0.25))
+    ) {
+      flawsIdentified.push("EXHAUSTION_CHASING");
+    }
+
+    const stopDist = Math.abs(entry - ticket.invalidation);
+    const targetDist = Math.abs(ticket.target - entry);
+    if (
+      (stopDist > 0 && targetDist / stopDist < 1.35) ||
+      (netPnl < 0 && Math.abs(netPnl) > Math.max(30, (ticket.riskUsd || 50) * 1.15))
+    ) {
+      flawsIdentified.push("RR_ASYMMETRY_DEFECT");
+    }
+
+    if ((ticket.mt5Lots ?? 0) >= 5.0 || ticket.exposurePct > 2.5 || netPnl <= -300) {
+      flawsIdentified.push("OVERSIZED_LOT_EXPOSURE");
+    }
+
+    if (netPnl < 0 && flawsIdentified.length === 0) {
+      flawsIdentified.push("PREMATURE_ENTRY_BEFORE_STRUCTURE");
+    }
+
+    const settingsPatch: Partial<DeskRuntimeSettings> = {};
+    const solutionsApplied: string[] = [];
+    let requiredPullbackPrice: number | undefined;
+    let requiredBreakoutPrice: number | undefined;
+    let riskScaleMultiplier = 1.0;
+
+    if (outcome === "WIN_TP") {
+      // Après un TP : interdiction de racheter le sommet / revendre le creux au même prix !
+      // Exige un repli de valeur >= 0.60 * ATR (vers EMA20/POC) OU une nouvelle expansion franche >= 0.45 * ATR.
+      if (ticket.direction === "long") {
+        requiredPullbackPrice = Number(Math.min(exitPrice - atr * 0.6, tech.ema20).toFixed(5));
+        requiredBreakoutPrice = Number((exitPrice + atr * 0.45).toFixed(5));
+      } else {
+        requiredPullbackPrice = Number(Math.max(exitPrice + atr * 0.6, tech.ema20).toFixed(5));
+        requiredBreakoutPrice = Number((exitPrice - atr * 0.45).toFixed(5));
+      }
+      solutionsApplied.push(
+        `Porte anti-poursuite post-TP sur ${ticket.asset} ${ticket.direction.toUpperCase()} : exige repli vers ${TraderSkillsEngine.fmtPrice(requiredPullbackPrice)} ou nouvelle cassure nette au-delà de ${TraderSkillsEngine.fmtPrice(requiredBreakoutPrice)} (aucune réouverture au sommet ${TraderSkillsEngine.fmtPrice(exitPrice)}).`,
+      );
+      if (flawsIdentified.includes("OVERSIZED_LOT_EXPOSURE")) {
+        solutionsApplied.push(`Taille Forex plafonnée à <= 5.0 lots sur ${ticket.asset} pour contenir la variance.`);
+      }
+    } else {
+      // Après perte ou coupure manuelle : la thèse est structurellement invalidée.
+      riskScaleMultiplier = isManualCut ? 0.55 : flawsIdentified.includes("OVERSIZED_LOT_EXPOSURE") ? 0.60 : 0.75;
+      if (ticket.direction === "long") {
+        requiredPullbackPrice = Number(Math.min(exitPrice - atr * 1.1, marketProfile?.val ?? exitPrice - atr).toFixed(5));
+        requiredBreakoutPrice = Number(Math.max(tech.ema20, marketProfile?.poc ?? tech.ema20).toFixed(5));
+      } else {
+        requiredPullbackPrice = Number(Math.max(exitPrice + atr * 1.1, marketProfile?.vah ?? exitPrice + atr).toFixed(5));
+        requiredBreakoutPrice = Number(Math.min(tech.ema20, marketProfile?.poc ?? tech.ema20).toFixed(5));
+      }
+      if ((settings.trainedRewardR ?? 1.6) < 2.0) {
+        const nextRr = Number(Math.min(2.4, Math.max(1.85, (settings.trainedRewardR ?? 1.6) + 0.25)).toFixed(2));
+        settingsPatch.trainedRewardR = nextRr;
+        solutionsApplied.push(`Ratio R:R cible relevé automatiquement à ${nextRr}R.`);
+      }
+      if (flawsIdentified.includes("COUNTER_TREND_ENTRY") && (settings.fixedStopAtr ?? 1.35) < 1.5) {
+        const nextAtr = Number(Math.min(1.8, (settings.fixedStopAtr ?? 1.35) + 0.15).toFixed(2));
+        settingsPatch.fixedStopAtr = nextAtr;
+        solutionsApplied.push(`Stop ATR élargi à ${nextAtr}x pour éviter le bruit intra-bougie.`);
+      }
+      solutionsApplied.push(
+        `Verrouillage structurel ${ticket.asset} ${ticket.direction.toUpperCase()} : réouverture interdite tant que le prix n'a pas reconquis ${ticket.direction === "long" ? "EMA20/POC" : "sous EMA20/POC"} (${TraderSkillsEngine.fmtPrice(requiredBreakoutPrice)}) avec tendance alignée (risque réduit à ${Math.round(riskScaleMultiplier * 100)}%).`,
+      );
+    }
+
+    const structuralGate: AssetStructuralGate = {
+      symbol: ticket.asset,
+      lastDirection: ticket.direction,
+      lastExitPrice: exitPrice,
+      lastEntryPrice: entry,
+      lastPnl: Number(netPnl.toFixed(2)),
+      lastOutcome: outcome,
+      at: now,
+      requiredPullbackPrice,
+      requiredBreakoutPrice,
+      requireTrendAlignment: true,
+      requirePriceAboveEma20: outcome !== "WIN_TP" && ticket.direction === "long",
+      requirePriceBelowEma20: outcome !== "WIN_TP" && ticket.direction === "short",
+      riskScaleMultiplier,
+      reason: solutionsApplied.join(" | "),
+    };
+
+    const dirFr = ticket.direction === "long" ? "LONG (Achat)" : "SHORT (Vente)";
+    const selfQuestioningSummary =
+      outcome === "WIN_TP"
+        ? `Gain validé sur ${ticket.asset} ${dirFr} (${TraderSkillsEngine.fmtPrice(entry)} -> ${TraderSkillsEngine.fmtPrice(exitPrice)}, +${netPnl.toFixed(2)}€). Question Stratège : le mouvement vient de payer notre cible ; acheter immédiatement ici au même prix serait de la poursuite sans valeur. Nous attendons un repli <= ${TraderSkillsEngine.fmtPrice(requiredPullbackPrice ?? exitPrice)} ou une nouvelle cassure >= ${TraderSkillsEngine.fmtPrice(requiredBreakoutPrice ?? exitPrice)}.`
+        : isManualCut
+          ? `Remise en question critique (${ticket.asset} ${dirFr}) : l'opérateur a dû couper manuellement à ${netPnl.toFixed(2)}€ (${TraderSkillsEngine.fmtPrice(entry)} -> ${TraderSkillsEngine.fmtPrice(exitPrice)}). Pourquoi les agents sont-ils entrés ici ? Défauts détectés : ${flawsIdentified.join(", ")}.`
+          : `Auto-critique suite au SL sur ${ticket.asset} ${dirFr} (${netPnl.toFixed(2)}€ @ ${TraderSkillsEngine.fmtPrice(exitPrice)}). Défauts détectés : ${flawsIdentified.join(", ")}.`;
+
+    const rootCauseDiagnosis =
+      outcome === "WIN_TP"
+        ? "Mouvement initial arrivé sur prise de profit — risque élevé d'acheter l'épuisement en cas de réouverture instantanée."
+        : [
+            flawsIdentified.includes("HUMAN_EMERGENCY_CUT") ? "Désaccord humain / perte excessive stoppée manuellement" : null,
+            flawsIdentified.includes("COUNTER_TREND_ENTRY") ? `Entrée à contre-tendance (EMA20=${TraderSkillsEngine.fmtPrice(tech.ema20)} vs EMA50=${TraderSkillsEngine.fmtPrice(tech.ema50)})` : null,
+            flawsIdentified.includes("OVERSIZED_LOT_EXPOSURE") ? `Exposition trop lourde (${ticket.mt5Lots ?? "?"} lots)` : null,
+            flawsIdentified.includes("RR_ASYMMETRY_DEFECT") ? "Asymétrie R:R insuffisante" : null,
+            flawsIdentified.includes("EXHAUSTION_CHASING") ? "Entrée proche d'un extrême VAH/VAL" : null,
+            flawsIdentified.includes("PREMATURE_ENTRY_BEFORE_STRUCTURE") ? "Entrée anticipée avant validation structurelle complète" : null,
+          ]
+            .filter(Boolean)
+            .join(" + ");
+
+    const parameterPatchRecord: Record<string, string | number> = {};
+    if (settingsPatch.trainedRewardR !== undefined) parameterPatchRecord.trainedRewardR = settingsPatch.trainedRewardR;
+    if (settingsPatch.fixedStopAtr !== undefined) parameterPatchRecord.fixedStopAtr = settingsPatch.fixedStopAtr;
+    parameterPatchRecord[`riskScale:${ticket.asset}`] = riskScaleMultiplier;
+
+    const auditEntry: AgentSelfAuditEntry = {
+      id: `AUDIT-${new Date(now).toISOString().slice(11, 19).replace(/:/g, "")}-${ticket.id}`,
+      at: now,
+      atIso: new Date(now).toISOString(),
+      ticketId: ticket.id,
+      symbol: ticket.asset,
+      direction: ticket.direction,
+      outcome,
+      pnl: Number(netPnl.toFixed(2)),
+      flawsIdentified,
+      selfQuestioningSummary,
+      rootCauseDiagnosis,
+      autonomousSolutionApplied: solutionsApplied.join(" "),
+      structuralReentryRule: structuralGate.reason,
+      parameterPatch: parameterPatchRecord,
+    };
+
+    const chatNarrative = [
+      `🧠 [AUTO-AUDIT & REMISE EN QUESTION · ${ticket.id} ${ticket.asset}]`,
+      `• Constat (${outcome}) : ${selfQuestioningSummary}`,
+      `• Cause racine : ${rootCauseDiagnosis}`,
+      `• Solution autonome appliquée : ${auditEntry.autonomousSolutionApplied}`,
+    ].join("\n");
+
+    return {
+      auditEntry,
+      structuralGate,
+      settingsPatch,
+      chatNarrative,
+    };
+  }
+
+  /**
+   * Auto-Remise en Question Pré-Trade (zéro timer — pure structure de prix & cohérence) :
+   * Empêche les agents de racheter un sommet post-TP, de réouvrir obstinément un trade perdant
+   * dans la même direction tant que la structure EMA20/POC ne s'est pas retournée, ou de valider un R:R cassé.
+   */
+  static evaluatePreTradeSelfQuestioning(params: {
+    state: DeskState;
+    symbol: string;
+    direction: Direction;
+    entry: number;
+    stop: number;
+    target: number;
+    bars: Kline[];
+    marketProfile?: MarketProfileSummary;
+    atr: number;
+    allowPostTpContinuation?: boolean;
+    now?: number;
+  }): {
+    pass: boolean;
+    vetoAgent: "strategist" | "risk" | "reviewer";
+    flawCode?: string;
+    selfQuestioningLog: string;
+    riskScaleMultiplier: number;
+    auditEntry?: AgentSelfAuditEntry;
+  } {
+    const { state, symbol, direction, entry, stop, target, bars, marketProfile, atr, allowPostTpContinuation } = params;
+    const now = params.now ?? Date.now();
+    const tech = TraderSkillsEngine.computeQuickTech(bars, entry);
+    const atrSafe = Math.max(atr, tech.atr14, entry * 0.0005);
+    const gate = state.structuralGates?.[symbol];
+    const riskScaleMultiplier = gate ? gate.riskScaleMultiplier : 1.0;
+
+    const buildVeto = (
+      vetoAgent: "strategist" | "risk" | "reviewer",
+      flawCode: string,
+      questionLog: string,
+      rootCause: string,
+      solution: string,
+    ) => ({
+      pass: false,
+      vetoAgent,
+      flawCode,
+      selfQuestioningLog: questionLog,
+      riskScaleMultiplier,
+      auditEntry: {
+        id: `VETO-${new Date(now).toISOString().slice(11, 19).replace(/:/g, "")}-${symbol}`,
+        at: now,
+        atIso: new Date(now).toISOString(),
+        ticketId: "PRE-TRADE",
+        symbol,
+        direction,
+        outcome: "PRE_TRADE_SELF_VETO" as const,
+        pnl: 0,
+        flawsIdentified: [flawCode],
+        selfQuestioningSummary: questionLog,
+        rootCauseDiagnosis: rootCause,
+        autonomousSolutionApplied: solution,
+        structuralReentryRule: gate?.reason ?? solution,
+      },
+    });
+
+    // Q1 : Anti-Poursuite Post-TP (pas de rachat du sommet juste après un TP, hors HFT pyramidal explicite)
+    if (!allowPostTpContinuation && gate && gate.lastOutcome === "WIN_TP" && gate.lastDirection === direction) {
+      const pulledBack =
+        direction === "long"
+          ? entry <= (gate.requiredPullbackPrice ?? gate.lastExitPrice - atrSafe * 0.6)
+          : entry >= (gate.requiredPullbackPrice ?? gate.lastExitPrice + atrSafe * 0.6);
+      const brokeOutFresh =
+        direction === "long"
+          ? entry >= (gate.requiredBreakoutPrice ?? gate.lastExitPrice + atrSafe * 0.45) && tech.trendBias === "bull"
+          : entry <= (gate.requiredBreakoutPrice ?? gate.lastExitPrice - atrSafe * 0.45) && tech.trendBias === "bear";
+      if (!pulledBack && !brokeOutFresh) {
+        const pbStr = TraderSkillsEngine.fmtPrice(gate.requiredPullbackPrice ?? gate.lastExitPrice - atrSafe * 0.6);
+        const boStr = TraderSkillsEngine.fmtPrice(gate.requiredBreakoutPrice ?? gate.lastExitPrice + atrSafe * 0.45);
+        return buildVeto(
+          "strategist",
+          "POST_TP_EXHAUSTION_CHASING",
+          `🧠 [AUTO-CRITIQUE PRÉ-TRADE · ${symbol}] Nous venons d'encaisser +${gate.lastPnl.toFixed(2)}€ en ${direction.toUpperCase()} @ ${TraderSkillsEngine.fmtPrice(gate.lastExitPrice)}. Réouvrir au même prix @ ${TraderSkillsEngine.fmtPrice(entry)} sans repli (<= ${pbStr}) ni nouvelle expansion (>= ${boStr}) reviendrait à chasser notre propre TP -> REJETÉ.`,
+          "Zone d'épuisement juste après prise de profit (aucune respiration du prix ni nouvel élan structurel).",
+          `Attendre un repli sain vers ${pbStr} ou une cassure confirmée ${boStr} avant de re-trader ${symbol} ${direction.toUpperCase()}.`,
+        );
+      }
+    }
+
+    // Q2 : Gate Structurelle Post-Perte / Coupure Manuelle (zéro obstination dans la même direction sans retournement prouvé)
+    const deepValueReversal =
+      gate && gate.lastDirection === direction
+        ? direction === "long"
+          ? entry <= gate.lastExitPrice - atrSafe * 1.1 && tech.rsi14 <= 34 && tech.lastCandleBull
+          : entry >= gate.lastExitPrice + atrSafe * 1.1 && tech.rsi14 >= 66 && tech.lastCandleBear
+        : false;
+
+    if (
+      gate &&
+      (gate.lastOutcome === "LOSS_SL" || gate.lastOutcome === "HUMAN_MANUAL_CUT") &&
+      gate.lastDirection === direction
+    ) {
+      const emaAligned =
+        direction === "long"
+          ? entry > tech.ema20 && tech.ema20 >= tech.ema50 * 0.9995 && tech.rsi14 >= 50
+          : entry < tech.ema20 && tech.ema20 <= tech.ema50 * 1.0005 && tech.rsi14 <= 50;
+      const pocReclaimed =
+        !marketProfile ||
+        (direction === "long" ? entry >= marketProfile.poc : entry <= marketProfile.poc);
+      if (!((emaAligned && pocReclaimed) || deepValueReversal)) {
+        return buildVeto(
+          "reviewer",
+          "STUBBORN_SAME_DIRECTION_REENTRY",
+          `🧠 [AUTO-CRITIQUE PRÉ-TRADE · ${symbol}] Notre précédent ${direction.toUpperCase()} a échoué (${gate.lastOutcome} ${gate.lastPnl.toFixed(2)}€ @ ${TraderSkillsEngine.fmtPrice(gate.lastExitPrice)}). Actuellement (${TraderSkillsEngine.fmtPrice(entry)}, EMA20=${TraderSkillsEngine.fmtPrice(tech.ema20)}, EMA50=${TraderSkillsEngine.fmtPrice(tech.ema50)}, RSI=${tech.rsi14}), la structure ne prouve aucun retournement -> refus de refaire la même erreur.`,
+          "Structure technique toujours défavorable après une perte/coupure manuelle (prix sous EMA20/POC ou momentum non retourné).",
+          `Exiger reconquête EMA20 (${TraderSkillsEngine.fmtPrice(tech.ema20)}) + POC et RSI ${direction === "long" ? ">= 50" : "<= 50"} (ou retournement extrême confirmé).`,
+        );
+      }
+    }
+
+    // Q3 : Cohérence Tendance (refus d'acheter une tendance baissière établie hors borne de range valide)
+    const strongTrendSpread = Math.abs(tech.ema20 - tech.ema50) / Math.max(entry, 1e-9) > 0.0012;
+    const isValidRangeMeanRev = Boolean(
+      marketProfile?.isRange &&
+        ((direction === "long" && entry <= marketProfile.poc) ||
+          (direction === "short" && entry >= marketProfile.poc)),
+    );
+    if (bars.length >= 30 && strongTrendSpread && !isValidRangeMeanRev && !deepValueReversal) {
+      if (direction === "long" && tech.trendBias === "bear" && tech.rsi14 > 32) {
+        return buildVeto(
+          "strategist",
+          "COUNTER_TREND_TRAP",
+          `🧠 [AUTO-CRITIQUE PRÉ-TRADE · ${symbol}] Proposition LONG @ ${TraderSkillsEngine.fmtPrice(entry)} bloquée : tendance baissière établie (EMA20 ${TraderSkillsEngine.fmtPrice(tech.ema20)} < EMA50 ${TraderSkillsEngine.fmtPrice(tech.ema50)}, RSI ${tech.rsi14}) sans signal de capitulation extrême.`,
+          "Tentative d'attraper un couteau qui tombe à contre-tendance.",
+          "Attendre soit un retournement haussier au-dessus d'EMA20, soit un setup SHORT dans le sens du flux.",
+        );
+      }
+      if (direction === "short" && tech.trendBias === "bull" && tech.rsi14 < 68) {
+        return buildVeto(
+          "strategist",
+          "COUNTER_TREND_TRAP",
+          `🧠 [AUTO-CRITIQUE PRÉ-TRADE · ${symbol}] Proposition SHORT @ ${TraderSkillsEngine.fmtPrice(entry)} bloquée : tendance haussière établie (EMA20 ${TraderSkillsEngine.fmtPrice(tech.ema20)} > EMA50 ${TraderSkillsEngine.fmtPrice(tech.ema50)}, RSI ${tech.rsi14}).`,
+          "Vente prématurée contre une tendance haussière active.",
+          "Attendre soit une cassure sous EMA20, soit un setup LONG sur repli.",
+        );
+      }
+    }
+
+    // Q4 : Asymétrie Gain/Risque nette minimale
+    const stopDist = Math.abs(entry - stop);
+    const targetDist = Math.abs(target - entry);
+    const rr = stopDist > 0 ? targetDist / stopDist : 0;
+    if (stopDist <= 0 || rr < 1.30) {
+      return buildVeto(
+        "risk",
+        "INVERTED_RR_SELF_VETO",
+        `🧠 [AUTO-CRITIQUE RISQUE · ${symbol}] Asymétrie R:R refusée (${rr.toFixed(2)}R < 1.30R : SL=${TraderSkillsEngine.fmtPrice(stop)} vs TP=${TraderSkillsEngine.fmtPrice(target)}). Un gain potentiel inférieur au risque n'est pas toléré.`,
+        "TP trop proche du prix d'entrée par rapport à la distance au Stop-Loss.",
+        "Recalculer la cible à >= 1.5x la distance du Stop ou écarter le setup.",
+      );
+    }
+
+    return {
+      pass: true,
+      vetoAgent: "strategist",
+      selfQuestioningLog: `Auto-vérification validée sur ${symbol} ${direction.toUpperCase()} (R:R=${rr.toFixed(2)}, RSI=${tech.rsi14}, Échelle risque=${Math.round(riskScaleMultiplier * 100)}%).`,
+      riskScaleMultiplier,
     };
   }
 }

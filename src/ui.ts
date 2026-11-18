@@ -2026,6 +2026,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <div class="glass-card" style="padding:14px;margin-top:12px">
       <div class="card-hdr" style="margin-bottom:8px">
+        <span class="card-title">Auto-Remise en Question, Portes Structurelles &amp; Correctifs Autonomes des Agents</span>
+        <span id="revSelfAuditCount" class="chip mono" style="font-size:10.5px">0 audits</span>
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--fg-2);margin-bottom:5px">Règles Structurelles Actives par Actif (Sans Timer · Basées Prix / EMA20 / POC)</div>
+        <div id="revStructuralGatesHost" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;font-size:11px"></div>
+      </div>
+      <div style="border-top:1px solid var(--border);padding-top:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--fg-2);margin-bottom:6px">Journal Cognitif : Problème Détecté -> Cause Racine -> Solution Auto-Appliquée</div>
+        <div id="revSelfAuditHost" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;font-size:11.5px"></div>
+      </div>
+    </div>
+
+    <div class="glass-card" style="padding:14px;margin-top:12px">
+      <div class="card-hdr" style="margin-bottom:8px">
         <span class="card-title">Pack 15 Skills Actifs — Jakeschincariol Trader-Skill &amp; Day-Trader-Skill</span>
         <span id="revSkillsBadge" class="chip mono" style="font-size:10.5px">15 / 15 ACTIFS</span>
       </div>
@@ -8386,6 +8401,57 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             return '<div style="padding:7px 9px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid var(--border)">' +
               '<div class="mono" style="font-size:10px;color:var(--fg-3);margin-bottom:3px">' + ts + ' · ' + escHtml(m.kind || 'report') + '</div>' +
               '<div style="color:var(--fg-1);line-height:1.4">' + escHtml(m.text || '') + '</div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      var auditHist = (deskState && Array.isArray(deskState.selfAuditHistory)) ? deskState.selfAuditHistory.slice().reverse() : [];
+      var auditCountEl = document.getElementById('revSelfAuditCount');
+      if (auditCountEl) auditCountEl.textContent = auditHist.length + ' audit(s)';
+
+      var gatesHost = document.getElementById('revStructuralGatesHost');
+      if (gatesHost) {
+        var gatesObj = (deskState && deskState.structuralGates) || {};
+        var gateKeys = Object.keys(gatesObj);
+        if (!gateKeys.length) {
+          gatesHost.innerHTML = '<div style="color:var(--fg-3)">Aucune porte structurelle active pour le moment (se crée automatiquement dès qu&#39;un trade se clôture en gain, perte ou coupure manuelle).</div>';
+        } else {
+          gatesHost.innerHTML = gateKeys.map(function (sym) {
+            var g = gatesObj[sym];
+            var isWin = g.lastOutcome === 'WIN_TP';
+            var borderCol = isWin ? 'rgba(16,185,129,0.35)' : 'rgba(244,63,94,0.40)';
+            var tagCol = isWin ? '#10b981' : '#f43f5e';
+            return '<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid ' + borderCol + '">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">' +
+                '<strong style="color:var(--fg-0)">' + escHtml(sym) + ' · ' + escHtml(String(g.lastDirection || '').toUpperCase()) + '</strong>' +
+                '<span class="mono" style="font-size:10px;color:' + tagCol + '">' + escHtml(g.lastOutcome) + ' · Risque ' + Math.round(Number(g.riskScaleMultiplier || 1) * 100) + '%</span>' +
+              '</div>' +
+              '<div style="color:var(--fg-2);line-height:1.38">' + escHtml(g.reason || '') + '</div>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      var auditHost = document.getElementById('revSelfAuditHost');
+      if (auditHost) {
+        if (!auditHist.length) {
+          auditHost.innerHTML = '<div style="color:var(--fg-3)">Aucun auto-audit enregistré pour le moment.</div>';
+        } else {
+          auditHost.innerHTML = auditHist.slice(0, 15).map(function (au) {
+            var ts = au.at ? new Date(au.at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+            var isVeto = au.outcome === 'PRE_TRADE_SELF_VETO';
+            var isWin = au.outcome === 'WIN_TP';
+            var accentCol = isVeto ? '#fbbf24' : (isWin ? '#10b981' : '#f43f5e');
+            var flaws = (au.flawsIdentified && au.flawsIdentified.length) ? au.flawsIdentified.join(', ') : 'AUCUN';
+            return '<div style="padding:9px 11px;border-radius:8px;background:rgba(15,23,42,0.45);border-left:3px solid ' + accentCol + '">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">' +
+                '<strong style="color:' + accentCol + '">' + escHtml(au.symbol + ' ' + String(au.direction || '').toUpperCase() + ' · ' + au.outcome + ' (' + au.ticketId + ')') + '</strong>' +
+                '<span class="mono" style="font-size:10px;color:var(--fg-3)">' + ts + (isVeto ? '' : (' · ' + (au.pnl >= 0 ? '+' : '') + Number(au.pnl || 0).toFixed(2) + '€')) + '</span>' +
+              '</div>' +
+              '<div style="color:var(--fg-0);margin-bottom:3px;line-height:1.4"><strong>Questionnement :</strong> ' + escHtml(au.selfQuestioningSummary || '') + '</div>' +
+              '<div style="color:var(--fg-2);margin-bottom:2px"><strong>Cause racine (' + escHtml(flaws) + ') :</strong> ' + escHtml(au.rootCauseDiagnosis || '') + '</div>' +
+              '<div style="color:#38bdf8"><strong>Solution appliquée :</strong> ' + escHtml(au.autonomousSolutionApplied || '') + '</div>' +
             '</div>';
           }).join('');
         }
