@@ -13,6 +13,7 @@ import { DeskStore } from "../src/store.ts";
 import { TelegramFloorRoom } from "../src/telegram.ts";
 import { ActiveTradeManager } from "../src/agents/activeTradeManager.ts";
 import { INSTALLED_TRADER_SKILLS, TraderSkillsEngine } from "../src/agents/traderSkills.ts";
+import { SmcEngine } from "../src/agents/smcEngine.ts";
 import { LiquidityHunterAgent } from "../src/agents/liquidityHunter.ts";
 import { MarketProfileAnalyzer } from "../src/agents/marketProfile.ts";
 import { SentinelAgent, TokenBucketRateLimiter } from "../src/agents/sentinel.ts";
@@ -2290,4 +2291,150 @@ test("Audit fixes: true curve drawdown (ignores startEquity offset), NGAS lot ca
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("Smart Money Concepts (SMC): Python Pydantic + TS engine (CHoCH/BOS, FVG-backed OB, Sweep, Mitigation), Module 2 XAI & intact Module 3 Kelly/ATR", async () => {
+  const baseT = Date.now() - 20 * 900_000;
+  const rawOhlc = [
+    [1.1040, 1.1048, 1.1032, 1.1035, 900],
+    [1.1035, 1.1038, 1.1020, 1.1022, 1100],
+    [1.1022, 1.1025, 1.1010, 1.1015, 1200],
+    [1.1015, 1.1030, 1.1014, 1.1028, 1000],
+    [1.1028, 1.1032, 1.1018, 1.1020, 950],
+    [1.1020, 1.1022, 1.1010, 1.1012, 1100],
+    [1.1012, 1.1024, 1.1011, 1.1021, 1050],
+    [1.1021, 1.1023, 1.1013, 1.1016, 980],
+    [1.1016, 1.1017, 1.1003, 1.1008, 1600], // SSL sweep below 1.1010
+    [1.1008, 1.1010, 1.1001, 1.1002, 1900], // Valid Bullish Order Block [1.1001..1.1010]
+    [1.1002, 1.1026, 1.1002, 1.1024, 2800], // Impulse start
+    [1.1024, 1.1055, 1.1023, 1.1052, 3400], // Impulse CHoCH/BOS creating FVG
+    [1.1052, 1.1060, 1.1045, 1.1048, 1800], // FVG [1.1026..1.1045] above OB
+    [1.1048, 1.1049, 1.1030, 1.1032, 1400],
+    [1.1032, 1.1033, 1.1012, 1.1016, 1500],
+    [1.1016, 1.1018, 1.1007, 1.1011, 1650], // Retracement / mitigation into OB [1.1001..1.1010]
+  ];
+  const smcBars: Kline[] = rawOhlc.map((c, idx) => ({
+    openTime: baseT + idx * 900_000,
+    closeTime: baseT + (idx + 1) * 900_000 - 1,
+    open: c[0],
+    high: c[1],
+    low: c[2],
+    close: c[3],
+    volume: c[4],
+  }));
+  const now = baseT + smcBars.length * 900_000 + 1000;
+
+  // 1. Both Python Pydantic pipeline (smartmoneyconcepts) and TypeScript mirror validate exact confluence
+  const pyRes = await SmcEngine.runPythonSmcAnalysis("EURUSD", smcBars, 1.1011, 0.0012, now);
+  assert.equal(pyRes.validSignal, true, `Expected valid Python SMC signal, got ${pyRes.signalJustification}`);
+  assert.ok(pyRes.structureEvent === "CHoCH" || pyRes.structureEvent === "BOS");
+  assert.equal(pyRes.structureDirection, "LONG");
+  assert.equal(pyRes.orderBlockPrice.fvgBacked, true);
+  assert.equal(pyRes.mitigationTriggered, true);
+  assert.equal(pyRes.liquiditySweepConfirmed, true);
+  assert.ok(pyRes.sweptLiquidityLevels.some((l) => l.swept && l.type === "SSL"));
+
+  const tsRes = SmcEngine.analyzeOhlcv("EURUSD", smcBars, 1.1011, 0.0012, now);
+  assert.equal(tsRes.validSignal, true);
+  assert.equal(tsRes.mitigationTriggered, true);
+  assert.equal(tsRes.orderBlockPrice.fvgBacked, true);
+
+  // 2. Extended price before OB mitigation must NOT trigger a breakout/SMC signal
+  const unmitigatedBars = smcBars.slice(0, 13);
+  const noMitRes = SmcEngine.analyzeOhlcv("EURUSD", unmitigatedBars, 1.1058, 0.0012, now);
+  assert.equal(noMitRes.mitigationTriggered, false);
+  assert.equal(noMitRes.validSignal, false);
+
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-smc-"));
+  try {
+    const cfg = makeTestCfg(dir);
+    const store = new DeskStore(dir);
+    const desk = new TradingFloorDesk(cfg, store, new TelegramFloorRoom(cfg), new GrpoEngine(join(dir, "grpo.json")));
+    desk.state = store.loadOrCreate(85_000, "Europe/Paris", ["EURUSD"], 15, now);
+
+    const choosePlayFn = (desk as unknown as {
+      choosePlay: (s: MarketSnapshot) => { dir: string; playbook: string; thesis: string } | null;
+    }).choosePlay.bind(desk);
+
+    const trendSnapshotNoMit: MarketSnapshot = {
+      symbol: "EURUSD",
+      at: now,
+      primary: { venue: "MT5", price: 1.1058, ret1h: 0.002, funding: 0, oiChange1h: 0, oiValue: 0, book: 0 },
+      secondary: { venue: "YahooFinance", price: 1.1058, ret1h: 0.002, funding: null, oiChange1h: null, oiValue: null, book: null },
+      bars4h: unmitigatedBars,
+      bars15m: unmitigatedBars,
+      channelHi: 1.1055,
+      channelLo: 1.1001,
+      atr: 0.0012,
+      ret24h: 0.004,
+      news: [],
+      onchain: null,
+      errors: [],
+      smcContext: noMitRes,
+      marketProfile: {
+        symbol: "EURUSD",
+        poc: 1.1025,
+        vah: 1.1060,
+        val: 1.1005,
+        sessionHigh: 1.1060,
+        sessionLow: 1.1001,
+        totalVolume: 5000,
+        valueAreaPct: 0.7,
+        isRange: false,
+        pricePosition: "inside_va",
+        updatedAt: now,
+      },
+    };
+    assert.equal(choosePlayFn(trendSnapshotNoMit), null, "Unmitigated setup far above OB must NOT fire generic breakout");
+
+    const smcMitigatedSnap: MarketSnapshot = {
+      ...trendSnapshotNoMit,
+      primary: { ...trendSnapshotNoMit.primary!, price: 1.1011 },
+      secondary: { ...trendSnapshotNoMit.secondary!, price: 1.1011 },
+      bars4h: smcBars,
+      bars15m: smcBars,
+      smcContext: pyRes,
+    };
+    const smcIdea = choosePlayFn(smcMitigatedSnap);
+    assert.ok(smcIdea !== null, "Expected SMC setup to trigger on OB mitigation pullback");
+    assert.equal(smcIdea!.dir, "long");
+    assert.equal(smcIdea!.playbook, "Macro_FVG_Mitigation");
+    assert.ok(smcIdea!.thesis.includes("Order Block") && smcIdea!.thesis.includes("FVG"));
+
+    // 3. Module 2 Audit XAI includes swept liquidity, OB price, and FVG state while Module 3 Kelly/ATR remains intact
+    const xai = TraderSkillsEngine.buildModule2XaiAudit({
+      symbol: "EURUSD",
+      direction: "long",
+      timeframe: "15m",
+      entry: 1.1011,
+      stop: pyRes.stopPrice,
+      target: 1.1045,
+      barsEntryTf: smcBars,
+      smcContext: pyRes,
+      now,
+    });
+    assert.ok(xai.signal_justification && xai.signal_justification.includes("Order Block"));
+    assert.ok(xai.smc_traces && xai.smc_traces.order_block_price.high > xai.smc_traces.order_block_price.low);
+    assert.notEqual(xai.smc_traces.fvg_state.status, "NONE");
+    assert.ok(xai.smc_traces.swept_liquidity_levels.some((l) => l.swept));
+
+    const kelly = TraderSkillsEngine.buildModule3AtrKellySizing({
+      symbol: "EURUSD",
+      direction: "long",
+      capital: 85_000,
+      entry: 1.1011,
+      bars: smcBars,
+      adaptiveAtrMultiplier: 1.5,
+      currentRiskFraction: 0.01,
+      now,
+    });
+    assert.ok(kelly.atr_14 > 0 && kelly.position_size_units > 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  assert.ok(DASHBOARD_HTML.includes("Justification SMC"));
+  const scriptMatchSmc = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(scriptMatchSmc && scriptMatchSmc[1]);
+  assert.doesNotThrow(() => new Function(scriptMatchSmc[1]));
 });

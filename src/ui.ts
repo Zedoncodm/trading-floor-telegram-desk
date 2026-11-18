@@ -8466,9 +8466,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
         govCards.push(
           '<div style="padding:9px;border-radius:8px;background:rgba(15,23,42,0.45);border-left:3px solid #a78bfa">' +
-            '<div style="font-weight:700;color:#a78bfa;margin-bottom:4px">Module 2 · Audit XAI Disagree-or-Commit</div>' +
+            '<div style="font-weight:700;color:#a78bfa;margin-bottom:4px">Module 2 · Audit XAI &amp; SMC Disagree-or-Commit</div>' +
             (xaiLast
               ? ('<div style="color:var(--fg-1);line-height:1.35"><strong>Confluence :</strong> ' + escHtml(xaiLast.technical_confluence.macro_trend_alignment) + '</div>' +
+                 (xaiLast.signal_justification ? '<div style="color:#38bdf8;margin-top:3px;line-height:1.35"><strong>Justification SMC :</strong> ' + escHtml(xaiLast.signal_justification) + '</div>' : '') +
                  '<div style="color:#fbbf24;margin-top:3px;line-height:1.35"><strong>Bear Thesis :</strong> ' + escHtml(xaiLast.disagree_or_commit_deliberation.bear_thesis_advocate) + '</div>' +
                  '<div style="color:#10b981;margin-top:3px;line-height:1.35"><strong>Commit :</strong> ' + escHtml(xaiLast.disagree_or_commit_deliberation.resolution_and_commit) + '</div>')
               : '<div style="color:var(--fg-3)">En attente du prochain rapport Disagree-or-Commit</div>') +

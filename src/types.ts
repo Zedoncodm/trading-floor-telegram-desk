@@ -287,6 +287,47 @@ export type FvgZone = {
   candleTime: number;
 };
 
+export type SmcLiquidityLevel = {
+  type: "BSL" | "SSL";
+  price: number;
+  swept: boolean;
+  sweepIndex?: number | null;
+};
+
+export type SmcOrderBlock = {
+  low: number;
+  high: number;
+  midPrice: number;
+  fvgBacked: boolean;
+  mitigated: boolean;
+};
+
+export type SmcFvgState = {
+  status: "UNMITIGATED" | "PARTIALLY_MITIGATED" | "MITIGATED" | "NONE";
+  bottom: number;
+  top: number;
+  midPrice: number;
+  fillPct: number;
+};
+
+export type SmcInstitutionalContext = {
+  symbol: string;
+  engine: "smartmoneyconcepts" | "pandas_vectorized" | "ts_ohlcv";
+  structureEvent: "BOS" | "CHoCH" | "NONE";
+  structureDirection: "LONG" | "SHORT" | "NEUTRAL";
+  structureBreakLevel: number;
+  sweptLiquidityLevels: SmcLiquidityLevel[];
+  orderBlockPrice: SmcOrderBlock;
+  fvgState: SmcFvgState;
+  mitigationTriggered: boolean;
+  liquiditySweepConfirmed: boolean;
+  confluenceScore: number;
+  validSignal: boolean;
+  entryPrice: number;
+  stopPrice: number;
+  signalJustification: string;
+};
+
 export type MarketProfileBin = {
   price: number;
   volume: number;
@@ -365,6 +406,7 @@ export type MarketSnapshot = {
   microstructure?: MicrostructureContext;
   vwapContext?: VwapContext;
   fvgZone?: FvgZone | null;
+  smcContext?: SmcInstitutionalContext;
   cascadeWatch?: { active: boolean; reason: string; oiPurging: boolean };
   marketProfile?: MarketProfileSummary;
 };
@@ -680,6 +722,18 @@ export type XaiCognitiveAuditReport = {
   instrument_ticker?: string;
   direction?: "LONG" | "SHORT";
   temporal_horizon_pit?: string;
+  signal_justification?: string;
+  smc_traces?: {
+    engine: string;
+    structure_event: "BOS" | "CHoCH" | "NONE";
+    structure_direction: "LONG" | "SHORT" | "NEUTRAL";
+    structure_break_level: number;
+    swept_liquidity_levels: Array<{ type: "BSL" | "SSL"; price: number; swept: boolean }>;
+    order_block_price: { low: number; high: number; mid_price: number; fvg_backed: boolean; mitigated: boolean };
+    fvg_state: { status: "UNMITIGATED" | "PARTIALLY_MITIGATED" | "MITIGATED" | "NONE"; bottom: number; top: number; mid_price: number; fill_pct: number };
+    mitigation_triggered: boolean;
+    liquidity_sweep_confirmed: boolean;
+  };
   technical_confluence: {
     macro_trend_alignment: string;
     mathematical_indicators: string[];

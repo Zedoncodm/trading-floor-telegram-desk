@@ -12,6 +12,7 @@ import { MarketAnalystAgent } from "./agents/analyst.ts";
 import { ReviewerAgent } from "./agents/reviewer.ts";
 import { MarketProfileAnalyzer } from "./agents/marketProfile.ts";
 import { ActiveTradeManager } from "./agents/activeTradeManager.ts";
+import { SmcEngine } from "./agents/smcEngine.ts";
 import { TraderSkillsEngine } from "./agents/traderSkills.ts";
 import { Mt5CloudBridge, type LocalMt5Position, type LocalMt5State } from "./mt5.ts";
 import { GrpoEngine, type GrpoCandidateOutcome, type MarketRegime } from "./rl/grpo.ts";
@@ -2607,6 +2608,10 @@ export class TradingFloorDesk {
           if (snap.marketProfile) {
             snap.marketProfile = undefined;
           }
+          const smcBars = (snap.bars15m?.length ?? 0) >= 25 ? snap.bars15m! : snap.bars4h;
+          if (smcBars.length >= 15) {
+            snap.smcContext = SmcEngine.analyzeOhlcv(snap.symbol, smcBars, mt5Px, snap.atr, now);
+          }
         }
         snap.primary.price = mt5Px;
         snap.primary.venue = "MT5";
@@ -2929,9 +2934,14 @@ export class TradingFloorDesk {
     const squeezeSig = this.hunter.computeSqueezeSignal(funding, p.oiChange1h ?? 0, ret1h);
     const magnetZones = this.hunter.computeLiquidityMagnetZones(snap.bars4h ?? [], px, snap.symbol);
 
-    // Calcul temps réel du Market Profile intraday (bars15m en priorité) et confluence technique (EMA20/50, RSI14, ATR14)
+    // Calcul temps réel du Market Profile intraday (bars15m en priorité), SMC Institutionnel & confluence technique
     const tech = computeTechnicalConfluence(snap.bars4h ?? [], px);
     const mpBars = (snap.bars15m?.length ?? 0) >= 24 ? snap.bars15m! : (snap.bars4h ?? []);
+    const smcBars = (snap.bars15m?.length ?? 0) >= 25 ? snap.bars15m! : (snap.bars4h ?? []);
+    const smc =
+      snap.smcContext ??
+      SmcEngine.analyzeOhlcv(snap.symbol, smcBars, px, snap.atr, now);
+    snap.smcContext = smc;
     const mp: MarketProfileSummary =
       snap.marketProfile ??
       MarketProfileAnalyzer.computeSessionProfile(snap.symbol, mpBars, px, now);
@@ -2987,12 +2997,20 @@ export class TradingFloorDesk {
       if (directiveForcesMeanRev && res.playbook === "breakout") {
         return null;
       }
+      // Exigence SMC stricte sur tout signal directionnel structurel (CHoCH/BOS + OB adossé FVG + Mitigation OB)
+      if (res.playbook === "breakout" || res.playbook === "Macro_FVG_Mitigation") {
+        const expectedDir = res.dir === "long" ? "LONG" : "SHORT";
+        if (!smc.validSignal || smc.structureDirection !== expectedDir) {
+          return null;
+        }
+      }
       const targetPrice = applyMagnetTarget(res.dir, res.customTarget, res.playbook);
       const fomoBoost = res.dir === "long" ? fomoLong : fomoShort;
       const rlWeight = this.grpo.getStrategyWeight(regime, res.playbook);
       const extras: string[] = [
         `Regime=${regime}(w=${rlWeight.toFixed(2)})`,
         `MP(POC=${fmtPx(mp.poc)}, VAH=${fmtPx(mp.vah)}, VAL=${fmtPx(mp.val)}, ${isRangeMarket ? "RANGE" : "TREND"})`,
+        `SMC(${smc.structureEvent} ${smc.structureDirection}|OB=[${fmtPx(smc.orderBlockPrice.low)}..${fmtPx(smc.orderBlockPrice.high)}]|FVG=${smc.fvgState.status}${smc.liquiditySweepConfirmed ? "|SWEEP" : ""})`,
       ];
       if (this.current_market_regime_directive) {
         extras.push(`Directive15m="${this.current_market_regime_directive.slice(0, 80)}"`);
@@ -3174,7 +3192,26 @@ export class TradingFloorDesk {
       }
     }
 
-    // 4. Moteur C : Swing Structurel & Macro (Macro_FVG_Mitigation) — Horizon 4h
+    // 4. Moteur C : Smart Money Concepts (CHoCH/BOS + Order Block adossé FVG + Mitigation + Liquidity Sweep)
+    if (smc.validSignal && (smc.structureDirection === "LONG" || smc.structureDirection === "SHORT")) {
+      const smcDir: Direction = smc.structureDirection === "LONG" ? "long" : "short";
+      const entryPx = smc.entryPrice > 0 ? smc.entryPrice : px;
+      const rawRisk = Math.abs(entryPx - smc.stopPrice);
+      const risk = Math.max(rawRisk, Math.max(snap.atr || px * 0.0005, 2 * pipSizeForAsset(snap.symbol, entryPx)));
+      const stopPx = smcDir === "long" ? Math.min(smc.stopPrice, entryPx - risk) : Math.max(smc.stopPrice, entryPx + risk);
+      const rrMult = Math.max(2.2, this.state.settings.trainedRewardR || 2.2);
+      const targetPx = smcDir === "long" ? entryPx + risk * rrMult : entryPx - risk * rrMult;
+      return withConfluence({
+        dir: smcDir,
+        playbook: "Macro_FVG_Mitigation",
+        thesis: `Moteur SMC [${smc.engine}] : ${smc.signalJustification}`,
+        customEntry: entryPx,
+        customStop: stopPx,
+        customTarget: targetPx,
+        timeStopMs: 48 * 3600_000,
+      });
+    }
+
     const fvg = snap.fvgZone;
     if (fvg && fvg.bosConfirmed && style === "longtrade") {
       const entryLim = fvg.midPrice;
@@ -4028,6 +4065,14 @@ export class TradingFloorDesk {
         this.state.socialSentiment ?? {},
         now,
       );
+      const pySmcCtx = await SmcEngine.runPythonSmcAnalysis(
+        chosen.symbol,
+        selectedBars,
+        entry,
+        localAtr || chosen.atr || entry * 0.002,
+        now,
+      );
+      chosen.smcContext = pySmcCtx;
       const xaiAudit = TraderSkillsEngine.buildModule2XaiAudit({
         symbol: chosen.symbol,
         direction: activeDir,
@@ -4038,6 +4083,7 @@ export class TradingFloorDesk {
         barsEntryTf: selectedBars,
         barsMacroTf: chosen.bars4h,
         marketProfile: chosen.marketProfile,
+        smcContext: pySmcCtx,
         macroReason: pitMacroInfo.reason,
         oosSummary: `${bt.outOfSample.trades} trades (${fmtR(bt.outOfSample.expectancyR)}, PF ${bt.outOfSample.profitFactor.toFixed(2)})`,
         timeMachineVerdict: tmSim.verdict,

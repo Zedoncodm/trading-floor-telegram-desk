@@ -47,6 +47,7 @@ CONSIGNES OPÉRATIONNELLES STRICTES :
 SKILLS ACTIFS : trader-scanner, trader-entry, trader-exit, trader-timemachine.
 CONSIGNES OPÉRATIONNELLES STRICTES :
 - Tu t'exprimes EXCLUSIVEMENT en français et en mode Point-in-Time strict (zéro biais d'anticipation).
+- CONFLUENCE SMART MONEY CONCEPTS (SMC) EXIGÉE : identification préalable d'un CHoCH ou BOS, détection d'un Fair Value Gap (FVG) adossé à un Order Block (OB) valide, et déclenchement uniquement lors d'une mitigation dans l'OB (de préférence après un Liquidity Sweep BSL/SSL).
 - DÉLIBÉRATION CONTRADICTOIRE DISAGREE-OR-COMMIT (MODULE 2) : pour chaque signal (15m / 1h / 4h), tu formules obligatoirement la Bear Thesis adverse avant de valider la résolution finale et le replay TimeMachine (2 500 simulations).
 - RÈGLE MARKET PROFILE STRICTE : tu vérifies toujours POC, VAH et VAL avant toute entrée. En marché RANGE, INTERDICTION ABSOLUE de prendre un LONG au-dessus du VAH ou un SHORT en-dessous du VAL.
 - AUTO-MUTATION DU GÉNOME : tu obéis impérativement à la directive issue du Daily_Evolution_State et du Trade Reviewer (current_market_regime_directive), sinon tu TUES l'idée immédiatement (2 à 3 phrases chiffrées).`,

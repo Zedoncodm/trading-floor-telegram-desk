@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { SmcEngine } from "./smcEngine.ts";
 import type {
   AgentSelfAuditEntry,
   AssetStructuralGate,
@@ -11,6 +12,7 @@ import type {
   Kline,
   MarketProfileSummary,
   MarketSnapshot,
+  SmcInstitutionalContext,
   TcaTransactionRecord,
   Ticket,
   TraderSkillsSummary,
@@ -1166,6 +1168,7 @@ export class TraderSkillsEngine {
     barsMacroTf?: Kline[];
     vwapBenchmark?: number;
     marketProfile?: MarketProfileSummary;
+    smcContext?: SmcInstitutionalContext;
     macroReason?: string;
     oosSummary?: string;
     timeMachineVerdict?: string;
@@ -1179,6 +1182,16 @@ export class TraderSkillsEngine {
     const pitMacroBars = (params.barsMacroTf ?? []).filter((b) => (b.closeTime || b.openTime) <= now);
     const techEntry = TraderSkillsEngine.computeQuickTech(pitEntryBars.length ? pitEntryBars : params.barsEntryTf, params.entry);
     const techMacro = TraderSkillsEngine.computeQuickTech(pitMacroBars.length ? pitMacroBars : pitEntryBars, params.entry);
+    const smc =
+      params.smcContext ??
+      SmcEngine.analyzeOhlcv(
+        params.symbol,
+        pitEntryBars.length ? pitEntryBars : params.barsEntryTf,
+        params.entry,
+        techEntry.atr14,
+        now,
+      );
+    const smcTraces = SmcEngine.toAuditTraces(smc);
 
     // Calcul MACD(12,26) + Bandes de Bollinger(20, 2σ) sur données Point-in-Time uniquement
     const closes = (pitEntryBars.length ? pitEntryBars : params.barsEntryTf).map((b) => b.close).filter((c) => c > 0);
@@ -1222,8 +1235,22 @@ export class TraderSkillsEngine {
         `MarketProfile: VAL=${TraderSkillsEngine.fmtPrice(params.marketProfile.val)} POC=${TraderSkillsEngine.fmtPrice(params.marketProfile.poc)} VAH=${TraderSkillsEngine.fmtPrice(params.marketProfile.vah)} (${params.marketProfile.isRange ? "RANGE" : "TREND"})`,
       );
     }
+    const sweptSummary = smcTraces.swept_liquidity_levels
+      .filter((l) => l.swept)
+      .slice(-3)
+      .map((l) => `${l.type}@${TraderSkillsEngine.fmtPrice(l.price)}`)
+      .join(", ") || "AUCUN";
+    indicators.push(
+      `SMC_Structure: ${smcTraces.structure_event} ${smcTraces.structure_direction} (cassure ${TraderSkillsEngine.fmtPrice(smcTraces.structure_break_level)})`,
+      `SMC_OrderBlock: [${TraderSkillsEngine.fmtPrice(smcTraces.order_block_price.low)}..${TraderSkillsEngine.fmtPrice(smcTraces.order_block_price.high)}] (mid=${TraderSkillsEngine.fmtPrice(smcTraces.order_block_price.mid_price)}, fvg_backed=${smcTraces.order_block_price.fvg_backed}, mitigated=${smcTraces.order_block_price.mitigated})`,
+      `SMC_FVG: ${smcTraces.fvg_state.status} [${TraderSkillsEngine.fmtPrice(smcTraces.fvg_state.bottom)}..${TraderSkillsEngine.fmtPrice(smcTraces.fvg_state.top)}] (${smcTraces.fvg_state.fill_pct}%)`,
+      `SMC_LiquiditySwept: ${sweptSummary}`,
+    );
 
     const counterArgs: string[] = [...(params.bearConcerns ?? [])];
+    if (!smc.liquiditySweepConfirmed) {
+      counterArgs.push("Absence de balayage de liquidité préalable confirmé sur les derniers pivots.");
+    }
     if (!macroAligned) {
       counterArgs.push(`Divergence 4H (tendance macro=${techMacro.trendBias.toUpperCase()}) face au signal ${dirLabel} ${params.timeframe}.`);
     }
@@ -1244,7 +1271,7 @@ export class TraderSkillsEngine {
 
     const approved = params.preTradePass !== false;
     const resolutionText = approved
-      ? `COMMIT ${dirLabel} ${params.symbol} : La confluence quantitative (${params.oosSummary || "WFO OOS positif"}${params.timeMachineVerdict ? `, ${params.timeMachineVerdict}` : ""}) et un R:R asymétrique de ${rr.toFixed(2)}R avec Stop ATR dynamique compensent la Bear Thesis (${counterArgs.length} objection(s) encadrée(s) par le SL ${TraderSkillsEngine.fmtPrice(params.stop)}).`
+      ? `COMMIT ${dirLabel} ${params.symbol} : La confluence quantitative + SMC (${smc.signalJustification}; ${params.oosSummary || "WFO OOS positif"}${params.timeMachineVerdict ? `, ${params.timeMachineVerdict}` : ""}) et un R:R asymétrique de ${rr.toFixed(2)}R avec Stop ATR dynamique compensent la Bear Thesis (${counterArgs.length} objection(s) encadrée(s) par le SL ${TraderSkillsEngine.fmtPrice(params.stop)}).`
       : `SIGNAL ANNULÉ (DISAGREE) sur ${params.symbol} ${dirLabel} : La Bear Thesis l'emporte (${counterArgs.join(" | ")}). Aucun ordre routé.`;
 
     return {
@@ -1252,6 +1279,8 @@ export class TraderSkillsEngine {
       instrument_ticker: params.symbol,
       direction: dirLabel,
       temporal_horizon_pit: new Date(now).toISOString(),
+      signal_justification: smc.signalJustification,
+      smc_traces: smcTraces,
       technical_confluence: {
         macro_trend_alignment: `Point-in-Time <= ${new Date(now).toISOString()} : Tendance 4H EMA20/50=${techMacro.trendBias.toUpperCase()} (${TraderSkillsEngine.fmtPrice(techMacro.ema20)}/${TraderSkillsEngine.fmtPrice(techMacro.ema50)}) face au signal ${params.timeframe} ${dirLabel} (RSI=${techEntry.rsi14}). Alignement=${macroAligned ? "CONFIRMÉ" : "CONTRE-FLUX ENCADRÉ"}.`,
         mathematical_indicators: indicators,

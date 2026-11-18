@@ -1,3 +1,4 @@
+import { SmcEngine } from "./agents/smcEngine.ts";
 import { errMsg, getJson } from "./http.ts";
 import type {
   FvgZone,
@@ -818,8 +819,12 @@ export async function fetchMarketSnapshot(symbol: string, now = Date.now(), fvgM
   // VWAP & IB context (Engine B)
   const vwapContext = computeSessionVwap(bars15m, now);
 
-  // Fair Value Gap 4h (Engine C)
+  // Fair Value Gap 4h & Contexte Institutionnel SMC (BOS/CHoCH + OB/FVG + Liquidity Sweep)
   const fvgZone = detectLatestFvg(bars4h, fvgMinSizeAtr);
+  const smcBars = bars15m.length >= 25 ? bars15m : bars4h;
+  const smcContext = smcBars.length >= 15
+    ? SmcEngine.analyzeOhlcv(symbol, smcBars, refPx, atr, now)
+    : undefined;
 
   // Liquidation Cascade Watch (Open Interest + Funding Rate divergence)
   const ret1h = primary?.ret1h ?? 0;
@@ -862,6 +867,7 @@ export async function fetchMarketSnapshot(symbol: string, now = Date.now(), fvgM
     microstructure,
     vwapContext,
     fvgZone,
+    smcContext,
     cascadeWatch,
   };
 }
