@@ -994,7 +994,7 @@ export class TradingFloorDesk {
       this.state.settings.mt5DefaultLots ?? 0.05,
       now,
     );
-    Mt5CloudBridge.writeLocalBridgePayload(payload);
+    Mt5CloudBridge.writeLocalBridgePayload(payload, this.cfg.dataDir);
   }
 
   private updateExecutionTraderState(
@@ -1087,7 +1087,7 @@ export class TradingFloorDesk {
     this.syncingMt5 = true;
     try {
       const now = Date.now();
-      const mt5State = Mt5CloudBridge.readLocalMt5State();
+      const mt5State = Mt5CloudBridge.readLocalMt5State(25_000, this.cfg.dataDir);
       if (!mt5State) {
         if (this.state.mt5Live?.connected && now - this.state.mt5Live.updatedAt > 25_000) {
           this.state.mt5Live = { ...this.state.mt5Live, connected: false };
@@ -1544,7 +1544,7 @@ export class TradingFloorDesk {
     this.state.settings.scalpIntervalSec = 15;
     this.state.settings.mt5DefaultLots = Math.max(0.05, this.state.settings.mt5DefaultLots ?? 0.05);
 
-    const mt5State = Mt5CloudBridge.readLocalMt5State();
+    const mt5State = Mt5CloudBridge.readLocalMt5State(25_000, this.cfg.dataDir);
     const baseEq = mt5State && mt5State.balance > 0 ? mt5State.balance : this.state.startEquity;
     if (!this.state.startEquity || this.state.startEquity <= 0) {
       this.state.startEquity = baseEq;
@@ -2536,7 +2536,7 @@ export class TradingFloorDesk {
         : configured;
     const fvgMinAtr = this.state.settings?.fvgMinSizeAtr ?? 0.5;
     const snaps = await Promise.all(activeSymbols.map((sym) => fetchMarketSnapshot(sym, now, fvgMinAtr)));
-    const mt5LiveNow = Mt5CloudBridge.readLocalMt5State();
+    const mt5LiveNow = Mt5CloudBridge.readLocalMt5State(25_000, this.cfg.dataDir);
     const mt5PriceMap = new Map<string, number>();
     if (mt5LiveNow?.quotes) {
       for (const q of mt5LiveNow.quotes) {
@@ -4665,7 +4665,7 @@ export class TradingFloorDesk {
         await this.refreshTape([focusSym]);
       }
 
-      const mt5Now = Mt5CloudBridge.readLocalMt5State();
+      const mt5Now = Mt5CloudBridge.readLocalMt5State(25_000, this.cfg.dataDir);
       let livePx = markPriceOf(this.state, focusSym, 0);
       if (mt5Now?.quotes) {
         for (const q of mt5Now.quotes) {

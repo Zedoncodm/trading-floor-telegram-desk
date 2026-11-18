@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 export type LocalMt5Position = {
   ticket: number;
@@ -474,8 +475,31 @@ export class Mt5CloudBridge {
     return dirs;
   }
 
-  static readLocalMt5State(maxAgeMs = 25_000): LocalMt5State | null {
-    const dirs = Mt5CloudBridge.getMt5FilesDirectories();
+  /** Returns true under unit test runners or tmpdir dataDirs so live MT5 files are never mutated. */
+  static isTestOrTempEnv(dataDir?: string): boolean {
+    if (process.env.NODE_ENV === "test" || process.env.TF_DISABLE_LOCAL_MT5_BRIDGE === "1") {
+      return true;
+    }
+    if (process.execArgv.some((arg) => arg === "--test" || arg.startsWith("--test-"))) {
+      return true;
+    }
+    if (process.argv.some((arg) => arg.includes(".test.") || arg.endsWith("\\test") || arg.endsWith("/test"))) {
+      return true;
+    }
+    if (dataDir) {
+      const resolved = resolve(dataDir).toLowerCase();
+      const tempRoot = resolve(tmpdir()).toLowerCase();
+      if (resolved === tempRoot || resolved.startsWith(`${tempRoot}\\`) || resolved.startsWith(`${tempRoot}/`)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static readLocalMt5State(maxAgeMs = 25_000, dataDir?: string): LocalMt5State | null {
+    const dirs = Mt5CloudBridge.isTestOrTempEnv(dataDir)
+      ? (dataDir ? [dataDir] : [])
+      : Mt5CloudBridge.getMt5FilesDirectories();
     for (const dir of dirs) {
       const statePath = join(dir, "mt5_state.json");
       if (!existsSync(statePath)) continue;
@@ -495,17 +519,25 @@ export class Mt5CloudBridge {
     return null;
   }
 
-  static writeLocalBridgePayload(payload: unknown): void {
-    const dirs = Mt5CloudBridge.getMt5FilesDirectories();
-    if (!dirs.length) return;
+  static writeLocalBridgePayload(payload: unknown, dataDir?: string): string[] {
+    const isTest = Mt5CloudBridge.isTestOrTempEnv(dataDir);
+    const dirs = isTest
+      ? (dataDir ? [dataDir] : [])
+      : Mt5CloudBridge.getMt5FilesDirectories();
+    if (!dirs.length) return [];
     const json = JSON.stringify(payload);
+    const written: string[] = [];
     for (const dir of dirs) {
       try {
-        writeFileSync(join(dir, "trading_floor_bridge.json"), json, "utf8");
+        if (isTest) mkdirSync(dir, { recursive: true });
+        const outPath = join(dir, "trading_floor_bridge.json");
+        writeFileSync(outPath, json, "utf8");
+        written.push(outPath);
       } catch {
         // ignore sharing contention
       }
     }
+    return written;
   }
 
   static computeAssetLots(asset: string, notional: number, entryPrice: number, qty?: number, maxFxLots = 5.0): number {
@@ -739,7 +771,7 @@ bool IsCryptoSymbolCandidate(const string name, const string path) {
 bool EnsureMaster() {
    long nowLocal = (long)TimeLocal();
    if(!GlobalVariableCheck("TF_MASTER_CHART") || !GlobalVariableCheck("TF_MASTER_TS") ||
-      (nowLocal - (long)GlobalVariableGet("TF_MASTER_TS") > 3)) {
+      (nowLocal - (long)GlobalVariableGet("TF_MASTER_TS") > 15)) {
       GlobalVariableSet("TF_MASTER_CHART", gMyMasterId);
       GlobalVariableSet("TF_MASTER_TS", (double)nowLocal);
       return true;
@@ -1157,7 +1189,7 @@ int OnInit() {
 
    trade.SetExpertMagicNumber(InpMagic);
    EventSetTimer(MathMax(1, InpPollSeconds));
-   OnTimer();
+   if(EnsureMaster()) OnTimer();
    return(INIT_SUCCEEDED);
 }
 

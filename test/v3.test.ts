@@ -2112,3 +2112,29 @@ test("Non-Crypto calibration: tight 3-pip FX stops accepted, EA sets cryptoSuppo
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("MT5 Bridge test/tmpdir isolation: never touches live MetaQuotes directory during npm test and hardens multi-chart master lease", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-v3-mt5-iso-"));
+  try {
+    assert.equal(Mt5CloudBridge.isTestOrTempEnv(), true);
+    assert.equal(Mt5CloudBridge.isTestOrTempEnv(dir), true);
+
+    const writtenWithoutDir = Mt5CloudBridge.writeLocalBridgePayload({ openOrders: [] });
+    assert.equal(writtenWithoutDir.length, 0);
+
+    const writtenSandbox = Mt5CloudBridge.writeLocalBridgePayload({ openOrders: [{ id: "TF-SANDBOX-01" }] }, dir);
+    assert.equal(writtenSandbox.length, 1);
+    assert.ok(writtenSandbox[0].startsWith(dir));
+    assert.ok(!writtenSandbox[0].toLowerCase().includes("metaquotes"));
+    assert.ok(readFileSync(writtenSandbox[0], "utf8").includes("TF-SANDBOX-01"));
+
+    assert.equal(Mt5CloudBridge.readLocalMt5State(25_000), null);
+    assert.equal(Mt5CloudBridge.readLocalMt5State(25_000, dir), null);
+
+    const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor("http://127.0.0.1:4080");
+    assert.ok(mq5.includes('> 15)'));
+    assert.ok(mq5.includes("if(EnsureMaster()) OnTimer();"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
