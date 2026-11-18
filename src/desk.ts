@@ -3053,8 +3053,14 @@ export class TradingFloorDesk {
         return;
       }
 
-      const activeStyle = isScalp ? "scalping" : (this.state.settings.tradingStyle || "daytrade");
-      const tf: "15m" | "1h" | "4h" = activeStyle === "scalping" ? "15m" : activeStyle === "daytrade" ? "1h" : "4h";
+      const activeStyle = this.state.settings.tradingStyle || (isScalp ? "scalping" : "daytrade");
+      const preferredTfs: Array<"1m" | "15m" | "1h" | "4h"> =
+        activeStyle === "scalping"
+          ? ["15m", "1h", "4h", "1m"]
+          : activeStyle === "longtrade"
+            ? ["4h", "1h", "15m"]
+            : ["1h", "15m", "4h"];
+      const tf: "15m" | "1h" | "4h" = preferredTfs[0] === "1m" ? "15m" : preferredTfs[0];
       const startIdx = this.scanCursor % pool.length;
       this.scanCursor = (this.scanCursor + 1) % pool.length;
       const orderedPool = [...pool.slice(startIdx), ...pool.slice(0, startIdx)];
@@ -3065,6 +3071,7 @@ export class TradingFloorDesk {
       let selectedPlaybook: PlayKind = "breakout";
       let selectedDir: Direction = "long";
       let selectedThesis = "";
+      let selectedTf: string = tf;
       let selectedIdea: NonNullable<ReturnType<TradingFloorDesk["choosePlay"]>> | null = null;
       let selectedCheck: ReturnType<typeof verifySecondSource> | null = null;
       let fallbackKilled: {
@@ -3072,6 +3079,7 @@ export class TradingFloorDesk {
         bt: ReturnType<typeof runBacktestOnBars>;
         playbook: PlayKind;
         check: ReturnType<typeof verifySecondSource>;
+        testedTfs: string[];
       } | null = null;
 
       let bestAlphaScore = -Infinity;
@@ -3117,16 +3125,39 @@ export class TradingFloorDesk {
           continue;
         }
 
-        let activeBars = candidate.bars4h;
-        if (candidate.symbol.endsWith("USDT") && (activeStyle === "scalping" || activeStyle === "daytrade")) {
-          try {
-            const tfBars = await fetchBinanceKlines(candidate.symbol, tf, 500);
-            if (tfBars.length >= 80) activeBars = tfBars;
-          } catch {
-            // Repli automatique sur candidate.bars4h si Binance 15m/1h échoue
+        // Construction multi-timeframes réelle (Crypto + Forex + Or + Indices)
+        const tfSets: Array<{ tfLabel: "1m" | "15m" | "1h" | "4h"; bars: MarketSnapshot["bars4h"] }> = [];
+        const addTfSet = (tfLabel: "1m" | "15m" | "1h" | "4h", b?: MarketSnapshot["bars4h"]) => {
+          if (b && b.length >= 60 && !tfSets.some((x) => x.tfLabel === tfLabel)) {
+            tfSets.push({ tfLabel, bars: b });
+          }
+        };
+        const bars15m = candidate.bars15m ?? [];
+        const bars1hFrom15m = bars15m.length >= 160 ? aggregateKlines(bars15m, 4) : [];
+        const bars4h = candidate.bars4h ?? [];
+        const bars1m = candidate.bars1m ?? [];
+
+        for (const pTf of preferredTfs) {
+          if (pTf === "15m") {
+            if (bars15m.length >= 60) {
+              addTfSet("15m", bars15m);
+            } else if (candidate.symbol.endsWith("USDT")) {
+              try { addTfSet("15m", await fetchBinanceKlines(candidate.symbol, "15m", 300)); } catch {}
+            }
+          } else if (pTf === "1h") {
+            if (bars1hFrom15m.length >= 60) {
+              addTfSet("1h", bars1hFrom15m);
+            } else if (candidate.symbol.endsWith("USDT")) {
+              try { addTfSet("1h", await fetchBinanceKlines(candidate.symbol, "1h", 300)); } catch {}
+            }
+          } else if (pTf === "4h") {
+            addTfSet("4h", bars4h);
+          } else if (pTf === "1m") {
+            addTfSet("1m", bars1m);
           }
         }
-        if (activeBars.length < 60) continue;
+        if (!tfSets.length && bars4h.length >= 60) addTfSet("4h", bars4h);
+        if (!tfSets.length) continue;
         evaluatedCount++;
 
         const thresholds = {
@@ -3134,64 +3165,69 @@ export class TradingFloorDesk {
           minTradesOos: this.state.settings.minOosTrades30d,
           minExpectancyR: this.state.settings.minExpectancyR,
         };
-        const customParams = {
-          lookback: this.state.settings.trainedLookback,
-          atrMult: this.state.settings.trainedAtrMult,
-          rewardR: this.state.settings.trainedRewardR,
-          ofiZScoreThreshold: this.state.settings.ofiZScoreThreshold,
-          fixedStopAtr: this.state.settings.fixedStopAtr,
-          fvgMinSizeAtr: this.state.settings.fvgMinSizeAtr,
-          style: activeStyle,
-          symbol: candidate.symbol,
-          autoOptimize: true,
-          scalpRelaxed: isScalp,
-        };
+        const playbooksToTest: PlayKind[] =
+          idea.playbook === "breakout" ? ["breakout", "fade"] : [idea.playbook, "breakout"];
+        let bestFailedForCand: { bt: ReturnType<typeof runBacktestOnBars>; playbook: PlayKind } | null = null;
 
-        let bt = runBacktestOnBars(
-          activeBars,
-          idea.playbook,
-          `${candidate.primary.venue} ${tf} (${activeBars.length} barres)`,
-          thresholds,
-          customParams,
-        );
-        let activePlaybook = bt.playbook;
-        if (!bt.pass) {
-          const altPlay: PlayKind = idea.playbook === "breakout" ? "fade" : "breakout";
-          const altBt = runBacktestOnBars(
-            activeBars,
-            altPlay,
-            `${candidate.primary.venue} ${tf} (${activeBars.length} barres)`,
-            thresholds,
-            customParams,
-          );
-          if (altBt.pass) {
-            bt = altBt;
-            activePlaybook = altBt.playbook;
+        for (const tfSet of tfSets) {
+          const tfStyle: "scalping" | "daytrade" | "longtrade" =
+            tfSet.tfLabel === "4h" ? "longtrade" : tfSet.tfLabel === "1h" ? "daytrade" : "scalping";
+          const customParams = {
+            lookback: this.state.settings.trainedLookback,
+            atrMult: this.state.settings.trainedAtrMult,
+            rewardR: this.state.settings.trainedRewardR,
+            ofiZScoreThreshold: this.state.settings.ofiZScoreThreshold,
+            fixedStopAtr: this.state.settings.fixedStopAtr,
+            fvgMinSizeAtr: this.state.settings.fvgMinSizeAtr,
+            style: tfStyle,
+            symbol: candidate.symbol,
+            autoOptimize: true,
+            scalpRelaxed: isScalp,
+          };
+
+          for (const pb of playbooksToTest) {
+            const bt = runBacktestOnBars(
+              tfSet.bars,
+              pb,
+              `${candidate.primary.venue} ${tfSet.tfLabel} (${tfSet.bars.length} barres)`,
+              thresholds,
+              customParams,
+            );
+            const activePlaybook = bt.playbook;
+            if (bt.pass) {
+              const curRegime = idea.regime ?? "MEAN_REVERTING";
+              const rlWeight = this.grpo.getStrategyWeight(curRegime, activePlaybook);
+              const alphaScore =
+                bt.outOfSample.expectancyR * 1.4 +
+                Math.min(2, Math.max(0, bt.outOfSample.profitFactor - 1)) * 0.6 +
+                (bt.outOfSample.deflatedSharpe ?? 0.5) * 0.8 +
+                rlWeight * 0.75 +
+                (idea.fomoBoostApplied ?? 0);
+              if (alphaScore > bestAlphaScore) {
+                bestAlphaScore = alphaScore;
+                selectedSnap = candidate;
+                selectedBars = tfSet.bars;
+                selectedBt = bt;
+                selectedPlaybook = activePlaybook;
+                selectedDir = idea.dir;
+                selectedThesis = idea.thesis;
+                selectedTf = tfSet.tfLabel;
+                selectedIdea = idea;
+                selectedCheck = check;
+              }
+            } else if (!bestFailedForCand) {
+              bestFailedForCand = { bt, playbook: activePlaybook };
+            }
           }
         }
-
-        if (bt.pass) {
-          const curRegime = idea.regime ?? "MEAN_REVERTING";
-          const rlWeight = this.grpo.getStrategyWeight(curRegime, activePlaybook);
-          const alphaScore =
-            bt.outOfSample.expectancyR * 1.4 +
-            Math.min(2, Math.max(0, bt.outOfSample.profitFactor - 1)) * 0.6 +
-            (bt.outOfSample.deflatedSharpe ?? 0.5) * 0.8 +
-            rlWeight * 0.75 +
-            (idea.fomoBoostApplied ?? 0);
-          if (alphaScore > bestAlphaScore) {
-            bestAlphaScore = alphaScore;
-            selectedSnap = candidate;
-            selectedBars = activeBars;
-            selectedBt = bt;
-            selectedPlaybook = activePlaybook;
-            selectedDir = idea.dir;
-            selectedThesis = idea.thesis;
-            selectedIdea = idea;
-            selectedCheck = check;
-          }
-        } else if (!fallbackKilled) {
-          fallbackKilled = { snap: candidate, bt, playbook: activePlaybook, check };
+        if (bestFailedForCand && !fallbackKilled) {
+          fallbackKilled = {
+            snap: candidate,
+            bt: bestFailedForCand.bt,
+            playbook: bestFailedForCand.playbook,
+            check,
+            testedTfs: tfSets.map((x) => x.tfLabel),
+          };
         }
       }
 
@@ -3206,6 +3242,7 @@ export class TradingFloorDesk {
         const check = fallbackKilled?.check ?? verifySecondSource(chosen);
         const bt = fallbackKilled?.bt;
         const activePlaybook = fallbackKilled?.playbook ?? "breakout";
+        const testedTfsStr = fallbackKilled?.testedTfs?.length ? fallbackKilled.testedTfs.join("/") : tf;
 
         const analystFallback = `[${chosen.symbol}] ${p.venue} ${fmtPx(p.price)} (1h ${fmtSignedPct(p.ret1h)}, 24h ${fmtSignedPct(chosen.ret24h)}) · Funding ${fmtFunding(p.funding)} · OI ${fmtCompactUsd(p.oiValue)} (${fmtSignedPct(p.oiChange1h)}) · Déséquilibre carnet ${(p.book ?? 0).toFixed(2)}${s ? ` | 2e source ${s.venue} : ${fmtPx(s.price)}` : ""}. — Données et contexte uniquement, je ne propose aucun trade.`;
         await this.speakWithAgentPrompt(
@@ -3227,22 +3264,22 @@ export class TradingFloorDesk {
             },
             ...this.state.killed.slice(0, 39),
           ];
-          setAgentActivity(this.state, "strategist", "killed", `Idées rejetées (meilleur: ${chosen.symbol})`, now, {
+          setAgentActivity(this.state, "strategist", "killed", `Idées rejetées (${chosen.symbol} · ${testedTfsStr})`, now, {
             targetAgent: "reviewer",
             asset: chosen.symbol,
           });
           emitPulse(this.state, "strategist", "reviewer", "backtest_kill", `IDÉE TUÉE ${chosen.symbol}`, chosen.symbol, now);
 
-          const killFallback = `IDÉE TUÉE [${chosen.symbol} · ${activePlaybook === "breakout" ? "Cassure" : "Contre-tendance"} (${tf})]. ${bt.killReason} (In-Sample : ${bt.inSample.trades} trades, ${fmtPct(bt.inSample.winRate, 0)} gagnants, ${fmtR(bt.inSample.expectancyR)} | OOS : ${bt.outOfSample.trades} trades, ${fmtR(bt.outOfSample.expectancyR)}). Aucune paire du pool n'a validé les critères.`;
+          const killFallback = `IDÉE TUÉE [${chosen.symbol} · Cassure & Mean-Rev (${testedTfsStr})]. ${bt.killReason} (In-Sample : ${bt.inSample.trades} trades, ${fmtPct(bt.inSample.winRate, 0)} gagnants, ${fmtR(bt.inSample.expectancyR)} | OOS : ${bt.outOfSample.trades} trades, ${fmtR(bt.outOfSample.expectancyR)}). Aucune paire ni unité de temps (${testedTfsStr}) n'a validé les critères.`;
           await this.speakWithAgentPrompt(
             "strategist",
-            `Décision=IDÉE TUÉE, Actif=${chosen.symbol}, Setup=${activePlaybook}, Motif=${bt.killReason}.`,
+            `Décision=IDÉE TUÉE, Actif=${chosen.symbol}, TimeframesTestés=${testedTfsStr}, Setup=${activePlaybook}, Motif=${bt.killReason}.`,
             killFallback,
             "kill",
           );
           await this.say(
             "reviewer",
-            `Rejet statistique sur ${chosen.symbol} archivé dans le registre des idées tuées. Aucun ticket émis.`,
+            `Rejet statistique multi-UT (${testedTfsStr}) sur ${chosen.symbol} archivé dans le registre des idées tuées. Aucun ticket émis.`,
             "kill",
           );
         } else {
@@ -3279,7 +3316,7 @@ export class TradingFloorDesk {
         this.state,
         "strategist",
         "backtesting",
-        `Backtest ${tf} + OOS sur ${chosen.symbol}`,
+        `Backtest ${selectedTf} + OOS sur ${chosen.symbol}`,
         now,
         { targetAgent: "risk", asset: chosen.symbol },
       );
@@ -3332,10 +3369,10 @@ export class TradingFloorDesk {
             ? entry + actualStopDist * rewardMult
             : entry - actualStopDist * rewardMult;
 
-      emitPulse(this.state, "strategist", "risk", "backtest_pass", `${tf} + WFO Purgé validés (${chosen.symbol})`, chosen.symbol, now);
+      emitPulse(this.state, "strategist", "risk", "backtest_pass", `${selectedTf} + WFO Purgé validés (${chosen.symbol})`, chosen.symbol, now);
 
       const dsrPct = ((bt.outOfSample.deflatedSharpe ?? 0.5) * 100).toFixed(0);
-      const stratPassFallback = `Setup validé [${activePlaybook}] : ${chosen.symbol} ${activeDir.toUpperCase()} (${tf}). ${activeThesis} Entrée ${fmtPx(entry)} · Invalidation ${fmtPx(invalidation)} (${fmtPct(actualStopDist / entry, 2)}) · Cible ${fmtPx(target)}. WFO Purgé IS : ${bt.inSample.trades} tr (${fmtR(bt.inSample.expectancyR)}) | OOS : ${bt.outOfSample.trades} tr (${fmtR(bt.outOfSample.expectancyR)}, PF ${bt.outOfSample.profitFactor.toFixed(2)}, DSR ${dsrPct}%).`;
+      const stratPassFallback = `Setup validé [${activePlaybook}] : ${chosen.symbol} ${activeDir.toUpperCase()} (${selectedTf}). ${activeThesis} Entrée ${fmtPx(entry)} · Invalidation ${fmtPx(invalidation)} (${fmtPct(actualStopDist / entry, 2)}) · Cible ${fmtPx(target)}. WFO Purgé IS : ${bt.inSample.trades} tr (${fmtR(bt.inSample.expectancyR)}) | OOS : ${bt.outOfSample.trades} tr (${fmtR(bt.outOfSample.expectancyR)}, PF ${bt.outOfSample.profitFactor.toFixed(2)}, DSR ${dsrPct}%).`;
 
       const chosenMp = chosen.marketProfile;
       const mpFact = chosenMp ? `, MarketProfile=(POC=${fmtPx(chosenMp.poc)}, VAH=${fmtPx(chosenMp.vah)}, VAL=${fmtPx(chosenMp.val)}, Range=${chosenMp.isRange})` : "";
