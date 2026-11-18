@@ -2662,6 +2662,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               Scannez ce QR code avec l’appareil photo de votre téléphone pour ouvrir le Desk en mode mobile (protégé par votre <strong>DESK_ACCESS_PIN</strong>).
             </div>
             <div id="mobileAccessUrl" class="mono" style="font-size:11px;color:#38bdf8;word-break:break-all;background:rgba(15,23,42,0.65);padding:6px 8px;border-radius:6px;border:1px solid var(--ring-1)">Chargement URL...</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:rgba(15,23,42,0.55);padding:6px 8px;border-radius:6px;border:1px solid var(--ring-1)">
+              <span style="font-size:11px;color:var(--fg-2)">Code PIN actuel : <strong id="mobilePinDisplay" class="mono" style="color:#4ade80;font-size:13px;letter-spacing:.08em">--</strong></span>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="mobilePinInput" type="text" class="input-dark mono" placeholder="Mon PIN perso (ex: 1234)" style="flex:1;padding:5px 8px;font-size:11.5px" />
+              <button type="button" class="pill-btn primary" onclick="saveCustomMobilePin()">Changer PIN</button>
+            </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
               <button type="button" class="pill-btn primary" onclick="copyMobileUrl()">Copier URL</button>
               <button type="button" class="pill-btn" onclick="loadMobileQr()">Actualiser QR</button>

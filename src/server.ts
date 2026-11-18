@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import QRCode from "qrcode";
-import { authEnabled, handleAuth } from "./auth.ts";
+import { authEnabled, getActivePin, handleAuth, isDirectLocal, setActivePin } from "./auth.ts";
 import type { StrategyOptimizerAgent } from "./agents/strategyOptimizer.ts";
 import type { TradingFloorDesk } from "./desk.ts";
 import { Mt5CloudBridge } from "./mt5.ts";
@@ -331,8 +331,35 @@ export function startDashboardServer(
 
     if (req.method === "GET" && url.pathname === "/api/mobile-access") {
       const info = resolveMobileDeskUrl(port);
+      const localPc = isDirectLocal(req);
       res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      res.end(JSON.stringify({ ok: true, url: info.url, isTunnel: info.isTunnel, pinEnabled: authEnabled() }));
+      res.end(
+        JSON.stringify({
+          ok: true,
+          url: info.url,
+          isTunnel: info.isTunnel,
+          pinEnabled: authEnabled(),
+          ...(localPc ? { pinCode: getActivePin() } : {}),
+        }),
+      );
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/mobile-pin") {
+      if (!isDirectLocal(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "Modification du PIN autorisée uniquement depuis le PC local." }));
+        return;
+      }
+      try {
+        const body = await readJsonPayload();
+        const out = setActivePin(typeof body.pin === "string" ? body.pin : "");
+        res.writeHead(out.ok ? 200 : 400, { "content-type": "application/json" });
+        res.end(JSON.stringify(out));
+      } catch (e) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: String(e) }));
+      }
       return;
     }
 

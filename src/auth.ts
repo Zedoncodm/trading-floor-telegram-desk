@@ -1,8 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { dirname, join } from "node:path";
 
 /**
- * Authentification par PIN (DESK_ACCESS_PIN) pour l'accès distant (Cloudflare Tunnel / LAN).
+ * Authentification par PIN (DESK_ACCESS_PIN ou PIN personnalisé) pour l'accès distant (Cloudflare Tunnel / LAN).
  * - Requêtes locales directes (127.0.0.1 sans en-têtes Cloudflare) : autorisées (PC + EA MT5).
  * - Toute autre requête : cookie de session signé HMAC requis, sinon écran de login.
  * - Anti brute-force : 5 essais ratés / 15 min par IP.
@@ -11,9 +13,32 @@ const COOKIE = "tfdesk_session";
 const SESSION_DAYS = 30;
 const secret = (process.env.DESK_SESSION_SECRET || "").trim() || randomBytes(32).toString("hex");
 const failures = new Map<string, { count: number; until: number }>();
+const PIN_FILE = join(process.cwd(), "data", "mobile_pin.json");
+
+export function getActivePin(): string {
+  try {
+    if (existsSync(PIN_FILE)) {
+      const parsed = JSON.parse(readFileSync(PIN_FILE, "utf8")) as { pin?: string };
+      if (typeof parsed.pin === "string" && parsed.pin.trim().length >= 4) {
+        return parsed.pin.trim();
+      }
+    }
+  } catch { /* fallback env */ }
+  return (process.env.DESK_ACCESS_PIN ?? "").trim();
+}
+
+export function setActivePin(newPin: string): { ok: boolean; pin?: string; error?: string } {
+  const clean = newPin.trim();
+  if (clean.length < 4 || clean.length > 24) {
+    return { ok: false, error: "Le PIN doit contenir entre 4 et 24 caractères." };
+  }
+  mkdirSync(dirname(PIN_FILE), { recursive: true });
+  writeFileSync(PIN_FILE, JSON.stringify({ pin: clean, updatedAt: Date.now() }, null, 2), "utf8");
+  return { ok: true, pin: clean };
+}
 
 export function authEnabled(): boolean {
-  return Boolean((process.env.DESK_ACCESS_PIN ?? "").trim());
+  return Boolean(getActivePin());
 }
 
 function clientIp(req: IncomingMessage): string {
@@ -53,7 +78,7 @@ function readCookie(req: IncomingMessage, name: string): string | undefined {
 }
 
 function pinMatches(pin: string): boolean {
-  const expected = Buffer.from((process.env.DESK_ACCESS_PIN ?? "").trim());
+  const expected = Buffer.from(getActivePin());
   const got = Buffer.from(pin.trim());
   if (got.length !== expected.length) {
     timingSafeEqual(expected, expected);
