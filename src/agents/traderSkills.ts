@@ -816,13 +816,15 @@ export class TraderSkillsEngine {
 
     if (outcome === "WIN_TP") {
       // Après un TP : interdiction de racheter le sommet / revendre le creux au même prix !
-      // Exige un repli de valeur >= 0.60 * ATR (vers EMA20/POC) OU une nouvelle expansion franche >= 0.45 * ATR.
+      // Exige un repli raisonnable (plafonné à 50% du gain ou 0.45 * ATR) OU une nouvelle expansion franche >= 0.40 * ATR.
+      const prevMove = Math.abs(exitPrice - entry);
+      const pullbackDist = Math.min(atr * 0.45, Math.max(prevMove * 0.5, atr * 0.15));
       if (ticket.direction === "long") {
-        requiredPullbackPrice = Number(Math.min(exitPrice - atr * 0.6, tech.ema20).toFixed(5));
-        requiredBreakoutPrice = Number((exitPrice + atr * 0.45).toFixed(5));
+        requiredPullbackPrice = Number((exitPrice - pullbackDist).toFixed(5));
+        requiredBreakoutPrice = Number((exitPrice + atr * 0.40).toFixed(5));
       } else {
-        requiredPullbackPrice = Number(Math.max(exitPrice + atr * 0.6, tech.ema20).toFixed(5));
-        requiredBreakoutPrice = Number((exitPrice - atr * 0.45).toFixed(5));
+        requiredPullbackPrice = Number((exitPrice + pullbackDist).toFixed(5));
+        requiredBreakoutPrice = Number((exitPrice - atr * 0.40).toFixed(5));
       }
       solutionsApplied.push(
         `Porte anti-poursuite post-TP sur ${ticket.asset} ${ticket.direction.toUpperCase()} : exige repli vers ${TraderSkillsEngine.fmtPrice(requiredPullbackPrice)} ou nouvelle cassure nette au-delà de ${TraderSkillsEngine.fmtPrice(requiredBreakoutPrice)} (aucune réouverture au sommet ${TraderSkillsEngine.fmtPrice(exitPrice)}).`,
@@ -992,19 +994,25 @@ export class TraderSkillsEngine {
       },
     });
 
-    // Q1 : Anti-Poursuite Post-TP (pas de rachat du sommet juste après un TP, hors HFT pyramidal explicite)
-    if (!allowPostTpContinuation && gate && gate.lastOutcome === "WIN_TP" && gate.lastDirection === direction) {
+    // Q1 : Anti-Poursuite Post-TP (pas de rachat du sommet juste après un TP, hors HFT pyramidal explicite ou gate expirée > 2h)
+    const tpGateFresh = gate && now - gate.at < 2 * 3600_000;
+    if (!allowPostTpContinuation && tpGateFresh && gate.lastOutcome === "WIN_TP" && gate.lastDirection === direction) {
+      const capDist = Math.min(atrSafe * 0.45, Math.max(Math.abs(gate.lastExitPrice - gate.lastEntryPrice) * 0.5, atrSafe * 0.15));
+      const reqPb =
+        direction === "long"
+          ? Math.max(gate.requiredPullbackPrice ?? gate.lastExitPrice - capDist, gate.lastExitPrice - capDist)
+          : Math.min(gate.requiredPullbackPrice ?? gate.lastExitPrice + capDist, gate.lastExitPrice + capDist);
       const pulledBack =
         direction === "long"
-          ? entry <= (gate.requiredPullbackPrice ?? gate.lastExitPrice - atrSafe * 0.6)
-          : entry >= (gate.requiredPullbackPrice ?? gate.lastExitPrice + atrSafe * 0.6);
+          ? entry <= reqPb
+          : entry >= reqPb;
       const brokeOutFresh =
         direction === "long"
-          ? entry >= (gate.requiredBreakoutPrice ?? gate.lastExitPrice + atrSafe * 0.45) && tech.trendBias === "bull"
-          : entry <= (gate.requiredBreakoutPrice ?? gate.lastExitPrice - atrSafe * 0.45) && tech.trendBias === "bear";
+          ? entry >= (gate.requiredBreakoutPrice ?? gate.lastExitPrice + atrSafe * 0.40) && tech.trendBias === "bull"
+          : entry <= (gate.requiredBreakoutPrice ?? gate.lastExitPrice - atrSafe * 0.40) && tech.trendBias === "bear";
       if (!pulledBack && !brokeOutFresh) {
-        const pbStr = TraderSkillsEngine.fmtPrice(gate.requiredPullbackPrice ?? gate.lastExitPrice - atrSafe * 0.6);
-        const boStr = TraderSkillsEngine.fmtPrice(gate.requiredBreakoutPrice ?? gate.lastExitPrice + atrSafe * 0.45);
+        const pbStr = TraderSkillsEngine.fmtPrice(reqPb);
+        const boStr = TraderSkillsEngine.fmtPrice(gate.requiredBreakoutPrice ?? gate.lastExitPrice + atrSafe * 0.40);
         return buildVeto(
           "strategist",
           "POST_TP_EXHAUSTION_CHASING",

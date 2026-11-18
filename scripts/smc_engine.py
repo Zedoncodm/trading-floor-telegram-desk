@@ -326,14 +326,14 @@ def analyze_smc_dataframe(payload: SmcInputPayload) -> SmcAnalysisOutputModel:
         l_prev2 = float(df["low"].iloc[i - 2])
         h_cur = float(df["high"].iloc[i])
         l_cur = float(df["low"].iloc[i])
-        if l_cur > h_prev2 and (l_cur - h_prev2) >= atr * 0.15:
+        if l_cur > h_prev2 and (l_cur - h_prev2) >= atr * 0.08:
             if not any(abs(f[0] - i) <= 1 and f[1] == 1 for f in fvg_candidates):
                 fvg_candidates.append((i, 1, h_prev2, l_cur))
-        elif h_prev2 > l_cur and (h_prev2 - l_cur) >= atr * 0.15:
+        elif h_prev2 > l_cur and (h_prev2 - l_cur) >= atr * 0.08:
             if not any(abs(f[0] - i) <= 1 and f[1] == -1 for f in fvg_candidates):
                 fvg_candidates.append((i, -1, l_cur, h_prev2))
 
-    # Pair Order Block (last opposite candle prior to impulse) backed by matching-direction FVG
+    # Pair Order Block (last opposite candle prior to impulse, fallback to impulse origin) backed by matching-direction FVG
     target_sign = 1 if structure_dir == "LONG" else -1 if structure_dir == "SHORT" else 0
     best_ob: Optional[tuple[int, float, float, bool]] = None
     best_fvg: Optional[tuple[int, float, float]] = None
@@ -343,14 +343,14 @@ def analyze_smc_dataframe(payload: SmcInputPayload) -> SmcAnalysisOutputModel:
         dir_obs = [o for o in ob_candidates if o[1] == target_sign]
 
         for f_idx, _, f_bot, f_top in reversed(dir_fvgs):
-            # Look for smc.ob close to impulse origin (f_idx - 4 .. f_idx)
+            # Look for smc.ob close to impulse origin (f_idx - 5 .. f_idx)
             matched_ob = next((o for o in reversed(dir_obs) if f_idx - 5 <= o[0] <= f_idx), None)
             if matched_ob is not None:
                 best_ob = (matched_ob[0], matched_ob[2], matched_ob[3], True)
                 best_fvg = (f_idx, f_bot, f_top)
                 break
-            # Find the last opposite candle before impulse f_idx - 1 / f_idx - 2
-            for j in range(max(0, f_idx - 2), max(-1, f_idx - 6), -1):
+            # Find the last opposite candle before impulse f_idx - 1 .. f_idx - 6
+            for j in range(max(0, f_idx - 1), max(-1, f_idx - 7), -1):
                 c_open = float(df["open"].iloc[j])
                 c_close = float(df["close"].iloc[j])
                 is_opposite = (c_close < c_open) if target_sign == 1 else (c_close > c_open)
@@ -358,6 +358,10 @@ def analyze_smc_dataframe(payload: SmcInputPayload) -> SmcAnalysisOutputModel:
                     best_ob = (j, float(df["low"].iloc[j]), float(df["high"].iloc[j]), True)
                     best_fvg = (f_idx, f_bot, f_top)
                     break
+            if best_ob is None:
+                origin_idx = max(0, f_idx - 2)
+                best_ob = (origin_idx, float(df["low"].iloc[origin_idx]), float(df["high"].iloc[origin_idx]), True)
+                best_fvg = (f_idx, f_bot, f_top)
             if best_ob is not None:
                 break
 
@@ -373,31 +377,60 @@ def analyze_smc_dataframe(payload: SmcInputPayload) -> SmcAnalysisOutputModel:
     mitigation_triggered = False
     ob_invalidated = False
 
+    if best_fvg is not None and structure_dir in ("LONG", "SHORT"):
+        fvg_idx, f_bot, f_top = best_fvg
+        fvg_model = _compute_fvg_state(df, fvg_idx, structure_dir, f_bot, f_top, px)
+
     if best_ob is not None:
         ob_idx, ob_low, ob_high, fvg_backed = best_ob
         ob_mid = (ob_low + ob_high) * 0.5
-        tol = atr * 0.18
+        tol = atr * 0.35
+        inv_tol = atr * 0.25
+        poi_low = min(ob_low, best_fvg[1]) if best_fvg is not None else ob_low
+        poi_high = max(ob_high, best_fvg[2]) if best_fvg is not None else ob_high
         between = df.iloc[ob_idx + 1 : -1] if len(df) - 1 > ob_idx + 1 else df.iloc[0:0]
+        recent_start_mit = max(ob_idx + 1, len(df) - 5)
+        recent_win = df.iloc[recent_start_mit:] if recent_start_mit < len(df) else df.iloc[0:0]
         if structure_dir == "LONG":
             ob_invalidated = bool(
-                (len(between) > 0 and float(between["close"].min()) < ob_low - tol * 0.5)
-                or float(df["close"].iloc[-1]) < ob_low - tol
+                (len(between) > 0 and float(between["close"].min()) < ob_low - inv_tol)
+                or float(df["close"].iloc[-1]) < ob_low - inv_tol
             )
-            in_ob_zone = (cur_low <= ob_high + tol or px <= ob_high + tol) and px >= ob_low - tol
+            in_poi_zone = (cur_low <= poi_high + tol or px <= poi_high + tol) and px >= ob_low - tol
             mitigated_before = bool(
-                len(between) > 0 and float(between["low"].min()) <= ob_high
+                len(between) > 0 and float(between["low"].min()) <= ob_high + tol * 0.5
             )
-            mitigation_triggered = (not ob_invalidated) and in_ob_zone and px >= ob_low - tol
+            recent_poi_mit = bool(
+                len(recent_win) > 0
+                and float(recent_win["low"].min()) <= poi_high + tol
+                and px >= ob_low - tol
+                and px <= ob_high + atr * 2.5
+            )
+            mitigation_triggered = (
+                (not ob_invalidated)
+                and px >= ob_low - tol
+                and (in_poi_zone or (recent_poi_mit and (mitigated_before or fvg_model.status != "UNMITIGATED")))
+            )
         else:
             ob_invalidated = bool(
-                (len(between) > 0 and float(between["close"].max()) > ob_high + tol * 0.5)
-                or float(df["close"].iloc[-1]) > ob_high + tol
+                (len(between) > 0 and float(between["close"].max()) > ob_high + inv_tol)
+                or float(df["close"].iloc[-1]) > ob_high + inv_tol
             )
-            in_ob_zone = (cur_high >= ob_low - tol or px >= ob_low - tol) and px <= ob_high + tol
+            in_poi_zone = (cur_high >= poi_low - tol or px >= poi_low - tol) and px <= ob_high + tol
             mitigated_before = bool(
-                len(between) > 0 and float(between["high"].max()) >= ob_low
+                len(between) > 0 and float(between["high"].max()) >= ob_low - tol * 0.5
             )
-            mitigation_triggered = (not ob_invalidated) and in_ob_zone and px <= ob_high + tol
+            recent_poi_mit = bool(
+                len(recent_win) > 0
+                and float(recent_win["high"].max()) >= poi_low - tol
+                and px <= ob_high + tol
+                and px >= ob_low - atr * 2.5
+            )
+            mitigation_triggered = (
+                (not ob_invalidated)
+                and px <= ob_high + tol
+                and (in_poi_zone or (recent_poi_mit and (mitigated_before or fvg_model.status != "UNMITIGATED")))
+            )
 
         ob_model = SmcOrderBlockPriceModel(
             low=round(ob_low, 6),
@@ -406,10 +439,6 @@ def analyze_smc_dataframe(payload: SmcInputPayload) -> SmcAnalysisOutputModel:
             fvg_backed=fvg_backed,
             mitigated=mitigation_triggered or mitigated_before,
         )
-
-    if best_fvg is not None and structure_dir in ("LONG", "SHORT"):
-        fvg_idx, f_bot, f_top = best_fvg
-        fvg_model = _compute_fvg_state(df, fvg_idx, structure_dir, f_bot, f_top, px)
 
     swept_only = [s for s in swept_levels if s.swept]
     relevant_swept = [

@@ -182,14 +182,14 @@ export class SmcEngine {
       }
     }
 
-    // 3. FVG (3 bougies) + Order Block (dernière bougie opposée avant l'impulsion)
+    // 3. FVG (3 bougies) + Order Block (dernière bougie opposée avant l'impulsion, repli sur bougie d'origine)
     const fvgList: Array<{ idx: number; dir: 1 | -1; bottom: number; top: number }> = [];
     for (let i = 2; i < series.length; i++) {
       const cPrev2 = series[i - 2];
       const cCur = series[i];
-      if (cCur.low > cPrev2.high && (cCur.low - cPrev2.high) >= effAtr * 0.15) {
+      if (cCur.low > cPrev2.high && (cCur.low - cPrev2.high) >= effAtr * 0.08) {
         fvgList.push({ idx: i, dir: 1, bottom: cPrev2.high, top: cCur.low });
-      } else if (cPrev2.low > cCur.high && (cPrev2.low - cCur.high) >= effAtr * 0.15) {
+      } else if (cPrev2.low > cCur.high && (cPrev2.low - cCur.high) >= effAtr * 0.08) {
         fvgList.push({ idx: i, dir: -1, bottom: cCur.high, top: cPrev2.low });
       }
     }
@@ -202,13 +202,21 @@ export class SmcEngine {
       const dirFvgs = fvgList.filter((f) => f.dir === targetSign);
       for (let fi = dirFvgs.length - 1; fi >= 0; fi--) {
         const f = dirFvgs[fi];
-        for (let j = Math.max(0, f.idx - 2); j >= Math.max(0, f.idx - 5); j--) {
+        for (let j = Math.max(0, f.idx - 1); j >= Math.max(0, f.idx - 6); j--) {
           const c = series[j];
           const isOpp = targetSign === 1 ? c.close < c.open : c.close > c.open;
           if (isOpp) {
             bestOb = { idx: j, low: c.low, high: c.high, fvgBacked: true };
             bestFvg = { idx: f.idx, bottom: f.bottom, top: f.top };
             break;
+          }
+        }
+        if (!bestOb) {
+          const originIdx = Math.max(0, f.idx - 2);
+          const originC = series[originIdx];
+          if (originC) {
+            bestOb = { idx: originIdx, low: originC.low, high: originC.high, fvgBacked: true };
+            bestFvg = { idx: f.idx, bottom: f.bottom, top: f.top };
           }
         }
         if (bestOb) break;
@@ -220,41 +228,6 @@ export class SmcEngine {
     let fvgState: SmcFvgState = { status: "NONE", bottom: 0, top: 0, midPrice: 0, fillPct: 0 };
     let mitigationTriggered = false;
     let obInvalidated = false;
-
-    if (bestOb) {
-      const obMid = (bestOb.low + bestOb.high) * 0.5;
-      const tol = effAtr * 0.18;
-      const between = series.slice(bestOb.idx + 1, -1);
-      if (structureDirection === "LONG") {
-        obInvalidated =
-          between.some((b) => b.close < bestOb.low - tol * 0.5) ||
-          lastBar.close < bestOb.low - tol;
-        const inZone = (lastBar.low <= bestOb.high + tol || px <= bestOb.high + tol) && px >= bestOb.low - tol;
-        const mitBefore = between.some((b) => b.low <= bestOb.high);
-        mitigationTriggered = !obInvalidated && inZone && px >= bestOb.low - tol;
-        orderBlockPrice = {
-          low: Number(bestOb.low.toFixed(6)),
-          high: Number(bestOb.high.toFixed(6)),
-          midPrice: Number(obMid.toFixed(6)),
-          fvgBacked: bestOb.fvgBacked,
-          mitigated: mitigationTriggered || mitBefore,
-        };
-      } else {
-        obInvalidated =
-          between.some((b) => b.close > bestOb.high + tol * 0.5) ||
-          lastBar.close > bestOb.high + tol;
-        const inZone = (lastBar.high >= bestOb.low - tol || px >= bestOb.low - tol) && px <= bestOb.high + tol;
-        const mitBefore = between.some((b) => b.high >= bestOb.low);
-        mitigationTriggered = !obInvalidated && inZone && px <= bestOb.high + tol;
-        orderBlockPrice = {
-          low: Number(bestOb.low.toFixed(6)),
-          high: Number(bestOb.high.toFixed(6)),
-          midPrice: Number(obMid.toFixed(6)),
-          fvgBacked: bestOb.fvgBacked,
-          mitigated: mitigationTriggered || mitBefore,
-        };
-      }
-    }
 
     if (bestFvg && (structureDirection === "LONG" || structureDirection === "SHORT")) {
       const gap = Math.max(bestFvg.top - bestFvg.bottom, 1e-9);
@@ -287,6 +260,59 @@ export class SmcEngine {
         midPrice: Number(((bestFvg.top + bestFvg.bottom) * 0.5).toFixed(6)),
         fillPct: Number(fillPct.toFixed(1)),
       };
+    }
+
+    if (bestOb) {
+      const obMid = (bestOb.low + bestOb.high) * 0.5;
+      const tol = effAtr * 0.35;
+      const invTol = effAtr * 0.25;
+      const poiLow = bestFvg ? Math.min(bestOb.low, bestFvg.bottom) : bestOb.low;
+      const poiHigh = bestFvg ? Math.max(bestOb.high, bestFvg.top) : bestOb.high;
+      const between = series.slice(bestOb.idx + 1, -1);
+      const recentWindow = series.slice(Math.max(bestOb.idx + 1, series.length - 5));
+      if (structureDirection === "LONG") {
+        obInvalidated =
+          between.some((b) => b.close < bestOb.low - invTol) ||
+          lastBar.close < bestOb.low - invTol;
+        const inPoiZone = (lastBar.low <= poiHigh + tol || px <= poiHigh + tol) && px >= bestOb.low - tol;
+        const mitBefore = between.some((b) => b.low <= bestOb.high + tol * 0.5);
+        const recentPoiMit =
+          recentWindow.some((b) => b.low <= poiHigh + tol) &&
+          px >= bestOb.low - tol &&
+          px <= bestOb.high + effAtr * 2.5;
+        mitigationTriggered =
+          !obInvalidated &&
+          px >= bestOb.low - tol &&
+          (inPoiZone || (recentPoiMit && (mitBefore || fvgState.status !== "UNMITIGATED")));
+        orderBlockPrice = {
+          low: Number(bestOb.low.toFixed(6)),
+          high: Number(bestOb.high.toFixed(6)),
+          midPrice: Number(obMid.toFixed(6)),
+          fvgBacked: bestOb.fvgBacked,
+          mitigated: mitigationTriggered || mitBefore,
+        };
+      } else {
+        obInvalidated =
+          between.some((b) => b.close > bestOb.high + invTol) ||
+          lastBar.close > bestOb.high + invTol;
+        const inPoiZone = (lastBar.high >= poiLow - tol || px >= poiLow - tol) && px <= bestOb.high + tol;
+        const mitBefore = between.some((b) => b.high >= bestOb.low - tol * 0.5);
+        const recentPoiMit =
+          recentWindow.some((b) => b.high >= poiLow - tol) &&
+          px <= bestOb.high + tol &&
+          px >= bestOb.low - effAtr * 2.5;
+        mitigationTriggered =
+          !obInvalidated &&
+          px <= bestOb.high + tol &&
+          (inPoiZone || (recentPoiMit && (mitBefore || fvgState.status !== "UNMITIGATED")));
+        orderBlockPrice = {
+          low: Number(bestOb.low.toFixed(6)),
+          high: Number(bestOb.high.toFixed(6)),
+          midPrice: Number(obMid.toFixed(6)),
+          fvgBacked: bestOb.fvgBacked,
+          mitigated: mitigationTriggered || mitBefore,
+        };
+      }
     }
 
     const relevantSwept = sweptLiquidityLevels.filter(

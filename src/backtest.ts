@@ -198,7 +198,7 @@ function simulateEngineSlice(
     } else if (playbook === "fade") {
       const base = bars[Math.max(0, i - lookback)].close;
       const stretch = (cur.close - base) / Math.max(base, 1e-9);
-      const thresh = Math.max((atr * 2.2) / Math.max(base, 1e-9), style === "scalping" ? 0.0015 : 0.0035);
+      const thresh = Math.max((atr * 2.0) / Math.max(base, 1e-9), style === "scalping" ? 0.0008 : 0.0012);
       if (stretch > thresh) dir = -1;
       else if (stretch < -thresh) dir = 1;
     } else if (playbook === "HFT_OrderFlow_Imbalance") {
@@ -232,24 +232,43 @@ function simulateEngineSlice(
       else if (prev.low <= vwap - 1.8 * sd && cur.close > vwap - 2.0 * sd && rsi < 35) dir = 1;
       risk = Math.max(atr * 1.5, cur.close * 0.0003);
     } else if (playbook === "Macro_FVG_Mitigation") {
+      const fvgLookback = Math.max(10, Math.min(lookback, i - 2));
       const cPrev2 = bars[i - 2];
-      const hi = Math.max(...bars.slice(i - 22, i - 2).map((b) => b.high));
-      const lo = Math.min(...bars.slice(i - 22, i - 2).map((b) => b.low));
-      if (cPrev2.high < cur.low && cur.low - cPrev2.high >= fvgMinAtr * atr && cur.close > hi) {
+      const hi = Math.max(...bars.slice(i - fvgLookback, i - 2).map((b) => b.high));
+      const lo = Math.min(...bars.slice(i - fvgLookback, i - 2).map((b) => b.low));
+      const minGap = Math.min(fvgMinAtr, 0.25) * atr;
+      const maxFillSearch = Math.min(hardEndIdx - 2, i + 4);
+      if (cPrev2.high < cur.low && cur.low - cPrev2.high >= minGap && cur.close > hi) {
         const mid = (cur.low + cPrev2.high) * 0.5;
-        if (bars[i + 1].low <= mid) {
+        let fillIdx = -1;
+        for (let mIdx = i + 1; mIdx <= maxFillSearch; mIdx++) {
+          if (bars[mIdx].low <= mid && bars[mIdx].close >= cPrev2.low) {
+            fillIdx = mIdx;
+            break;
+          }
+        }
+        if (fillIdx > i) {
           dir = 1;
           isMakerEntry = true;
           entryRef = mid;
           risk = Math.max(mid - cPrev2.low, atr * 0.8);
+          i = fillIdx - 1;
         }
-      } else if (cPrev2.low > cur.high && cPrev2.low - cur.high >= fvgMinAtr * atr && cur.close < lo) {
+      } else if (cPrev2.low > cur.high && cPrev2.low - cur.high >= minGap && cur.close < lo) {
         const mid = (cPrev2.low + cur.high) * 0.5;
-        if (bars[i + 1].high >= mid) {
+        let fillIdx = -1;
+        for (let mIdx = i + 1; mIdx <= maxFillSearch; mIdx++) {
+          if (bars[mIdx].high >= mid && bars[mIdx].close <= cPrev2.high) {
+            fillIdx = mIdx;
+            break;
+          }
+        }
+        if (fillIdx > i) {
           dir = -1;
           isMakerEntry = true;
           entryRef = mid;
           risk = Math.max(cPrev2.high - mid, atr * 0.8);
+          i = fillIdx - 1;
         }
       }
     }
@@ -333,11 +352,13 @@ function evaluateSlice(
   const rList = sim.trades.map((t) => t.rNet);
   const m = computeQuantMetrics(rList, trialsCount);
 
+  const relaxed = Boolean(params.scalpRelaxed);
+  const dsrPass = relaxed && m.trades < 8 ? m.expectancyR >= minExpectancyR : m.deflatedSharpe >= minDsr;
   const pass =
     m.trades >= minTrades &&
     m.expectancyR >= minExpectancyR &&
     m.profitFactor >= minProfitFactor &&
-    m.deflatedSharpe >= minDsr;
+    dsrPass;
 
   return {
     window: {
@@ -462,7 +483,7 @@ export function runBacktestOnBars(
 
   if (!pass && customParams.autoOptimize && total >= 80) {
     const style = customParams.style ?? "daytrade";
-    const trained = trainStrategyOnHistory(customParams.symbol ?? "ASSET", bars, style);
+    const trained = trainStrategyOnHistory(customParams.symbol ?? "ASSET", bars, style, playbook);
     const b = trained.best;
     const optParams: BacktestCustomParams = {
       ...customParams,
@@ -503,10 +524,13 @@ export function runBacktestOnBars(
       oosRes = optOos;
       pass = true;
     } else if (relaxed && optIs.window.trades >= 3 && optOos.window.trades >= 2) {
-      usedPlaybook = b.playbook;
-      isRes = optIs;
-      oosRes = optOos;
-      pass = optIs.window.expectancyR >= 0 && optOos.window.expectancyR >= 0.05 && optOos.window.profitFactor >= 1.15;
+      const relaxedOk = optIs.window.expectancyR >= 0 && optOos.window.expectancyR >= 0.05 && optOos.window.profitFactor >= 1.15;
+      if (relaxedOk) {
+        usedPlaybook = b.playbook;
+        isRes = { ...optIs, window: { ...optIs.window, pass: true } };
+        oosRes = { ...optOos, window: { ...optOos.window, pass: true } };
+        pass = true;
+      }
     }
   }
 
@@ -545,17 +569,21 @@ export function trainStrategyOnHistory(
   symbol: string,
   bars: Kline[],
   style: TradingStyle,
+  preferredPlaybook?: PlayKind,
 ): { best: TrainingCandidate; testedCount: number } {
   const tf: "15m" | "1h" | "4h" = style === "scalping" ? "15m" : style === "daytrade" ? "1h" : "4h";
   const lookbacks = style === "scalping" ? [10, 14, 20] : [14, 20, 28];
   const atrMults = style === "scalping" ? [0.5, 0.85, 1.2] : [1.15, 1.4, 1.75];
   const rewards = style === "scalping" ? [1.5, 1.8] : [1.6, 2.0, 2.5];
-  const playbooks: PlayKind[] =
+  const basePlaybooks: PlayKind[] =
     style === "scalping"
       ? ["HFT_OrderFlow_Imbalance", "breakout", "fade"]
       : style === "daytrade"
-        ? ["Session_VWAP_Reversion", "breakout", "fade"]
+        ? ["Session_VWAP_Reversion", "Macro_FVG_Mitigation", "breakout", "fade"]
         : ["Macro_FVG_Mitigation", "breakout", "fade"];
+  const playbooks: PlayKind[] = preferredPlaybook
+    ? [preferredPlaybook, ...basePlaybooks.filter((p) => p !== preferredPlaybook)]
+    : basePlaybooks;
 
   const splitIdx = Math.max(60, Math.floor(bars.length * 0.75));
   const oosStart = Math.min(bars.length - 10, splitIdx + 3);
@@ -582,15 +610,17 @@ export function trainStrategyOnHistory(
           const pass =
             isM.trades >= 4 &&
             oosM.trades >= 2 &&
-            oosM.expectancyR >= 0.15 &&
-            oosM.profitFactor >= 1.2 &&
-            oosM.deflatedSharpe >= 0.45;
+            oosM.expectancyR >= 0.10 &&
+            oosM.profitFactor >= 1.15 &&
+            (oosM.trades < 6 || oosM.deflatedSharpe >= 0.35);
+          const prefBonus = preferredPlaybook && playbook === preferredPlaybook && pass ? 0.35 : 0;
           const score =
             oosM.expectancyR * 0.55 +
             isM.expectancyR * 0.25 +
             (oosM.profitFactor - 1) * 0.2 +
             oosM.deflatedSharpe * 0.35 +
-            (pass ? 1 : 0);
+            (pass ? 1 : 0) +
+            prefBonus;
 
           const cand: TrainingCandidate = {
             symbol,

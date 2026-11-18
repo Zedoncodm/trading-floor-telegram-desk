@@ -2958,7 +2958,8 @@ export class TradingFloorDesk {
       directiveLower.includes("value area") ||
       directiveLower.includes("range") ||
       directiveLower.includes("breakouts échouent");
-    const isRangeMarket = mp.isRange || regime === "MEAN_REVERTING" || directiveForcesMeanRev;
+    const effectiveForceMeanRev = directiveForcesMeanRev && mp.isRange;
+    const isRangeMarket = mp.isRange;
 
     const applyMagnetTarget = (dir: Direction, fallbackTarget: number | undefined, playbook: PlayKind): number | undefined => {
       if (playbook !== "HFT_OrderFlow_Imbalance" && playbook !== "Session_VWAP_Reversion") {
@@ -2988,18 +2989,19 @@ export class TradingFloorDesk {
         trailingAtr1m?: number;
       },
     ) => {
-      // Règle stricte Market Profile : Interdiction de LONG > VAH ou SHORT < VAL en marché range
-      const mpCheck = MarketProfileAnalyzer.checkRangeEntryAllowed(res.dir, px, mp, isRangeMarket);
+      const expectedDir = res.dir === "long" ? "LONG" : "SHORT";
+      const hasSmcBreakout = smc.validSignal && smc.structureDirection === expectedDir;
+      // Règle stricte Market Profile : Interdiction de LONG > VAH ou SHORT < VAL en marché range (sauf confluence SMC validée)
+      const mpCheck = MarketProfileAnalyzer.checkRangeEntryAllowed(res.dir, px, mp, isRangeMarket, hasSmcBreakout);
       if (!mpCheck.allowed) {
         return null;
       }
-      // Si la directive Reviewer indique explicitement que les breakouts échouent en range, bloquer les breakouts purs
-      if (directiveForcesMeanRev && res.playbook === "breakout") {
+      // Si la directive Reviewer indique explicitement que les breakouts échouent sur cet actif en range, bloquer les breakouts purs
+      if (effectiveForceMeanRev && res.playbook === "breakout") {
         return null;
       }
       // Exigence SMC stricte sur tout signal directionnel structurel (CHoCH/BOS + OB adossé FVG + Mitigation OB)
       if (res.playbook === "breakout" || res.playbook === "Macro_FVG_Mitigation") {
-        const expectedDir = res.dir === "long" ? "LONG" : "SHORT";
         if (!smc.validSignal || smc.structureDirection !== expectedDir) {
           return null;
         }
@@ -3029,7 +3031,28 @@ export class TradingFloorDesk {
       };
     };
 
-    // Filtre Mean-Reversion prioritaire au contact des bords Value Area en range (exclusivement près de VAH/VAL, R:R plafonné <= 2.2R)
+    // Priorité au Moteur C : Smart Money Concepts (CHoCH/BOS + Order Block adossé FVG + Mitigation + Liquidity Sweep)
+    if (smc.validSignal && (smc.structureDirection === "LONG" || smc.structureDirection === "SHORT")) {
+      const smcDir: Direction = smc.structureDirection === "LONG" ? "long" : "short";
+      const entryPx = smc.entryPrice > 0 ? smc.entryPrice : px;
+      const rawRisk = Math.abs(entryPx - smc.stopPrice);
+      const risk = Math.max(rawRisk, Math.max(snap.atr || px * 0.0005, 2 * pipSizeForAsset(snap.symbol, entryPx)));
+      const stopPx = smcDir === "long" ? Math.min(smc.stopPrice, entryPx - risk) : Math.max(smc.stopPrice, entryPx + risk);
+      const rrMult = Math.max(2.2, this.state.settings.trainedRewardR || 2.2);
+      const targetPx = smcDir === "long" ? entryPx + risk * rrMult : entryPx - risk * rrMult;
+      const smcPlay = withConfluence({
+        dir: smcDir,
+        playbook: "Macro_FVG_Mitigation",
+        thesis: `Moteur SMC [${smc.engine}] : ${smc.signalJustification}`,
+        customEntry: entryPx,
+        customStop: stopPx,
+        customTarget: targetPx,
+        timeStopMs: 48 * 3600_000,
+      });
+      if (smcPlay) return smcPlay;
+    }
+
+    // Filtre Mean-Reversion au contact des bords Value Area en range (exclusivement près de VAH/VAL, R:R plafonné <= 2.2R)
     if (isRangeMarket && mp.vah > mp.val) {
       const stopBand = Math.max((snap.atr || px * 0.01) * 1.1, (mp.vah - mp.val) * 0.35);
       const rewardToPoc = Math.abs(px - mp.poc);
@@ -3192,26 +3215,6 @@ export class TradingFloorDesk {
       }
     }
 
-    // 4. Moteur C : Smart Money Concepts (CHoCH/BOS + Order Block adossé FVG + Mitigation + Liquidity Sweep)
-    if (smc.validSignal && (smc.structureDirection === "LONG" || smc.structureDirection === "SHORT")) {
-      const smcDir: Direction = smc.structureDirection === "LONG" ? "long" : "short";
-      const entryPx = smc.entryPrice > 0 ? smc.entryPrice : px;
-      const rawRisk = Math.abs(entryPx - smc.stopPrice);
-      const risk = Math.max(rawRisk, Math.max(snap.atr || px * 0.0005, 2 * pipSizeForAsset(snap.symbol, entryPx)));
-      const stopPx = smcDir === "long" ? Math.min(smc.stopPrice, entryPx - risk) : Math.max(smc.stopPrice, entryPx + risk);
-      const rrMult = Math.max(2.2, this.state.settings.trainedRewardR || 2.2);
-      const targetPx = smcDir === "long" ? entryPx + risk * rrMult : entryPx - risk * rrMult;
-      return withConfluence({
-        dir: smcDir,
-        playbook: "Macro_FVG_Mitigation",
-        thesis: `Moteur SMC [${smc.engine}] : ${smc.signalJustification}`,
-        customEntry: entryPx,
-        customStop: stopPx,
-        customTarget: targetPx,
-        timeStopMs: 48 * 3600_000,
-      });
-    }
-
     const fvg = snap.fvgZone;
     if (fvg && fvg.bosConfirmed && style === "longtrade") {
       const entryLim = fvg.midPrice;
@@ -3301,7 +3304,7 @@ export class TradingFloorDesk {
         });
       }
     }
-    if (directiveForcesMeanRev && mp.vah > mp.val) {
+    if (effectiveForceMeanRev && mp.vah > mp.val) {
       const stopBand = Math.max((snap.atr || px * 0.01) * 1.1, (mp.vah - mp.val) * 0.35);
       const mrDir: Direction = px >= mp.poc ? "short" : "long";
       const withinVaVicinity = px <= mp.vah + stopBand * 1.15 && px >= mp.val - stopBand * 1.15;
@@ -3589,7 +3592,7 @@ export class TradingFloorDesk {
           continue;
         }
 
-        // Construction multi-timeframes réelle (Crypto + Forex + Or + Indices)
+        // Construction multi-timeframes réelle (Forex + Or + Indices)
         const tfSets: Array<{ tfLabel: "1m" | "15m" | "1h" | "4h"; bars: MarketSnapshot["bars4h"] }> = [];
         const addTfSet = (tfLabel: "1m" | "15m" | "1h" | "4h", b?: MarketSnapshot["bars4h"]) => {
           if (b && b.length >= 60 && !tfSets.some((x) => x.tfLabel === tfLabel)) {
@@ -3599,6 +3602,7 @@ export class TradingFloorDesk {
         const bars15m = candidate.bars15m ?? [];
         const bars1hFrom15m = bars15m.length >= 160 ? aggregateKlines(bars15m, 4) : [];
         const bars4h = candidate.bars4h ?? [];
+        const bars4hFrom1h = !candidate.symbol.endsWith("USDT") && bars4h.length >= 240 ? aggregateKlines(bars4h, 4) : [];
         const bars1m = candidate.bars1m ?? [];
 
         for (const pTf of preferredTfs) {
@@ -3611,11 +3615,13 @@ export class TradingFloorDesk {
           } else if (pTf === "1h") {
             if (bars1hFrom15m.length >= 60) {
               addTfSet("1h", bars1hFrom15m);
+            } else if (!candidate.symbol.endsWith("USDT") && bars4h.length >= 60) {
+              addTfSet("1h", bars4h);
             } else if (candidate.symbol.endsWith("USDT")) {
               try { addTfSet("1h", await fetchBinanceKlines(candidate.symbol, "1h", 300)); } catch {}
             }
           } else if (pTf === "4h") {
-            addTfSet("4h", bars4h);
+            addTfSet("4h", bars4hFrom1h.length >= 60 ? bars4hFrom1h : bars4h);
           } else if (pTf === "1m") {
             addTfSet("1m", bars1m);
           }
@@ -3629,13 +3635,16 @@ export class TradingFloorDesk {
           minTradesOos: this.state.settings.minOosTrades30d,
           minExpectancyR: this.state.settings.minExpectancyR,
         };
-        const lockPlaybook =
-          idea.customTarget !== undefined || idea.customStop !== undefined || idea.playbook !== "breakout";
-        const directiveForcesMeanRev =
+        const effectiveForceMeanRev =
           /mean[- ]?reversion|équilibre|equilibre|value area|range|breakouts échouent/i.test(
             this.current_market_regime_directive || "",
-          );
-        const playbooksToTest: PlayKind[] = lockPlaybook ? [idea.playbook] : ["breakout", "fade"];
+          ) && Boolean(candidate.marketProfile?.isRange);
+        const playbooksToTest: PlayKind[] =
+          idea.playbook === "fade"
+            ? ["fade", "Session_VWAP_Reversion"]
+            : idea.playbook === "Macro_FVG_Mitigation"
+              ? ["Macro_FVG_Mitigation", "breakout"]
+              : Array.from(new Set<PlayKind>([idea.playbook, "Macro_FVG_Mitigation", "breakout", "fade"]));
         let bestFailedForCand: { bt: ReturnType<typeof runBacktestOnBars>; playbook: PlayKind } | null = null;
 
         for (const tfSet of tfSets) {
@@ -3664,8 +3673,8 @@ export class TradingFloorDesk {
             );
             const activePlaybook = bt.playbook;
             const playbookMismatch =
-              (lockPlaybook && activePlaybook !== idea.playbook) ||
-              (directiveForcesMeanRev && activePlaybook === "breakout");
+              (effectiveForceMeanRev && activePlaybook === "breakout") ||
+              (idea.playbook === "Macro_FVG_Mitigation" && activePlaybook === "fade");
             if (bt.pass && !playbookMismatch) {
               const candLevels = this.resolveCandidateTradeLevels(
                 candidate,

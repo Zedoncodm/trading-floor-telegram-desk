@@ -104,9 +104,21 @@ export class MarketProfileAnalyzer {
     const firstOpen = windowBars[0].open || windowBars[0].close;
     const lastClose = windowBars[windowBars.length - 1].close;
     const netEfficiency = Math.abs(lastClose - firstOpen) / Math.max(sessionHigh - sessionLow, 1e-9);
-    const insideRatio =
-      windowBars.filter((b) => b.close >= val * 0.9985 && b.close <= vah * 1.0015).length / windowBars.length;
-    const isRange = netEfficiency < 0.42 || insideRatio >= 0.62;
+    // Détection de range sans biais multiplicateur fixe (compatible FX / Or / Crypto)
+    const insideVaStrict =
+      windowBars.filter((b) => b.close >= val && b.close <= vah).length / windowBars.length;
+    const recentTrendEfficiency = (() => {
+      const rec = windowBars.slice(-16);
+      if (rec.length < 4) return 0;
+      let hi = -Infinity;
+      let lo = Infinity;
+      for (const b of rec) {
+        if (b.high > hi) hi = b.high;
+        if (b.low < lo) lo = b.low;
+      }
+      return Math.abs(rec[rec.length - 1].close - rec[0].open) / Math.max(hi - lo, 1e-9);
+    })();
+    const isRange = netEfficiency < 0.36 && recentTrendEfficiency < 0.55 && insideVaStrict >= 0.55;
 
     const pricePosition: MarketProfileSummary["pricePosition"] =
       px > vah ? "above_vah" : px < val ? "below_val" : "inside_va";
@@ -146,8 +158,10 @@ export class MarketProfileAnalyzer {
     currentPrice: number,
     profile: MarketProfileSummary | undefined,
     isRangeMarket?: boolean,
+    hasStructuralBreakout = false,
   ): { allowed: boolean; reason?: string } {
     if (!profile) return { allowed: true };
+    if (hasStructuralBreakout) return { allowed: true };
     const inRange = isRangeMarket ?? profile.isRange;
     if (!inRange) return { allowed: true };
 

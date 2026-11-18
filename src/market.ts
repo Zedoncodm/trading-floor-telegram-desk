@@ -710,8 +710,12 @@ export async function fetchYahooKlines(
 
 async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<MarketSnapshot> {
   const ySym = YAHOO_MAP[symbol] ?? symbol;
-  const bars4h = await fetchYahooKlines(symbol, "1h", "1mo");
-  const lastClose = bars4h[bars4h.length - 1]?.close ?? 0;
+  const [bars1h, bars15m] = await Promise.all([
+    fetchYahooKlines(symbol, "1h", "1mo"),
+    fetchYahooKlines(symbol, "15m", "5d").catch(() => [] as Kline[]),
+  ]);
+  const bars4h = bars1h;
+  const lastClose = bars4h[bars4h.length - 1]?.close ?? bars15m[bars15m.length - 1]?.close ?? 0;
   const price = lastClose;
   const prev1h = bars4h[bars4h.length - 2]?.close ?? price;
   const ret1h = prev1h > 0 ? (price - prev1h) / prev1h : 0;
@@ -721,8 +725,12 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
   const prior20 = bars4h.slice(-21, -1);
   const channelHi = prior20.length ? Math.max(...prior20.map((b) => b.high)) : null;
   const channelLo = prior20.length ? Math.min(...prior20.map((b) => b.low)) : null;
-  const last14 = bars4h.slice(-15, -1);
+  const smcBars = bars15m.length >= 25 ? bars15m : bars4h;
+  const last14 = smcBars.slice(-15, -1);
   const atr = last14.length ? last14.reduce((s, b) => s + (b.high - b.low), 0) / last14.length : null;
+  const smcContext = smcBars.length >= 15
+    ? SmcEngine.analyzeOhlcv(symbol, smcBars, price, atr, now)
+    : undefined;
 
   return {
     symbol,
@@ -730,6 +738,7 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
     primary: { venue: "YahooFinance", price, ret1h, funding: null, oiChange1h: null, oiValue: null, book: 0 },
     secondary: null,
     bars4h,
+    bars15m,
     channelHi,
     channelLo,
     atr,
@@ -737,8 +746,9 @@ async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<Ma
     news: [],
     onchain: `Flux Yahoo Finance (${ySym})`,
     errors: [],
-    vwapContext: computeSessionVwap(bars4h, now),
+    vwapContext: computeSessionVwap(smcBars, now),
     fvgZone: detectLatestFvg(bars4h, 0.5),
+    smcContext,
   };
 }
 
