@@ -2900,7 +2900,9 @@ export class TradingFloorDesk {
     } else if (isScalp) {
       const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * Math.min(atrMult, 1.35) : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * Math.min(atrMult, 1.35) : entry * 0.0004);
       stopDist = Math.min(entry * 0.006, Math.max(minPipFloor, rawAtrDist));
-      rewardMult = Math.max(this.state.settings.trainedRewardR || 1.8, 1.5);
+      rewardMult = this.state.settings.tradingStyle === "scalping"
+        ? Math.min(1.65, Math.max(this.state.settings.trainedRewardR || 1.5, 1.35))
+        : Math.max(this.state.settings.trainedRewardR || 1.8, 1.5);
     } else {
       const rawAtrDist = (localAtr ?? 0) > 0 ? (localAtr as number) * atrMult : ((chosen.atr ?? 0) > 0 ? (chosen.atr as number) * atrMult : entry * 0.0005);
       stopDist = Math.min(entry * 0.012, Math.max(minPipFloor, rawAtrDist));
@@ -2910,14 +2912,21 @@ export class TradingFloorDesk {
       const shieldAtrPad = (localAtr || chosen.atr || entry * 0.0005) * 1.25;
       stopDist = Math.min(entry * 0.02, stopDist + shieldAtrPad);
     }
-    const invalidation =
+    const isTrueScalping = this.state.settings.tradingStyle === "scalping";
+    const cappedCustomStop =
       selectedIdea?.customStop && !macroShieldApplied
-        ? selectedIdea.customStop
+        ? isTrueScalping && Math.abs(entry - selectedIdea.customStop) > stopDist * 1.4
+          ? (activeDir === "long" ? entry - Math.max(minPipFloor, stopDist * 1.35) : entry + Math.max(minPipFloor, stopDist * 1.35))
+          : selectedIdea.customStop
+        : null;
+    const invalidation =
+      cappedCustomStop !== null
+        ? cappedCustomStop
         : activeDir === "long"
           ? entry - stopDist
           : entry + stopDist;
     const actualStopDist = Math.abs(entry - invalidation);
-    const minTargetDist = actualStopDist * Math.max(1.5, rewardMult);
+    const minTargetDist = actualStopDist * (isTrueScalping ? rewardMult : Math.max(1.5, rewardMult));
     const rawCustomTarget = selectedIdea?.customTarget;
     const customTargetDirValid =
       rawCustomTarget !== undefined &&
@@ -2925,12 +2934,13 @@ export class TradingFloorDesk {
     const customTargetValid =
       customTargetDirValid &&
       !macroShieldApplied &&
+      !(isTrueScalping && Math.abs(rawCustomTarget - entry) > actualStopDist * 1.85) &&
       Math.abs(rawCustomTarget - entry) >= minTargetDist;
     const target = customTargetValid
       ? rawCustomTarget
       : activeDir === "long"
-        ? entry + actualStopDist * Math.max(1.8, rewardMult)
-        : entry - actualStopDist * Math.max(1.8, rewardMult);
+        ? entry + actualStopDist * (isTrueScalping ? rewardMult : Math.max(1.8, rewardMult))
+        : entry - actualStopDist * (isTrueScalping ? rewardMult : Math.max(1.8, rewardMult));
 
     let finalTarget = target;
     const tpMode = this.state.settings?.tpMode ?? "rr";
@@ -3008,11 +3018,27 @@ export class TradingFloorDesk {
 
     // Calcul temps réel du Market Profile intraday (bars15m en priorité), SMC Institutionnel & confluence technique
     const tech = computeTechnicalConfluence(snap.bars4h ?? [], px);
-    const mpBars = (snap.bars15m?.length ?? 0) >= 24 ? snap.bars15m! : (snap.bars4h ?? []);
-    const smcBars = (snap.bars15m?.length ?? 0) >= 25 ? snap.bars15m! : (snap.bars4h ?? []);
+    const mpBars =
+      style === "scalping" && (snap.bars5m?.length ?? 0) >= 24
+        ? snap.bars5m!
+        : (snap.bars15m?.length ?? 0) >= 24
+          ? snap.bars15m!
+          : (snap.bars4h ?? []);
+    const smcBars =
+      style === "scalping" && (snap.bars5m?.length ?? 0) >= 25
+        ? snap.bars5m!
+        : (snap.bars15m?.length ?? 0) >= 25
+          ? snap.bars15m!
+          : (snap.bars4h ?? []);
+    const smcAtrSlice = smcBars.slice(-15, -1);
+    const smcAtr =
+      style === "scalping" && smcAtrSlice.length
+        ? smcAtrSlice.reduce((s, b) => s + (b.high - b.low), 0) / smcAtrSlice.length
+        : snap.atr;
     const smc =
-      snap.smcContext ??
-      SmcEngine.analyzeOhlcv(snap.symbol, smcBars, px, snap.atr, now);
+      style === "scalping" && (snap.bars5m?.length ?? 0) >= 25
+        ? SmcEngine.analyzeOhlcv(snap.symbol, smcBars, px, smcAtr, now)
+        : (snap.smcContext ?? SmcEngine.analyzeOhlcv(snap.symbol, smcBars, px, smcAtr, now));
     snap.smcContext = smc;
     const mp: MarketProfileSummary =
       snap.marketProfile ??
@@ -3108,18 +3134,30 @@ export class TradingFloorDesk {
       const smcDir: Direction = smc.structureDirection === "LONG" ? "long" : "short";
       const entryPx = smc.entryPrice > 0 ? smc.entryPrice : px;
       const rawRisk = Math.abs(entryPx - smc.stopPrice);
-      const risk = Math.max(rawRisk, Math.max(snap.atr || px * 0.0005, 2 * pipSizeForAsset(snap.symbol, entryPx)));
-      const stopPx = smcDir === "long" ? Math.min(smc.stopPrice, entryPx - risk) : Math.max(smc.stopPrice, entryPx + risk);
-      const rrMult = Math.max(2.2, this.state.settings.trainedRewardR || 2.2);
+      const minRiskFloor = Math.max(smcAtr || px * 0.0004, 2 * pipSizeForAsset(snap.symbol, entryPx));
+      const baseRisk = Math.max(rawRisk, minRiskFloor);
+      const risk = style === "scalping" && smcAtr ? Math.min(baseRisk, Math.max(minRiskFloor, smcAtr * 1.8)) : baseRisk;
+      const stopPx =
+        smcDir === "long"
+          ? Math.max(smc.stopPrice, entryPx - risk)
+          : Math.min(smc.stopPrice, entryPx + risk);
+      const finalStopPx =
+        smcDir === "long"
+          ? Math.min(stopPx, entryPx - minRiskFloor)
+          : Math.max(stopPx, entryPx + minRiskFloor);
+      const rrMult =
+        style === "scalping"
+          ? Math.min(1.65, Math.max(1.35, this.state.settings.trainedRewardR || 1.5))
+          : Math.max(2.2, this.state.settings.trainedRewardR || 2.2);
       const targetPx = smcDir === "long" ? entryPx + risk * rrMult : entryPx - risk * rrMult;
       const smcPlay = withConfluence({
         dir: smcDir,
         playbook: "Macro_FVG_Mitigation",
         thesis: `Moteur SMC [${smc.engine}] : ${smc.signalJustification}`,
         customEntry: entryPx,
-        customStop: stopPx,
+        customStop: finalStopPx,
         customTarget: targetPx,
-        timeStopMs: 48 * 3600_000,
+        timeStopMs: style === "scalping" ? 4 * 3600_000 : 48 * 3600_000,
       });
       if (smcPlay) return smcPlay;
     }
