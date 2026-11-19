@@ -521,6 +521,15 @@ export class Mt5CloudBridge {
     return null;
   }
 
+  getCachedQuote(symbol: string): { bid: number; ask: number } | null {
+    const local = Mt5CloudBridge.readLocalMt5State();
+    if (!local?.quotes?.length) return null;
+    const norm = symbol.toUpperCase();
+    const q = local.quotes.find((item: LocalMt5Quote) => String(item.symbol ?? "").toUpperCase() === norm);
+    if (!q || !Number.isFinite(q.bid) || !Number.isFinite(q.ask) || q.bid <= 0 || q.ask <= 0) return null;
+    return { bid: q.bid, ask: q.ask };
+  }
+
   static writeLocalBridgePayload(payload: unknown, dataDir?: string): string[] {
     const isTest = Mt5CloudBridge.isTestOrTempEnv(dataDir);
     const dirs = isTest

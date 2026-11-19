@@ -1577,10 +1577,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <div class="nav-actions">
-      <select id="topActiveRegimeSelect" aria-label="Régime de trading" class="pill-btn mono" style="background:var(--surface-elevated);border:1px solid var(--ring-1);font-size:10.5px;font-weight:700;padding:4px 7px;cursor:pointer;outline:none;max-width:122px" onchange="quickSwitchRegime(this.value)" title="Changer le régime de trading en direct">
-        <option value="standard">Standard</option>
-        <option value="macro_fvg">Macro FVG</option>
-        <option value="hft_kamikaze">Kamikaze HFT</option>
+      <select id="topActiveRegimeSelect" aria-label="Mode de stratégie" class="pill-btn mono" style="background:var(--surface-elevated);border:1px solid var(--ring-1);font-size:10.5px;font-weight:700;padding:4px 7px;cursor:pointer;outline:none;max-width:136px" onchange="quickSwitchRegime(this.value)" title="Mode de stratégie unifié (synchronisé avec l'onglet Stratégie)">
+        <option value="daytrade">Day Trading</option>
+        <option value="scalping">Scalping 5m</option>
+        <option value="longtrade">Swing Macro</option>
       </select>
       <button type="button" class="pill-btn mono" id="navCadenceBadge" onclick="switchTab('strategy');setTimeout(function(){var el=document.getElementById('cfgTradesPerMin');if(el)el.focus();},120);" title="Cadence actuelle de scan/trading (cliquer pour accélérer)">4/min</button>
 
@@ -6727,33 +6727,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     }
 
     function quickSwitchRegime(val) {
-      var regime = val || 'standard';
+      var style = (val === 'scalping' || val === 'longtrade') ? val : 'daytrade';
+      var mappedRegime = style === 'longtrade' ? 'macro_fvg' : 'standard';
       var sel = document.getElementById('topActiveRegimeSelect');
-      if (sel) sel.value = regime;
+      if (sel) sel.value = style;
+      if (typeof selectAutonomousStyle === 'function') {
+        selectAutonomousStyle(style);
+        return;
+      }
       fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: { regime: regime } }),
+        body: JSON.stringify({ settings: { tradingStyle: style, regime: mappedRegime } }),
       }).then(function(r) { return r.json(); }).then(function(d) {
-        if (deskState && deskState.settings) deskState.settings.regime = regime;
+        if (deskState && deskState.settings) {
+          deskState.settings.tradingStyle = style;
+          deskState.settings.regime = mappedRegime;
+        }
         var rChip = document.getElementById('deskRegimeChip');
         if (rChip) {
-          if (regime === 'hft_kamikaze') {
-            rChip.textContent = ' RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
-            rChip.style.background = 'rgba(239, 68, 68, 0.25)';
-            rChip.style.color = '#fca5a5';
-            rChip.style.borderColor = 'rgba(239, 68, 68, 0.6)';
-          } else if (regime === 'macro_fvg') {
-            rChip.textContent = 'RÉGIME : MACRO FVG';
-            rChip.style.background = '';
-            rChip.style.color = '';
-            rChip.style.borderColor = '';
-          } else {
-            rChip.textContent = 'RÉGIME : STANDARD (WFO/GRPO)';
-            rChip.style.background = '';
-            rChip.style.color = '';
-            rChip.style.borderColor = '';
-          }
+          rChip.textContent = style === 'scalping'
+            ? 'MODE : SCALPING MULTI-PAIRES (5M)'
+            : style === 'longtrade'
+              ? 'MODE : SWING MACRO (4H/FVG)'
+              : 'MODE : DAY TRADING (1H/15M)';
+          rChip.style.background = '';
+          rChip.style.color = '';
+          rChip.style.borderColor = '';
         }
       }).catch(function(e) { console.error('Error switching regime:', e); });
     }
@@ -8401,29 +8401,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
 
       var rlSum = deskState.rlSummary || {};
-      var activeRegime = (deskState.settings && deskState.settings.regime) || 'standard';
+      var activeStyle = (deskState.settings && deskState.settings.tradingStyle) || 'daytrade';
       var regSel = document.getElementById('topActiveRegimeSelect');
-      if (regSel && regSel.value !== activeRegime) {
-        regSel.value = activeRegime;
+      if (regSel && regSel.value !== activeStyle) {
+        regSel.value = activeStyle;
       }
       var rChip = document.getElementById('deskRegimeChip');
       if (rChip) {
-        if (activeRegime === 'hft_kamikaze') {
-          rChip.textContent = ' RÉGIME : HFT FIAT-TARGET (KAMIKAZE)';
-          rChip.style.background = 'rgba(239, 68, 68, 0.25)';
-          rChip.style.color = '#fca5a5';
-          rChip.style.borderColor = 'rgba(239, 68, 68, 0.6)';
-        } else if (activeRegime === 'macro_fvg') {
-          rChip.textContent = 'RÉGIME : MACRO FVG';
-          rChip.style.background = '';
-          rChip.style.color = '';
-          rChip.style.borderColor = '';
-        } else {
-          rChip.textContent = 'RÉGIME : ' + (rlSum.regime || 'STANDARD (WFO/GRPO)');
-          rChip.style.background = '';
-          rChip.style.color = '';
-          rChip.style.borderColor = '';
-        }
+        rChip.textContent = activeStyle === 'scalping'
+          ? 'MODE : SCALPING MULTI-PAIRES (5M)'
+          : activeStyle === 'longtrade'
+            ? 'MODE : SWING MACRO (4H/FVG)'
+            : 'MODE : DAY TRADING (1H/15M)';
+        rChip.style.background = '';
+        rChip.style.color = '';
+        rChip.style.borderColor = '';
       }
       document.getElementById('deskRlChip').textContent = 'IA ÉPISODE #' + (rlSum.totalEpisodes || 0);
       var shieldOn = (deskState.volatilityShieldUntil || 0) > Date.now();

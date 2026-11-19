@@ -14,6 +14,12 @@ import { MarketProfileAnalyzer } from "./agents/marketProfile.ts";
 import { ActiveTradeManager } from "./agents/activeTradeManager.ts";
 import { SmcEngine } from "./agents/smcEngine.ts";
 import { TraderSkillsEngine } from "./agents/traderSkills.ts";
+import {
+  evaluateMarketSession,
+  evaluateSpreadGuard,
+  isPreRolloverScalpExitWindow,
+  StaleQuoteTracker,
+} from "./agents/marketGuard.ts";
 import { Mt5CloudBridge, type LocalMt5Position, type LocalMt5State } from "./mt5.ts";
 import { GrpoEngine, type GrpoCandidateOutcome, type MarketRegime } from "./rl/grpo.ts";
 import {
@@ -758,6 +764,8 @@ export class TradingFloorDesk {
   private monitoring = false;
   private syncingMt5 = false;
   private latestBarsBySymbol = new Map<string, MarketSnapshot["bars4h"]>();
+  private staleQuoteTracker = new StaleQuoteTracker();
+  private marketGuardLogAt = new Map<string, number>();
   private lastSmcBySymbol = new Map<string, NonNullable<MarketSnapshot["smcContext"]>>();
   private recentTicksBySymbol = new Map<string, Array<{ t: number; px: number }>>();
   private lastKnownEquity = 0;
@@ -2935,6 +2943,12 @@ export class TradingFloorDesk {
       stopDist = Math.min(entry * 0.02, stopDist + shieldAtrPad);
     }
     const isTrueScalping = this.state.settings.tradingStyle === "scalping";
+    if (isTrueScalping) {
+      // Garde-fou strict Scalping : aucun playbook (y compris Macro_FVG_Mitigation) ni Volatility Shield
+      // ne peut imposer un SL > 1.8x ATR(5m) ou un TP démesuré.
+      const maxScalpStopDist = Math.max(minPipFloor, (localAtr || chosen.atr || entry * 0.0005) * 1.8);
+      stopDist = Math.min(stopDist, maxScalpStopDist);
+    }
     const cappedCustomStop =
       selectedIdea?.customStop && !macroShieldApplied
         ? isTrueScalping && Math.abs(entry - selectedIdea.customStop) > stopDist * 1.4
@@ -3692,6 +3706,52 @@ export class TradingFloorDesk {
         if (!idea) continue;
 
         // VÉRIFICATION STRICTE ANTI-DEATH-LOOP DIRECTIONNELLE
+        // BOUCLIER HORAIRES / ROLLOVER / WEEK-END + STALE QUOTE + SPREAD GUARD
+        const sessionCheck = evaluateMarketSession(candidate.symbol, now);
+        if (!sessionCheck.tradable) {
+          const guardKey = `sess:${candidate.symbol}:${sessionCheck.status}`;
+          if (now - (this.marketGuardLogAt.get(guardKey) ?? 0) > 5 * 60_000) {
+            this.marketGuardLogAt.set(guardKey, now);
+            await this.say("risk", `[MARKET GUARD] ${sessionCheck.reason}`, "veto");
+          }
+          continue;
+        }
+        const liveMt5Quote = this.mt5.getCachedQuote?.(candidate.symbol);
+        if (liveMt5Quote) {
+          this.staleQuoteTracker.observe(candidate.symbol, liveMt5Quote.bid, liveMt5Quote.ask, now);
+          const staleCheck = this.staleQuoteTracker.check(candidate.symbol, now, 45_000);
+          if (staleCheck.stale) {
+            const staleKey = `stale:${candidate.symbol}`;
+            if (now - (this.marketGuardLogAt.get(staleKey) ?? 0) > 3 * 60_000) {
+              this.marketGuardLogAt.set(staleKey, now);
+              await this.say(
+                "risk",
+                `[STALE QUOTE GUARD] Cotations ${candidate.symbol} figées depuis ${staleCheck.staleSec}s — marché probablement fermé ou flux interrompu. Entrée bloquée.`,
+                "veto",
+              );
+            }
+            continue;
+          }
+          const estSlDist = idea.customStop
+            ? Math.abs((idea.customEntry ?? candidate.primary.price) - idea.customStop)
+            : (candidate.atr || candidate.primary.price * 0.001) * 1.2;
+          const spreadCheck = evaluateSpreadGuard({
+            symbol: candidate.symbol,
+            bid: liveMt5Quote.bid,
+            ask: liveMt5Quote.ask,
+            slDist: estSlDist,
+            atr5m: candidate.atr ?? undefined,
+          });
+          if (!spreadCheck.ok) {
+            const spKey = `spread:${candidate.symbol}`;
+            if (now - (this.marketGuardLogAt.get(spKey) ?? 0) > 3 * 60_000) {
+              this.marketGuardLogAt.set(spKey, now);
+              await this.say("risk", `[${spreadCheck.reason}] Entrée bloquée.`, "veto");
+            }
+            continue;
+          }
+        }
+
         const dirKey = `${candidate.symbol}:${idea.dir}`;
         const dirCool = this.state.directionalCooldowns?.[dirKey] ?? this.state.directionalCooldowns?.[candidate.symbol];
         if (dirCool && dirCool.until > now && dirCool.bannedDir === idea.dir) {
@@ -5502,8 +5562,44 @@ export class TradingFloorDesk {
         continue;
       }
 
-      // PHASE 4 — ActiveTradeManager : Hard Break-Even asynchrone à 50% du TP (+ frais)
-      const beMod = ActiveTradeManager.evaluateBreakEvenOrderModify(ticket, mark);
+      // PROTECTION PRÉ-ROLLOVER SCALPING : clôturer les scalps en profit avant le vide de liquidité de minuit / week-end
+      if (
+        this.state.settings?.tradingStyle === "scalping" &&
+        isPreRolloverScalpExitWindow(ticket.asset, now) &&
+        curUnrealized > Math.max(2, rtFees * 1.2)
+      ) {
+        const preRollQuote = this.mt5.getCachedQuote?.(ticket.asset);
+        const preRollMark = ActiveTradeManager.effectiveExitPrice(
+          ticket.direction,
+          mark,
+          preRollQuote?.bid,
+          preRollQuote?.ask,
+        );
+        await this.closeOpenTicket(
+          ticket,
+          preRollMark,
+          "target",
+          now,
+          ticket.mt5Profit !== undefined ? ticket.mt5Profit : curUnrealized,
+        );
+        this.say(
+          "execution",
+          `[PRE-ROLLOVER GUARD] Clôture préventive du scalp ${ticket.id} (${ticket.asset}) en profit (+${curUnrealized.toFixed(2)}€) avant la fermeture/rollover quotidien.`,
+          "fill",
+          ticket.id,
+        ).catch(() => {});
+        continue;
+      }
+
+      // PHASE 4 — ActiveTradeManager : Hard Break-Even asynchrone à 50% du TP (+ frais) sur prix Bid/Ask réel
+      const beQuote = this.mt5.getCachedQuote?.(ticket.asset);
+      const effectiveMark = ActiveTradeManager.effectiveExitPrice(
+        ticket.direction,
+        mark,
+        beQuote?.bid,
+        beQuote?.ask,
+      );
+      const beMod = ActiveTradeManager.evaluateBreakEvenOrderModify(ticket, effectiveMark);
       if (beMod.shouldModify) {
         ticket.invalidation = beMod.newStopLoss;
         ticket.breakEvenActive = true;

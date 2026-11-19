@@ -45,7 +45,17 @@ export class ReviewerAgent {
     const adverse = ticket.direction === "long" ? fill - ticket.entry : ticket.entry - fill;
     const notes: string[] = [];
     const reason = String(ticket.closeReason ?? "unknown");
-    const planned = ["target", "invalidation", "time", "progressive_stop", "trailing", "fiat_target"];
+    const planned = [
+      "target",
+      "invalidation",
+      "time",
+      "progressive_stop",
+      "trailing",
+      "fiat_target",
+      "flow_exhaustion",
+      "adverse_selection",
+      "pre_rollover",
+    ];
     let planRespected = true;
     if (!planned.some((p) => reason.includes(p))) {
       notes.push(`Sortie hors plan (${reason})`);

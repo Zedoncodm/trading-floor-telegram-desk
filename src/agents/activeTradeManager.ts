@@ -25,6 +25,17 @@ export type AgentRealtimeExitDecision = {
  */
 export class ActiveTradeManager {
   /**
+   * Prix de sortie réel côté courtier :
+   * - Un LONG se clôture au BID
+   * - Un SHORT se clôture à l'ASK (inclut le spread réel)
+   */
+  static effectiveExitPrice(direction: "long" | "short", mark: number, bid?: number, ask?: number): number {
+    if (direction === "long" && Number.isFinite(bid) && (bid ?? 0) > 0) return bid as number;
+    if (direction === "short" && Number.isFinite(ask) && (ask ?? 0) > 0) return ask as number;
+    return mark;
+  }
+
+  /**
    * Garantit que tout ticket transmis au courtier possède des bornes Hard SL / TP valides.
    */
   static ensureHardStopAndTarget(ticket: Ticket): { stopLoss: number; takeProfit: number } {
