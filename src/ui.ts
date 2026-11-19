@@ -6575,9 +6575,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
       var sec = Math.max(1, Math.round(60 / n));
       var lbl = document.getElementById('cadenceIntervalLabel');
-      if (lbl) lbl.textContent = n + '/min (1 trade / ' + sec + 's)';
-      var navB = document.getElementById('navCadenceBadge');
-      if (navB) navB.textContent = n + '/min';
+      if (lbl) lbl.textContent = n + '/min (1 scan / ' + sec + 's)';
     }
 
     function syncCadenceFromSlider(val) {
@@ -6644,9 +6642,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         isStrategyFormDirty = false;
         if (fb) {
           fb.style.display = 'inline-block';
-          fb.style.color = 'var(--up)';
-          fb.textContent = 'OK · ' + n + '/min' + (focusSym ? (' sur ' + focusSym) : '') + ' actif !';
-          setTimeout(function () { if (fb) fb.style.display = 'none'; }, 3500);
+          if (deskState && deskState.halted) {
+            fb.style.color = 'var(--amber)';
+            fb.textContent = '⚠️ Enregistré (' + n + '/min), mais DESK EN PAUSE (HALT) — cliquez sur RESUME DESK en haut !';
+          } else {
+            fb.style.color = 'var(--up)';
+            fb.textContent = 'OK · ' + n + '/min' + (focusSym ? (' sur ' + focusSym) : '') + ' actif (plafond positions & levier respectés) !';
+            setTimeout(function () { if (fb) fb.style.display = 'none'; }, 4000);
+          }
         }
       })
       .catch(function () {
@@ -6663,14 +6666,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var qChk = document.getElementById('cfgStrictQuotaChk');
       var focusSym = String(focusSel?.value || '').trim().toUpperCase();
       if (qChk) qChk.checked = Boolean(focusSym);
-      var n = Math.max(1, Math.min(60, Math.round(Number(document.getElementById('cfgTradesPerMin')?.value || 12))));
-      if (focusSym && n < 6) {
-        n = 12;
-        var el = document.getElementById('cfgTradesPerMin');
-        var sl = document.getElementById('cfgTradesPerMinSlider');
-        if (el) el.value = '12';
-        if (sl) sl.value = '12';
-      }
+      // Respecte exactement la cadence choisie par l'utilisateur (ne force plus 12/min en cachette)
+      var n = Math.max(1, Math.min(60, Math.round(Number(document.getElementById('cfgTradesPerMin')?.value || 4))));
       applyTradesPerMinDirectly(n);
     }
 
@@ -8106,12 +8103,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       highlightLevPresets(lev);
       var tpmLive = Math.max(1, Math.min(60, Math.round(Number(s.tradesPerMinute || (60 / Math.max(1, s.scalpIntervalSec || 15))) || 4)));
       var focusLive = String(s.focusSymbol || '').trim().toUpperCase();
-      var navCadEl = document.getElementById('navCadenceBadge');
-      if (navCadEl) {
-        navCadEl.textContent = (focusLive ? (focusLive + ' · ') : '') + tpmLive + '/min';
-        navCadEl.style.borderColor = focusLive ? 'var(--up-ring)' : '';
-        navCadEl.style.color = focusLive ? 'var(--up)' : '';
-      }
       var focusSel = document.getElementById('cfgFocusSymbol');
       if (focusSel) {
         var symPool = (s.symbols && s.symbols.length ? s.symbols : (deskState.tape || []).map(function (r) { return r.symbol; }))

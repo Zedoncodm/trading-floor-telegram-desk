@@ -2271,15 +2271,13 @@ export class TradingFloorDesk {
 
   async toggleManualHalt(halt?: boolean): Promise<{ ok: boolean; halted: boolean }> {
     const now = Date.now();
-    if (this.state.halted && this.state.haltKind === "loss" && halt === false) {
-      await this.say(
-        "risk",
-        "Refusé : la limite réelle de perte journalière a été atteinte. Attendez la session suivante.",
-        "veto",
-      );
-      return { ok: false, halted: true };
-    }
     const nextHalted = halt ?? !this.state.halted;
+    const wasLossHalt = this.state.halted && this.state.haltKind === "loss" && !nextHalted;
+    if (wasLossHalt) {
+      // Recalibre proprement la référence de la nouvelle session à l'equity actuelle
+      // pour permettre la reprise immédiate tout en gardant le coupe-circuit journalier actif.
+      this.state.dayStartEquity = Math.max(1, currentEquity(this.state));
+    }
     this.state.halted = nextHalted;
     this.state.haltKind = nextHalted ? "drill" : null;
     setAgentActivity(
@@ -2302,7 +2300,9 @@ export class TradingFloorDesk {
       "risk",
       nextHalted
         ? "⚠️ EXECUTION_HALTED_MANUAL : Tous les agents sont suspendus. Aucun nouveau trade ou ticket autorisé."
-        : "▶️ RESUME_DESK : Le circuit-breaker manuel est levé. Les 8 agents reprennent l'activité.",
+        : wasLossHalt
+          ? `▶️ RESUME_DESK (Nouvelle session) : Circuit-breaker de perte levé. Référence journalière recalibrée à ${fmtUsd(this.state.dayStartEquity, 2)} — la limite journalière reste active sur cette nouvelle base.`
+          : "▶️ RESUME_DESK : Le circuit-breaker manuel est levé. Les 8 agents reprennent l'activité.",
       nextHalted ? "veto" : "plain",
     );
     this.broadcast();
@@ -2363,6 +2363,18 @@ export class TradingFloorDesk {
       ? riskPercentOverride
       : (this.state.settings.riskPerTradePct ?? defaultRiskPercent());
     const equity = this.accountEquity();
+    const userLev = Math.max(1, Math.min(500, this.state.settings.defaultLeverage ?? 5));
+    const effectiveLev = this.state.settings.regime === "hft_kamikaze" ? userLev : Math.min(userLev, 25);
+    const maxConc = Math.max(1, Math.min(8, Math.round(this.state.settings.maxConcurrentPositions ?? 3)));
+    const maxExpPct = Math.max(0.05, Math.min(1.0, this.state.settings.maxExposurePct ?? 0.5));
+    const openNotional = this.state.tickets
+      .filter((t) => t.status === "open" && t.id !== ticket.id)
+      .reduce((sum, t) => sum + (t.notional || 0), 0);
+    // Plafond notionnel strict respectant le levier choisi par l'utilisateur et l'exposition max du desk
+    const maxDeskNotional = equity * effectiveLev * maxExpPct;
+    const remainingNotional = Math.max(equity * 0.05, maxDeskNotional - openNotional);
+    const maxNotionalPerTrade = Math.min(remainingNotional, maxDeskNotional / maxConc);
+
     const r = computeRiskBasedLots({
       symbol: ticket.asset,
       equity,
@@ -2370,6 +2382,7 @@ export class TradingFloorDesk {
       stopLoss: ticket.invalidation,
       riskPercent,
       marks,
+      maxNotionalUsd: maxNotionalPerTrade,
     });
     console.log(formatLotLog(r, `${ctx} ${ticket.id}`));
     if (!r.ok || r.finalLot <= 0) return r;
@@ -5098,8 +5111,24 @@ export class TradingFloorDesk {
         await this.refreshTape([focusSym]);
       }
 
+      const isTestEnv = Mt5CloudBridge.isTestOrTempEnv(this.cfg.dataDir);
+      // 1) Bouclier Horaires / Rollover / Week-end (actif en live)
+      if (!isTestEnv) {
+        const sessCheck = evaluateMarketSession(focusSym, now);
+        if (!sessCheck.tradable) {
+          const gKey = `hft-sess:${focusSym}:${sessCheck.status}`;
+          if (now - (this.marketGuardLogAt.get(gKey) ?? 0) > 5 * 60_000) {
+            this.marketGuardLogAt.set(gKey, now);
+            await this.say("risk", `[MARKET GUARD HFT] ${sessCheck.reason}`, "veto");
+          }
+          return 0;
+        }
+      }
+
       const mt5Now = Mt5CloudBridge.readLocalMt5State(25_000, this.cfg.dataDir);
       let livePx = markPriceOf(this.state, focusSym, 0);
+      let liveBid = 0;
+      let liveAsk = 0;
       if (mt5Now?.quotes) {
         for (const q of mt5Now.quotes) {
           const dSym = Mt5CloudBridge.mapMt5SymbolToDesk(q.symbol);
@@ -5107,6 +5136,8 @@ export class TradingFloorDesk {
             const mid = q.bid > 0 && q.ask > 0 ? (q.bid + q.ask) / 2 : q.bid || q.ask;
             if (mid > 0) {
               livePx = mid;
+              liveBid = q.bid || 0;
+              liveAsk = q.ask || 0;
               const existingRow = this.state.tape.find((r) => r.symbol === focusSym);
               if (existingRow) {
                 existingRow.prev = existingRow.px || mid;
@@ -5119,6 +5150,24 @@ export class TradingFloorDesk {
       }
       if (!livePx || livePx <= 0) return 0;
 
+      // 2) Stale-Quote Guard (cotations figées > 45s -> blocage HFT)
+      if (!isTestEnv && liveBid > 0 && liveAsk > 0) {
+        this.staleQuoteTracker.observe(focusSym, liveBid, liveAsk, now);
+        const staleCheck = this.staleQuoteTracker.check(focusSym, now, 45_000);
+        if (staleCheck.stale) {
+          const sKey = `hft-stale:${focusSym}`;
+          if (now - (this.marketGuardLogAt.get(sKey) ?? 0) > 3 * 60_000) {
+            this.marketGuardLogAt.set(sKey, now);
+            await this.say(
+              "risk",
+              `[STALE QUOTE HFT] Cotations ${focusSym} figées depuis ${staleCheck.staleSec}s — entrée HFT suspendue.`,
+              "veto",
+            );
+          }
+          return 0;
+        }
+      }
+
       const row = this.state.tape.find((r) => r.symbol === focusSym);
       const bars = this.latestBarsBySymbol.get(focusSym) ?? [];
       const mp =
@@ -5126,20 +5175,21 @@ export class TradingFloorDesk {
         (bars.length ? MarketProfileAnalyzer.computeSessionProfile(focusSym, bars, livePx, now) : undefined);
 
       const safeBurst = Math.max(1, Math.min(3, burstCount));
-      const maxSimultaneousOpen = Math.max(10, Math.min(35, Math.ceil(tpm * 1.15)));
-      const targetLev = this.state.settings?.regime === "hft_kamikaze"
-        ? 500
-        : Math.max(1, Math.min(500, this.state.settings?.defaultLeverage ?? 5));
+      // 3) Respect STRICT du plafond de positions simultanées choisi par l'utilisateur (1 / 3 / 5)
+      const maxSimultaneousOpen = Math.max(1, Math.min(8, Math.round(this.state.settings?.maxConcurrentPositions ?? 3)));
+      const targetLev = Math.max(1, Math.min(500, this.state.settings?.defaultLeverage ?? 5));
+      const liveSpread = liveAsk > liveBid && liveBid > 0 ? liveAsk - liveBid : 0;
+      const liveSpreadPct = liveSpread > 0 ? liveSpread / livePx : 0;
 
       for (let b = 0; b < safeBurst; b++) {
         this.executionTimestampsMs = this.executionTimestampsMs.filter((t) => now - t < 60_000);
         if (this.executionTimestampsMs.length >= tpm) break;
 
-        // Recycler intelligemment si le plafond de positions HFT simultanées est atteint :
-        // uniquement si une position est réellement en profit NET après frais (sinon ne pas fermer à perte).
-        const openOnFocus = this.state.tickets
-          .filter((t) => t.status === "open" && t.asset.toUpperCase() === focusSym);
-        if (openOnFocus.length >= maxSimultaneousOpen) {
+        // Recycler intelligemment si le plafond de positions simultanées (maxConcurrentPositions) est atteint :
+        // uniquement si une position est réellement en profit NET après frais (sinon attendre).
+        const allOpenNow = this.state.tickets.filter((t) => t.status === "open");
+        const openOnFocus = allOpenNow.filter((t) => t.asset.toUpperCase() === focusSym);
+        if (allOpenNow.length >= maxSimultaneousOpen || openOnFocus.length >= maxSimultaneousOpen) {
           const profitableSorted = openOnFocus
             .map((t) => ({ t, p: netTicketPnlAt(t, livePx) }))
             .filter((x) => x.p > Math.max(2, roundTripFeesForTicket(x.t)))
@@ -5149,31 +5199,54 @@ export class TradingFloorDesk {
           await this.closeOpenTicket(candidateToClose, livePx, "target", now);
         }
 
-        // Micro-signal directionnel mono-paire aligné avec EMA/MP (sans jamais hedger LONG+SHORT en parallèle)
+        // Micro-signal directionnel mono-paire aligné avec EMA/RSI/MP (sans jamais hedger LONG+SHORT)
         const tickDiff = row && row.prev > 0 ? livePx - row.prev : 0;
         const barSlope = bars.length >= 2 ? bars[bars.length - 1].close - bars[bars.length - 2].close : 0;
         const techFocus = computeTechnicalConfluence(bars, livePx);
         let dir: Direction =
           openOnFocus.length > 0
             ? openOnFocus[0].direction
-            : Math.abs(tickDiff) > 0
-              ? tickDiff >= 0
+            : bars.length >= 15 && techFocus.trendBias !== "neutral"
+              ? techFocus.trendBias === "bull"
                 ? "long"
                 : "short"
-              : techFocus.trendBias === "bull"
-                ? "long"
-                : techFocus.trendBias === "bear"
-                  ? "short"
-                  : Math.abs(barSlope) > 0
-                    ? barSlope >= 0
-                      ? "long"
-                      : "short"
-                    : (row?.change24h ?? 0) >= 0
-                      ? "long"
-                      : "short";
+              : Math.abs(tickDiff) > 0
+                ? tickDiff >= 0
+                  ? "long"
+                  : "short"
+                : Math.abs(barSlope) > 0
+                  ? barSlope >= 0
+                    ? "long"
+                    : "short"
+                  : (row?.change24h ?? 0) >= 0
+                    ? "long"
+                    : "short";
         if (mp?.isRange && openOnFocus.length === 0) {
           if (mp.pricePosition === "above_vah") dir = "short";
           else if (mp.pricePosition === "below_val") dir = "long";
+        }
+
+        // 4) Anti-chasing extrême RSI + Anti-Death-Loop (cooldown post-SL) en live
+        if (!isTestEnv) {
+          if (bars.length >= 15 && ((dir === "long" && techFocus.rsi14 > 74) || (dir === "short" && techFocus.rsi14 < 26))) {
+            break;
+          }
+          const dirCool =
+            this.state.directionalCooldowns?.[`${focusSym}:${dir}`] ??
+            this.state.directionalCooldowns?.[focusSym];
+          if (dirCool && dirCool.until > now && dirCool.bannedDir === dir) {
+            const cKey = `hft-cool:${focusSym}:${dir}`;
+            if (now - (this.marketGuardLogAt.get(cKey) ?? 0) > 2 * 60_000) {
+              this.marketGuardLogAt.set(cKey, now);
+              const remMin = Math.ceil((dirCool.until - now) / 60_000);
+              await this.say(
+                "risk",
+                `[ANTI-DEATH-LOOP HFT] ${focusSym} ${dir.toUpperCase()} en quarantaine directionnelle encore ${remMin} min après SL récent.`,
+                "veto",
+              );
+            }
+            break;
+          }
         }
 
         const eq = Math.max(1, currentEquity(this.state));
@@ -5182,24 +5255,66 @@ export class TradingFloorDesk {
         const tpMode = this.state.settings?.tpMode ?? "rr";
         const tpVal = Number(this.state.settings?.tpVal ?? 1.6);
 
-        let stopPct = 0.0004;
+        // 5) Distance SL réaliste (calibrée ATR + >= 4.5x spread réel, jamais 0.04% suicidaire sur l'Or)
+        const minSafeStopPct = Math.max(0.0012, liveSpreadPct * 4.5);
+        let stopPct = minSafeStopPct;
+        let atrForSpread = 0;
         if (slMode === "pct" && Number(this.state.settings?.slVal ?? 0) > 0) {
-          stopPct = Math.max(0.00015, Math.min(0.05, Number(this.state.settings.slVal) / 100));
+          stopPct = Math.max(minSafeStopPct, Math.min(0.05, Number(this.state.settings.slVal) / 100));
         } else if (slMode === "pips" && Number(this.state.settings?.slVal ?? 0) > 0) {
-          stopPct = Math.max(0.00015, (Number(this.state.settings.slVal) * pipSizeForAsset(focusSym, livePx)) / livePx);
+          stopPct = Math.max(minSafeStopPct, (Number(this.state.settings.slVal) * pipSizeForAsset(focusSym, livePx)) / livePx);
         } else if (bars.length >= 14) {
           const atrAvg = bars.slice(-14).reduce((s, k) => s + (k.high - k.low), 0) / 14;
-          if (atrAvg > 0) stopPct = Math.max(0.00015, Math.min(0.0020, (atrAvg * 0.85) / livePx));
+          atrForSpread = atrAvg;
+          if (atrAvg > 0) stopPct = Math.max(minSafeStopPct, Math.min(0.0045, (atrAvg * 1.15) / livePx));
         }
         const stopDist = livePx * stopPct;
         const stopPrice = dir === "long" ? livePx - stopDist : livePx + stopDist;
 
+        // 6) Spread-Guard + Anti-Stacking (pas de 2e ordre au même tick) + Budget Risque Ouvert en live
+        if (!isTestEnv) {
+          if (liveBid > 0 && liveAsk > 0) {
+            const spCheck = evaluateSpreadGuard({
+              symbol: focusSym,
+              bid: liveBid,
+              ask: liveAsk,
+              slDist: stopDist,
+              atr5m: atrForSpread > 0 ? atrForSpread : undefined,
+            });
+            if (!spCheck.ok) {
+              const spKey = `hft-sp:${focusSym}`;
+              if (now - (this.marketGuardLogAt.get(spKey) ?? 0) > 2 * 60_000) {
+                this.marketGuardLogAt.set(spKey, now);
+                await this.say("risk", `[${spCheck.reason}] Tir HFT bloqué.`, "veto");
+              }
+              break;
+            }
+          }
+          // Empêcher l'empilement de positions identiques au même niveau de prix
+          const tooCloseExisting = openOnFocus.some(
+            (t) => Math.abs((t.fillPrice ?? t.entry) - livePx) < stopDist * 0.25,
+          );
+          if (tooCloseExisting) {
+            break;
+          }
+          // Plafond de risque ouvert cumulé <= 65% du budget perte journalière
+          const dayLimUsd =
+            this.state.settings?.maxDayLossMode === "amount" && Number(this.state.settings?.maxDayLossVal ?? 0) > 0
+              ? Number(this.state.settings.maxDayLossVal)
+              : this.state.dayStartEquity * (this.state.settings?.maxDayLossPct ?? MAX_DAY_LOSS);
+          const openRiskSum = allOpenNow.reduce((sum, t) => sum + Math.max(0, t.riskUsd || 0), 0);
+          if (dayLimUsd > 0 && openRiskSum >= dayLimUsd * 0.65) {
+            break;
+          }
+        }
+
         const riskUsdBudget =
           riskMode === "amount" && Number(this.state.settings?.riskAmount ?? 0) > 0
-            ? Math.min(eq * 0.1, Number(this.state.settings.riskAmount))
-            : eq * Math.min(0.02, Math.max(0.001, (this.state.settings?.maxRiskPct ?? 0.01) * 0.5));
-        const slotBudgetCap = (eq * Math.min(targetLev, 25)) / Math.max(4, Math.min(20, tpm * 0.5));
-        const rawNotional = Math.min(slotBudgetCap, Math.max(150, riskUsdBudget / Math.max(stopPct, 0.00015)));
+            ? Math.min(eq * 0.05, Number(this.state.settings.riskAmount))
+            : eq * Math.min(0.015, Math.max(0.001, (this.state.settings?.maxRiskPct ?? 0.01) * 0.5));
+        const maxExpPct = Math.max(0.05, Math.min(1.0, this.state.settings?.maxExposurePct ?? 0.5));
+        const slotBudgetCap = (eq * Math.min(targetLev, 25) * maxExpPct) / Math.max(1, maxSimultaneousOpen);
+        const rawNotional = Math.min(slotBudgetCap, Math.max(150, riskUsdBudget / Math.max(stopPct, minSafeStopPct)));
         const notional = Number(Math.max(100, rawNotional).toFixed(2));
         const qty = Number((notional / Math.max(livePx, 1e-9)).toFixed(6));
 
@@ -6206,6 +6321,49 @@ export class TradingFloorDesk {
         focusSymbol: nextFocusSym,
         strictQuotaMode: nextStrictQuota,
       };
+      // Ré-évaluer immédiatement le circuit-breaker de perte journalière/totale quand l'utilisateur ajuste ses limites
+      const touchedLossLimits =
+        payload.settings.maxDayLossPct !== undefined ||
+        payload.settings.maxDayLossMode !== undefined ||
+        payload.settings.maxDayLossVal !== undefined ||
+        payload.settings.maxTotalLossVal !== undefined ||
+        payload.settings.maxTotalLossMode !== undefined ||
+        payload.settings.autoStopOnMaxLoss !== undefined;
+      if (this.state.halted && this.state.haltKind === "loss" && touchedLossLimits) {
+        const sNew = this.state.settings;
+        const newDayLimitUsd =
+          sNew.maxDayLossMode === "amount" && Number(sNew.maxDayLossVal ?? 0) > 0
+            ? Number(sNew.maxDayLossVal)
+            : this.state.dayStartEquity * (sNew.maxDayLossPct ?? MAX_DAY_LOSS);
+        const curDayLoss = -currentDayPnl(this.state);
+        let stillHitTotal = false;
+        if (Number(sNew.maxTotalLossVal ?? 0) > 0) {
+          const totalLim =
+            sNew.maxTotalLossMode === "amount"
+              ? Number(sNew.maxTotalLossVal)
+              : this.state.startEquity * (Number(sNew.maxTotalLossVal) / 100);
+          if (totalLim > 0 && this.state.startEquity - currentEquity(this.state) >= totalLim) {
+            stillHitTotal = true;
+          }
+        }
+        if (sNew.autoStopOnMaxLoss === false || (curDayLoss < newDayLimitUsd && !stillHitTotal)) {
+          this.state.halted = false;
+          this.state.haltKind = null;
+          setAgentActivity(this.state, "risk", "idle", "Desk actif (limite ajustée)", Date.now());
+          emitPulse(this.state, "human", "risk", "confirm", "RESUME_DESK", undefined, Date.now());
+          await this.say(
+            "risk",
+            `✅ Limite de perte max mise à jour (nouveau plafond : ${fmtUsd(newDayLimitUsd, 0)}) : le circuit-breaker est automatiquement levé et le desk reprend l'activité.`,
+            "plain",
+          );
+        } else {
+          await this.say(
+            "risk",
+            `ℹ️ Perte session actuelle (${fmtUsd(curDayLoss, 0)}) toujours ≥ nouveau plafond (${fmtUsd(newDayLimitUsd, 0)}). Augmentez davantage le plafond ou cliquez sur « RESUME DESK » pour recalibrer la session à l'equity actuelle (${fmtUsd(currentEquity(this.state), 2)}).`,
+            "veto",
+          );
+        }
+      }
       if ((payload.settings.tradesPerMinute !== undefined && nextTpm >= 6) || (nextFocusSym && nextStrictQuota)) {
         this.state.settings.autoPaperScalp = true;
         this.state.settings.executionMode = "auto";

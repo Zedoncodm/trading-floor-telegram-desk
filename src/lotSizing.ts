@@ -22,6 +22,8 @@ export type LotSizingInput = {
   marks?: Record<string, number>;
   spec?: Partial<VolumeSpec>;
   maxLotCap?: number;
+  /** Plafond notionnel dur dérivé du levier utilisateur et de l'exposition max du desk. */
+  maxNotionalUsd?: number;
 };
 
 export type LotSizingResult = {
@@ -144,6 +146,16 @@ export function computeRiskBasedLots(input: LotSizingInput): LotSizingResult {
   const calculatedLot = riskAmount / (slPoints * tickValuePerPoint);
   let capped = calculatedLot;
   let capApplied: LotSizingResult["capApplied"] = "none";
+  if (input.maxNotionalUsd && input.maxNotionalUsd > 0) {
+    const usdPerLot = contractSize * baseToUsd(symbol, input.entry, marks);
+    if (usdPerLot > 0) {
+      const maxLotByNotional = input.maxNotionalUsd / usdPerLot;
+      if (capped > maxLotByNotional) {
+        capped = maxLotByNotional;
+        capApplied = "max_lot_cap";
+      }
+    }
+  }
   if (capped > cap) { capped = cap; capApplied = "max_lot_cap"; }
   if (spec.volumeMax && capped > spec.volumeMax) { capped = spec.volumeMax; capApplied = "volume_max"; }
   const vmin = spec.volumeMin && spec.volumeMin > 0 ? spec.volumeMin : 0.01;
