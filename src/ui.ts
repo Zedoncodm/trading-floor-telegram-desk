@@ -3903,7 +3903,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       scene3d = new THREE.Scene();
       scene3d.fog = new THREE.FogExp2(0x03060c, 0.022);
 
-      camera3d = new THREE.PerspectiveCamera(38, w / h, 0.1, 220);
+      camera3d = new THREE.PerspectiveCamera(44, w / h, 0.1, 220);
       camera3d.position.set(0, 7.6, 13.4);
       camera3d.lookAt(0, 0.0, -1.0);
 
@@ -4057,11 +4057,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var ctx = wallCanvas3d.getContext('2d');
         if (!ctx) return;
         var st = deskState || {};
-        var eq = Number(st.mt5Equity || st.equity || 0);
+        var liveMt5 = st.mt5Live || {};
+        var mt5Ok = Boolean(liveMt5.connected);
+        var eq = Number((mt5Ok ? liveMt5.equity : 0) || st.equity || st.startEquity || 0);
+        var curSym = liveMt5.currency === 'EUR' ? '€' : '$';
+        var livePnl = Number(liveMt5.profit || 0);
         var openCount = Array.isArray(st.tickets) ? st.tickets.filter(function (t) { return t.status === 'open'; }).length : 0;
         var style = (st.settings && st.settings.tradingStyle) || 'daytrade';
         var modeLbl = style === 'scalping' ? 'SCALPING 5M' : style === 'longtrade' ? 'SWING MACRO 4H' : 'DAY TRADING 1H';
-        var mt5Ok = Boolean(st.mt5Connected);
         var grad = ctx.createLinearGradient(0, 0, 1024, 256);
         grad.addColorStop(0, '#030916');
         grad.addColorStop(0.5, '#0a1c36');
@@ -4081,7 +4084,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         ctx.fillText(mt5Ok ? 'MT5 LIVE' : 'MT5 SYNC', 914, 37);
         ctx.fillStyle = '#f8fafc';
         ctx.font = 'bold 54px monospace';
-        ctx.fillText(eq > 0 ? ('$' + eq.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : 'SYNCING...', 28, 118);
+        ctx.fillText(eq > 0 ? (curSym + eq.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '  (' + (livePnl >= 0 ? '+' : '') + livePnl.toFixed(2) + curSym + ')') : 'SYNCING...', 28, 118);
         ctx.fillStyle = '#94a3b8';
         ctx.font = 'bold 17px monospace';
         ctx.fillText('POSITIONS : ' + openCount + '   ·   9 AGENTS AUTONOMES   ·   MARKET GUARD ACTIF', 28, 152);
@@ -4092,13 +4095,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         ctx.strokeStyle = 'rgba(56,189,248,0.4)';
         ctx.beginPath(); ctx.moveTo(0, 184); ctx.lineTo(1024, 184); ctx.stroke();
         tape.forEach(function (row) {
-          var chg = Number(row.changePct || 0);
+          var pxNum = Number(row.px || row.price || 0);
+          var prevNum = Number(row.prev || 0);
+          var chg = prevNum > 0 && pxNum > 0 ? ((pxNum - prevNum) / prevNum) * 100 : Number(row.chg24h || row.changePct || 0);
           ctx.fillStyle = '#e2e8f0';
           ctx.font = 'bold 16px monospace';
           ctx.fillText(String(row.symbol || ''), tx, 212);
           ctx.fillStyle = chg >= 0 ? '#34d399' : '#f87171';
           ctx.font = 'bold 15px monospace';
-          var pxTxt = Number(row.price || 0) > 100 ? Number(row.price || 0).toFixed(2) : Number(row.price || 0).toFixed(4);
+          var pxTxt = pxNum > 100 ? pxNum.toFixed(2) : pxNum > 0 ? pxNum.toFixed(4) : '—';
           ctx.fillText(pxTxt + ' (' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%)', tx, 236);
           tx += 166;
         });
@@ -4129,7 +4134,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       wallTex3d.offset.x = 1;
       var curvedWallGeo = new THREE.CylinderGeometry(13.1, 13.1, 4.4, 56, 1, true, Math.PI * 0.72, Math.PI * 0.56);
       var tickerScreen = new THREE.Mesh(curvedWallGeo, new THREE.MeshBasicMaterial({ map: wallTex3d, side: THREE.BackSide }));
-      tickerScreen.position.set(0, 4.4, 0);
+      tickerScreen.position.set(0, 3.15, 0);
       scene3d.add(tickerScreen);
 
       // Socle holographique central + Noyau Quantique Multi-Anneaux Gyroscopiques
@@ -4169,14 +4174,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       // Asymmetric Spatial Zones where each Agent builds its own custom environment & roams freely
       var STUDIO_ZONES = {
-        analyst:    { x: -7.8, z: -4.2, rot: 0.45 },
-        strategist: { x: -2.4, z: -5.4, rot: 0.15 },
-        hunter:     { x:  4.6, z: -4.8, rot: -0.35 },
-        risk:       { x:  8.4, z: -0.4, rot: -1.15 },
-        execution:  { x:  5.8, z:  4.8, rot: -2.20 },
-        lead:       { x: -0.4, z: -0.6, rot: 0.00 },
-        reviewer:   { x: -5.2, z:  4.9, rot: 2.35 },
-        sentinel:   { x: -8.6, z:  1.1, rot: 1.40 }
+        analyst:    { x: -6.8, z: -3.6, rot: 0.55 },
+        strategist: { x: -2.5, z: -5.2, rot: 0.20 },
+        hunter:     { x:  2.5, z: -5.2, rot: -0.20 },
+        risk:       { x:  6.8, z: -3.6, rot: -0.55 },
+        execution:  { x:  6.2, z:  1.8, rot: -1.45 },
+        lead:       { x:  0.0, z:  4.6, rot: 0.00 },
+        reviewer:   { x: -6.2, z:  1.8, rot: 1.45 },
+        sentinel:   { x: -4.2, z:  4.2, rot: 2.35 }
       };
 
       AGENTS.forEach(function (ag, idx) {
@@ -4288,14 +4293,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
         var spTex = makeNameplateTexture(persona.nick.toUpperCase() + ' · ' + ag.name.toUpperCase(), 'EN VEILLE', ag.color);
         var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: spTex, transparent: true }));
-        sprite.position.set(0, 2.22, 0);
+        sprite.position.set(0, 2.42, 0);
         sprite.scale.set(2.55, 0.74, 1);
         walker.add(sprite);
 
         // Pop-up Speech Bubble Sprite right above nameplate
         var sbTex = makeSpeechBubbleTexture(persona.nick, persona.lines[0], ag.color);
         var speechSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sbTex, transparent: true, opacity: 0 }));
-        speechSprite.position.set(0, 3.04, 0);
+        speechSprite.position.set(0, 3.28, 0);
         speechSprite.scale.set(0.001, 0.001, 1);
         speechSprite.visible = false;
         walker.add(speechSprite);
@@ -4378,8 +4383,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var prevX = 0;
       var prevY = 0;
       var yaw = 0.28;
-      var pitch = 0.50;
-      var zoom = 19.8;
+      var pitch = 0.28;
+      var zoom = 18.2;
 
       renderer3d.domElement.addEventListener('pointerdown', function (e) { drag = true; prevX = e.clientX; prevY = e.clientY; });
       window.addEventListener('pointerup', function () { drag = false; });
@@ -8209,7 +8214,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       }
       var connPill = document.getElementById('navCadenceBadge');
       if (connPill) {
-        var mt5Live = Boolean(deskState.mt5Connected);
+        var mt5Live = Boolean(deskState.mt5Live && deskState.mt5Live.connected);
         connPill.textContent = mt5Live ? 'MT5 LIVE' : 'MT5 SYNC';
         connPill.style.borderColor = mt5Live ? 'rgba(16,185,129,0.45)' : 'rgba(245,158,11,0.45)';
         connPill.style.color = mt5Live ? '#6ee7b7' : '#fcd34d';
