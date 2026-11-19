@@ -1173,14 +1173,17 @@ export class TradingFloorDesk {
 
       // 0. Réinitialisation & Isolation complète par compte MT5 (tickets, Win Rate, Calendrier, Reviewer, Courbe)
       const acctKeyNow = String(mt5State.login || "paper");
+      const isTicketOutOfScaleForMicro = (t: Ticket): boolean =>
+        mt5State.balance < 500 &&
+        (Math.abs(t.pnl ?? 0) > Math.max(25, mt5State.balance * 1.5) ||
+          (t.notional ?? 0) > Math.max(5000, mt5State.balance * 150) ||
+          (t.riskUsd ?? 0) > Math.max(20, mt5State.balance * 0.8));
       const hasLegacyCrossAccountPollutingTickets =
         validMt5Metrics &&
-        mt5State.balance < 500 &&
         this.state.tickets.some(
           (t) =>
             t.status === "closed" &&
-            (!t.accountLogin || String(t.accountLogin) !== acctKeyNow) &&
-            (Math.abs(t.pnl ?? 0) > mt5State.balance * 1.5 || !t.accountLogin),
+            ((!t.accountLogin || String(t.accountLogin) !== acctKeyNow) || isTicketOutOfScaleForMicro(t)),
         );
 
       if ((accountSwitched || staleBaselineFromOldAccount || hasLegacyCrossAccountPollutingTickets) && validMt5Metrics) {
@@ -1189,28 +1192,37 @@ export class TradingFloorDesk {
         const oldArchiveKey = accountSwitched && prevLogin ? prevLogin : "legacy_prev";
         const legacyTickets = this.state.tickets.filter(
           (t) =>
-            (!t.accountLogin || String(t.accountLogin) !== acctKeyNow) &&
+            (isTicketOutOfScaleForMicro(t) || !t.accountLogin || String(t.accountLogin) !== acctKeyNow) &&
             !(t.status === "open" && t.mt5PositionId && liveMt5PosIds.has(String(t.mt5PositionId))),
         );
         const legacyReviews = (this.state.selfReflectionHistory ?? []).filter(
-          (r) => !r.accountLogin || String(r.accountLogin) !== acctKeyNow,
+          (r) =>
+            hasLegacyCrossAccountPollutingTickets ||
+            !r.accountLogin ||
+            String(r.accountLogin) !== acctKeyNow,
         );
         if (legacyTickets.length || legacyReviews.length) {
           this.store.saveAccountSnapshot(oldArchiveKey, legacyTickets, legacyReviews);
         }
 
-        // Charger UNIQUEMENT l'historique isolé du nouveau compte MT5 + ses positions ouvertes actuelles
-        const nextSnap = this.store.loadAccountSnapshot(acctKeyNow);
+        // Charger UNIQUEMENT les trades réels de ce compte MT5 + ses positions ouvertes actuelles
+        const nextSnap = hasLegacyCrossAccountPollutingTickets ? null : this.store.loadAccountSnapshot(acctKeyNow);
         const nextTicketMap = new Map<string, Ticket>();
         for (const nt of nextSnap?.tickets ?? []) {
-          if (nt && nt.id) nextTicketMap.set(nt.id, { ...nt, accountLogin: acctKeyNow });
+          if (nt && nt.id && !isTicketOutOfScaleForMicro(nt)) {
+            nextTicketMap.set(nt.id, { ...nt, accountLogin: acctKeyNow });
+          }
         }
         for (const curT of this.state.tickets) {
           const isOwnLiveOpen =
             curT.status === "open" &&
             ((curT.mt5PositionId && liveMt5PosIds.has(String(curT.mt5PositionId))) ||
-              (curT.accountLogin && String(curT.accountLogin) === acctKeyNow));
-          const isOwnClosed = curT.status === "closed" && curT.accountLogin && String(curT.accountLogin) === acctKeyNow;
+              (curT.accountLogin && String(curT.accountLogin) === acctKeyNow && !isTicketOutOfScaleForMicro(curT)));
+          const isOwnClosed =
+            curT.status === "closed" &&
+            curT.accountLogin &&
+            String(curT.accountLogin) === acctKeyNow &&
+            !isTicketOutOfScaleForMicro(curT);
           if (isOwnLiveOpen || isOwnClosed) {
             nextTicketMap.set(curT.id, { ...curT, accountLogin: acctKeyNow });
           }
@@ -1282,7 +1294,7 @@ export class TradingFloorDesk {
           this.state.settings.strictQuotaMode = false;
         }
         this.state.dailyEvolutionState = TraderSkillsEngine.buildModule4DailyEvolutionState(this.state, now);
-        this.store.saveAccountSnapshot(acctKeyNow, this.state.tickets, this.state.selfReflectionHistory);
+        this.store.saveAccountSnapshot(acctKeyNow, this.state.tickets, this.state.selfReflectionHistory, true);
         setAgentActivity(this.state, "risk", "idle", `Compte #${mt5State.login} isolé & synchronisé`, now);
         structuralChange = true;
         await this.say(

@@ -479,12 +479,17 @@ export class DeskStore {
   }
 
   /** Sauvegarde les tickets & audits Reviewer dédiés à un compte MT5 donné (jamais perdus ni mélangés). */
-  saveAccountSnapshot(accountKey: string, tickets: Ticket[], reviews: SelfReflectionReviewEntry[]): void {
+  saveAccountSnapshot(
+    accountKey: string,
+    tickets: Ticket[],
+    reviews: SelfReflectionReviewEntry[],
+    overwrite = false,
+  ): void {
     try {
       const key = String(accountKey || "paper").replace(/[^a-zA-Z0-9_-]/g, "_");
       mkdirSync(this.dir, { recursive: true });
       const snapPath = join(this.dir, `account_history_${key}.json`);
-      const prev = this.loadAccountSnapshot(key);
+      const prev = overwrite ? null : this.loadAccountSnapshot(key);
       const tMap = new Map<string, Ticket>();
       for (const t of prev?.tickets ?? []) {
         if (t && t.id) tMap.set(t.id, t);
@@ -593,9 +598,11 @@ export class DeskStore {
       writeFileSync(hTmp, JSON.stringify(archive, null, 2), "utf8");
       renameSync(hTmp, this.historyPath);
       if (activeAcctKey && activeAcctKey !== "paper") {
-        const ownTickets = (state.tickets ?? []).filter((t) => !t.accountLogin || String(t.accountLogin) === activeAcctKey);
-        const ownReviews = (state.selfReflectionHistory ?? []).filter((r) => !r.accountLogin || String(r.accountLogin) === activeAcctKey);
-        this.saveAccountSnapshot(activeAcctKey, ownTickets, ownReviews);
+        const ownTickets = (state.tickets ?? []).filter((t) => String(t.accountLogin ?? "") === activeAcctKey);
+        const ownReviews = (state.selfReflectionHistory ?? []).filter((r) => String(r.accountLogin ?? "") === activeAcctKey);
+        if (ownTickets.length || ownReviews.length) {
+          this.saveAccountSnapshot(activeAcctKey, ownTickets, ownReviews);
+        }
       }
     } catch {
       // Never crash main save on archive error
