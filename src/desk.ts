@@ -5154,14 +5154,26 @@ export class TradingFloorDesk {
       await this.mt5.closePosition(ticket.mt5PositionId);
     }
 
+    this.state.realizedPnl += netPnl;
+    const ccy = this.state.mt5Live?.currency === "EUR" ? "€" : "$";
+    const fmtCloseAmt = (v: number) => `${v >= 0 ? "+" : "-"}${Math.abs(v).toFixed(2)}${ccy}`;
+    const balAfter =
+      this.state.mt5Live?.connected && this.state.mt5Live.balance > 0 && typeof realizedOverridePnl === "number"
+        ? Number(this.state.mt5Live.balance)
+        : Math.max(0.01, Number((this.state.startEquity + this.state.realizedPnl).toFixed(2)));
+    const balBefore = Math.max(0.01, Number((balAfter - netPnl).toFixed(2)));
+    const tradeCapRatio = balBefore > 0 ? netPnl / balBefore : 0;
+    const baseStartEq = this.state.startEquity > 0 ? this.state.startEquity : balBefore;
+    const cumulCapRatio = baseStartEq > 0 ? (balAfter - baseStartEq) / baseStartEq : 0;
+    const capEvolTag = `${fmtSignedPct(tradeCapRatio, 2)} cap · Capital ${balBefore.toFixed(2)}${ccy} → ${balAfter.toFixed(2)}${ccy} (Évol. ${fmtSignedPct(cumulCapRatio, 2)})`;
+
     const postMortem =
       netPnl >= 0
-        ? `Post-mortem ${ticket.id} : gain net de ${fmtSignedUsd(netPnl, 0)} (${fmtR(rMult)}) sur ${ticket.asset}. Plan exécuté sans dérive.`
-        : `Post-mortem ${ticket.id} : perte nette de ${fmtSignedUsd(netPnl, 0)} (${fmtR(rMult)}) sur ${ticket.asset} (motif : ${reason}). Conformément à la charte, cette perte est verrouillée à vie dans le Journal et ne sera jamais supprimée.`;
+        ? `Post-mortem ${ticket.id} : gain net de ${fmtCloseAmt(netPnl)} (${fmtR(rMult)} · ${capEvolTag}) sur ${ticket.asset}. Plan exécuté sans dérive.`
+        : `Post-mortem ${ticket.id} : perte nette de ${fmtCloseAmt(netPnl)} (${fmtR(rMult)} · ${capEvolTag}) sur ${ticket.asset} (motif : ${reason}). Conformément à la charte, cette perte est verrouillée à vie dans le Journal et ne sera jamais supprimée.`;
 
     ticket.postMortemReport = postMortem;
 
-    this.state.realizedPnl += netPnl;
     const isFastScalp = (this.state.settings?.regime === "hft_kamikaze") || (this.state.settings?.tradingStyle === "scalping");
     const isStopOrLoss = reason === "invalidation" || reason === "adverse_selection" || reason === "drill" || netPnl < 0;
 
@@ -5306,21 +5318,21 @@ export class TradingFloorDesk {
     if (reason === "invalidation" || reason === "drill") {
       await this.wakeHuman(
         "invalidation",
-        `Invalidation touchée sur ${ticket.id} (${ticket.asset} ${ticket.direction.toUpperCase()}) à ${fmtPx(exitPrice)}. Position clôturée en PAPER (${fmtSignedUsd(netPnl, 0)}).`,
+        `Invalidation touchée sur ${ticket.id} (${ticket.asset} ${ticket.direction.toUpperCase()}) à ${fmtPx(exitPrice)}. Position clôturée (${fmtCloseAmt(netPnl)} · ${capEvolTag}).`,
         ticket.id,
       );
     }
 
     await this.say(
       "execution",
-      `Clôture PAPER [${reason.toUpperCase()}] sur ${ticket.id} (${ticket.asset}) @ ${fmtPx(exitPrice)} · PnL net ${fmtSignedUsd(netPnl, 0)} (${fmtR(rMult)}).`,
+      `Clôture [${reason.toUpperCase()}] sur ${ticket.id} (${ticket.asset}) @ ${fmtPx(exitPrice)} · PnL net ${fmtCloseAmt(netPnl)} (${fmtR(rMult)} · ${capEvolTag}).`,
       "fill",
       ticket.id,
     );
 
     await this.speakWithAgentPrompt(
       "reviewer",
-      `Clôture=${ticket.id}, Actif=${ticket.asset}, Motif=${reason}, PnL=${fmtSignedUsd(netPnl, 0)}, R=${fmtR(rMult)}. Si perte, rappeler qu'elle ne sera jamais supprimée.`,
+      `Clôture=${ticket.id}, Actif=${ticket.asset}, Motif=${reason}, PnL=${fmtCloseAmt(netPnl)} (${capEvolTag}), R=${fmtR(rMult)}. Si perte, rappeler qu'elle ne sera jamais supprimée.`,
       postMortem,
       "plain",
       ticket.id,

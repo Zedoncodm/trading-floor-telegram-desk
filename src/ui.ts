@@ -1008,7 +1008,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       justify-content: space-between;
       font-size: 9.5px;
       min-width: 0;
-      min-height: 44px;
+      min-height: 54px;
       overflow: hidden;
     }
     .cal-cell.pos { background: var(--up-bg); border-color: var(--up-ring); }
@@ -1936,7 +1936,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
                   <th>Stratégie / Régime</th>
                   <th>Entrée → Mark/Sortie</th>
                   <th>Levier / LiqPrice</th>
-                  <th>PnL Live / R</th>
+                  <th id="ledgerPnlColHdr">PnL Live / R</th>
                   <th>Grade</th>
                 </tr>
               </thead>
@@ -2044,7 +2044,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
                 <th>Sens</th>
                 <th>Setup</th>
                 <th>Motif</th>
-                <th style="text-align:right">PnL</th>
+                <th style="text-align:right">PnL / % Cap. &amp; Évol.</th>
               </tr>
             </thead>
             <tbody id="revTabPostMortemBody"></tbody>
@@ -2963,6 +2963,63 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     function fmtSignedUsd(v, d) {
       var n = Number(v || 0);
       return (n >= 0 ? '+' : '-') + currencySym() + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: d || 2, maximumFractionDigits: d || 2 });
+    }
+    function fmtSignedPctVal(v, d) {
+      var n = Number(v || 0);
+      if (!isFinite(n)) n = 0;
+      var dec = d === undefined ? 2 : d;
+      return (n >= 0 ? '+' : '-') + Math.abs(n).toFixed(dec) + '%';
+    }
+    function buildClosedTradeCapitalStats() {
+      var allTickets = (deskState && Array.isArray(deskState.tickets)) ? deskState.tickets : [];
+      var closed = allTickets.filter(function (t) { return t && t.status === 'closed'; }).slice();
+      closed.sort(function (a, b) {
+        var ta = Number(a.closedAt || a.createdAt || 0);
+        var tb = Number(b.closedAt || b.createdAt || 0);
+        if (ta !== tb) return ta - tb;
+        var ca = Number(a.createdAt || 0);
+        var cb = Number(b.createdAt || 0);
+        if (ca !== cb) return ca - cb;
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
+      var sumAllPnl = closed.reduce(function (s, t) { return s + Number(t.pnl || 0); }, 0);
+      var hasMt5 = Boolean(deskState && deskState.mt5Live && deskState.mt5Live.connected && Number(deskState.mt5Live.balance) > 0);
+      var liveBal = hasMt5
+        ? Number(deskState.mt5Live.balance)
+        : (Number((deskState && deskState.startEquity) || 10000) + Number((deskState && deskState.realizedPnl) || 0));
+      var startBal = hasMt5
+        ? Number((liveBal - sumAllPnl).toFixed(2))
+        : Number((deskState && deskState.startEquity) || (liveBal - sumAllPnl) || 10000);
+      if (!isFinite(startBal) || startBal <= 0) {
+        startBal = Math.max(0.01, Number((deskState && deskState.startEquity) || 100));
+      }
+      var running = startBal;
+      var byId = {};
+      for (var i = 0; i < closed.length; i++) {
+        var t = closed[i];
+        var pnl = Number(t.pnl || 0);
+        var balBefore = Math.max(0.01, Number(running.toFixed(2)));
+        running = running + pnl;
+        var balAfter = Math.max(0.01, Number(running.toFixed(2)));
+        var tradePct = balBefore > 0 ? (pnl / balBefore) * 100 : 0;
+        var cumulPct = startBal > 0 ? ((balAfter - startBal) / startBal) * 100 : 0;
+        var cumulDelta = Number((balAfter - startBal).toFixed(2));
+        byId[t.id] = {
+          balBefore: balBefore,
+          balAfter: balAfter,
+          tradePct: tradePct,
+          cumulPct: cumulPct,
+          cumulDelta: cumulDelta,
+          startBal: startBal,
+          seq: i + 1
+        };
+      }
+      return {
+        byId: byId,
+        startBal: startBal,
+        endBal: Math.max(0.01, Number(running.toFixed(2))),
+        count: closed.length
+      };
     }
     function fmtPx(v) {
       var n = Number(v || 0);
@@ -5669,18 +5726,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       if (typeof lwCandleSeries.setMarkers === 'function' && chartBarsCache.length) {
         var markers = [];
+        var capStatsChart = buildClosedTradeCapitalStats();
         closedTk.forEach(function (tk) {
           var closeTs = tk.closedAt || tk.createdAt;
           var snapped = snapTsToBarTime(closeTs, chartBarsCache);
           if (!snapped) return;
           var pnl = Number(tk.pnl || 0);
           var win = pnl >= 0;
+          var csMk = capStatsChart.byId[tk.id];
           markers.push({
             time: snapped,
             position: win ? 'aboveBar' : 'belowBar',
             color: win ? '#10b981' : '#f43f5e',
             shape: win ? 'arrowDown' : 'arrowUp',
-            text: (win ? 'TP ' : 'SL ') + (pnl >= 0 ? '+' : '') + pnl.toFixed(1)
+            text: (win ? 'TP ' : 'SL ') + fmtSignedUsd(pnl, 2) + (csMk ? (' (' + fmtSignedPctVal(csMk.tradePct, 2) + ')') : '')
           });
         });
         openTk.forEach(function (tk) {
@@ -6348,6 +6407,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function renderJournalView() {
       if (!deskState) return;
+      var capStats = buildClosedTradeCapitalStats();
+      var totalCumulPct = capStats.startBal > 0 ? ((capStats.endBal - capStats.startBal) / capStats.startBal) * 100 : 0;
       var closed = (deskState.tickets || []).filter(function (t) { return t.status === 'closed'; });
       var open = (deskState.tickets || []).filter(function (t) { return t.status === 'open'; });
       var wins = closed.filter(function (t) { return (t.pnl || 0) > 0; });
@@ -6369,7 +6430,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var kpiHost = document.getElementById('notionKpiStrip');
       if (kpiHost) {
         kpiHost.innerHTML =
-          '<div class="kpi-box"><div class="kpi-lbl">PnL Réalisé Total</div><div class="kpi-val mono ' + (deskState.realizedPnl >= 0 ? 'up' : 'down') + '">' + fmtSignedUsd(deskState.realizedPnl, 2) + '</div></div>' +
+          '<div class="kpi-box"><div class="kpi-lbl">PnL Réalisé Total</div><div class="kpi-val mono ' + (deskState.realizedPnl >= 0 ? 'up' : 'down') + '">' + fmtSignedUsd(deskState.realizedPnl, 2) + ' <span style="font-size:12px">(' + fmtSignedPctVal(totalCumulPct, 2) + ')</span></div></div>' +
           '<div class="kpi-box"><div class="kpi-lbl">PnL Latent (Ouverts)</div><div class="kpi-val mono ' + (totalUnrealized >= 0 ? 'up' : 'down') + '">' + fmtSignedUsd(totalUnrealized, 2) + '</div></div>' +
           '<div class="kpi-box"><div class="kpi-lbl">Win Rate</div><div class="kpi-val mono">' + winRate.toFixed(1) + '%</div></div>' +
           '<div class="kpi-box"><div class="kpi-lbl">Espérance (R)</div><div class="kpi-val mono ' + (avgR >= 0 ? 'up' : 'down') + '">' + (avgR >= 0 ? '+' : '') + avgR.toFixed(2) + 'R</div></div>' +
@@ -6377,9 +6438,25 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           '<div class="kpi-box"><div class="kpi-lbl">Ouvertes / Fermées</div><div class="kpi-val mono">' + open.length + ' / ' + closed.length + '</div></div>';
       }
 
+      var pnlHdr = document.getElementById('ledgerPnlColHdr');
+      if (pnlHdr) {
+        pnlHdr.textContent = ledgerMode === 'closed' ? 'PnL / % Cap. & Évolution' : 'PnL Live / R';
+      }
+
       var rows = (ledgerMode === 'open' ? open : closed).filter(function (t) {
         return ledgerDir === 'ALL' || t.direction === ledgerDir;
       });
+      if (ledgerMode === 'closed') {
+        rows = rows.slice().sort(function (a, b) {
+          var ta = Number(a.closedAt || a.createdAt || 0);
+          var tb = Number(b.closedAt || b.createdAt || 0);
+          if (tb !== ta) return tb - ta;
+          var ca = Number(a.createdAt || 0);
+          var cb = Number(b.createdAt || 0);
+          if (cb !== ca) return cb - ca;
+          return String(b.id || '').localeCompare(String(a.id || ''));
+        });
+      }
       var cntBadge = document.getElementById('ledgerCountBadge');
       if (cntBadge) {
         cntBadge.textContent = rows.length + ' ' + (ledgerMode === 'open' ? 'OUVERTE(S)' : 'FERMÉE(S)') + (ledgerDir !== 'ALL' ? (' · ' + ledgerDir.toUpperCase()) : '');
@@ -6398,6 +6475,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             var pnlCls = livePnl >= 0 ? 'up' : 'down';
             var mt5Badge = t.mt5PositionId ? '<div style="font-size:10px;color:var(--up)">MT5 #' + t.mt5PositionId + '</div>' : '';
             var lotsLabel = t.mt5Lots ? (Number(t.mt5Lots).toFixed(2) + ' lot · ') : '';
+            var cs = t.status === 'closed' ? capStats.byId[t.id] : null;
+            var pnlCellHtml;
+            if (t.status === 'closed') {
+              pnlCellHtml =
+                '<td class="mono" style="white-space:nowrap">' +
+                '<div class="' + pnlCls + '" style="font-weight:700">' + fmtSignedUsd(livePnl, 2) + (cs ? (' <span>(' + fmtSignedPctVal(cs.tradePct, 2) + ')</span>') : '') + '<span style="font-size:10px;color:var(--fg-3);font-weight:500"> · ' + (liveR >= 0 ? '+' : '') + Number(liveR).toFixed(2) + 'R</span></div>' +
+                (cs ? ('<div style="font-size:10px;color:var(--fg-2);margin-top:2px">Cap ' + fmtUsd(cs.balBefore, 2) + ' → <strong style="color:var(--fg-0)">' + fmtUsd(cs.balAfter, 2) + '</strong> <span class="' + (cs.cumulPct >= 0 ? 'up' : 'down') + '">(Évol. ' + fmtSignedPctVal(cs.cumulPct, 2) + ')</span></div>') : '') +
+                '</td>';
+            } else {
+              pnlCellHtml = '<td class="mono ' + pnlCls + '">' + fmtSignedUsd(livePnl, 2) + ' (' + Number(liveR).toFixed(2) + 'R)</td>';
+            }
             return (
               '<tr onclick="openJournalInspector(&quot;' + t.id + '&quot;)">' +
               '<td class="mono"><div>' + t.id + '</div>' + mt5Badge + '</td>' +
@@ -6405,7 +6493,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               '<td><div>' + (STRATEGY_LABELS[t.engine || t.playbook] || t.engine || t.playbook) + '</div><div style="font-size:10px;color:var(--fg-3)">' + (t.regime || '--') + '</div></td>' +
               '<td class="mono">' + fmtPx(fill) + ' → ' + fmtPx(mark) + '</td>' +
               '<td class="mono">' + lotsLabel + (t.leverage || 1) + 'x / ' + (t.liqPrice ? fmtPx(t.liqPrice) : '--') + '</td>' +
-              '<td class="mono ' + pnlCls + '">' + fmtSignedUsd(livePnl, 2) + ' (' + Number(liveR).toFixed(2) + 'R)</td>' +
+              pnlCellHtml +
               '<td><span class="badge-chip">' + (t.setupGrade || 'A') + '</span></td>' +
               '</tr>'
             );
@@ -6441,25 +6529,46 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           '<div style="color:var(--fg-3)">Aucun trade clôturé ce jour-là sur ce compte.</div>';
         return;
       }
+      var capStats = buildClosedTradeCapitalStats();
+      var listAsc = list.slice().sort(function (a, b) {
+        var ta = Number(a.closedAt || a.createdAt || 0);
+        var tb = Number(b.closedAt || b.createdAt || 0);
+        if (ta !== tb) return ta - tb;
+        return String(a.id || '').localeCompare(String(b.id || ''));
+      });
+      var listDesc = listAsc.slice().reverse();
       var wins = list.filter(function (t) { return (t.pnl || 0) > 0; }).length;
       var losses = list.length - wins;
       var net = list.reduce(function (s, t) { return s + Number(t.pnl || 0); }, 0);
       var wr = ((wins / list.length) * 100).toFixed(0);
-      var rowsHtml = list.slice(0, 30).map(function (t) {
+      var firstStat = capStats.byId[listAsc[0].id];
+      var lastStat = capStats.byId[listAsc[listAsc.length - 1].id];
+      var dayBalStart = firstStat ? firstStat.balBefore : capStats.startBal;
+      var dayBalEnd = lastStat ? lastStat.balAfter : Math.max(0.01, dayBalStart + net);
+      var dayPct = dayBalStart > 0 ? (net / dayBalStart) * 100 : 0;
+      var dayCumulPct = lastStat ? lastStat.cumulPct : (capStats.startBal > 0 ? ((dayBalEnd - capStats.startBal) / capStats.startBal) * 100 : 0);
+      var rowsHtml = listDesc.slice(0, 30).map(function (t) {
         var p = Number(t.pnl || 0);
         var cls = p >= 0 ? 'up' : 'down';
         var hh = new Date(t.closedAt || t.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        var cs = capStats.byId[t.id];
         return (
-          '<div onclick="openJournalInspector(&quot;' + t.id + '&quot;)" style="display:flex;justify-content:space-between;align-items:center;padding:5px 7px;border-radius:6px;background:rgba(255,255,255,0.03);cursor:pointer;margin-top:4px">' +
+          '<div onclick="openJournalInspector(&quot;' + t.id + '&quot;)" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 7px;border-radius:6px;background:rgba(255,255,255,0.03);cursor:pointer;margin-top:4px">' +
           '<span class="mono"><strong>' + escHtml(t.asset) + '</strong> <span class="' + (t.direction === 'long' ? 'up' : 'down') + '">' + String(t.direction || '').toUpperCase() + '</span> · ' + hh + (t.mt5Lots ? (' · ' + Number(t.mt5Lots).toFixed(2) + ' lot') : '') + '</span>' +
-          '<span class="mono ' + cls + '" style="font-weight:700">' + fmtSignedUsd(p, 2) + '</span>' +
+          '<div class="mono" style="text-align:right;white-space:nowrap">' +
+          '<div class="' + cls + '" style="font-weight:700">' + fmtSignedUsd(p, 2) + (cs ? (' (' + fmtSignedPctVal(cs.tradePct, 2) + ')') : '') + '</div>' +
+          (cs ? ('<div style="font-size:9.5px;color:var(--fg-2)">' + fmtUsd(cs.balBefore, 2) + ' → ' + fmtUsd(cs.balAfter, 2) + ' <span class="' + (cs.cumulPct >= 0 ? 'up' : 'down') + '">(' + fmtSignedPctVal(cs.cumulPct, 2) + ')</span></div>') : '') +
+          '</div>' +
           '</div>'
         );
       }).join('');
       box.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:6px;border-bottom:1px solid var(--ring-1)">' +
         '<strong style="text-transform:capitalize">' + escHtml(dateLbl) + '</strong>' +
-        '<span class="mono ' + (net >= 0 ? 'up' : 'down') + '" style="font-weight:800;font-size:12.5px">' + fmtSignedUsd(net, 2) + '</span>' +
+        '<div style="text-align:right">' +
+        '<div class="mono ' + (net >= 0 ? 'up' : 'down') + '" style="font-weight:800;font-size:12.5px">' + fmtSignedUsd(net, 2) + ' (' + fmtSignedPctVal(dayPct, 2) + ')</div>' +
+        '<div class="mono" style="font-size:10px;color:var(--fg-2)">Cap ' + fmtUsd(dayBalStart, 2) + ' → ' + fmtUsd(dayBalEnd, 2) + ' <span class="' + (dayCumulPct >= 0 ? 'up' : 'down') + '">(Évol. ' + fmtSignedPctVal(dayCumulPct, 2) + ')</span></div>' +
+        '</div>' +
         '</div>' +
         '<div class="mono" style="font-size:11px;color:var(--fg-2);margin:6px 0">' +
         list.length + ' trade(s) clôturé(s) · ' + wins + 'W / ' + losses + 'L · Win Rate ' + wr + '%' +
@@ -6474,6 +6583,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var months = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
       lbl.textContent = months[calMonth] + ' ' + calYear;
 
+      var capStats = buildClosedTradeCapitalStats();
       var daily = {};
       var dailyTickets = {};
       (deskState.tickets || []).filter(function (t) { return t.status === 'closed' && t.closedAt; }).forEach(function (t) {
@@ -6497,17 +6607,32 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       for (var day = 1; day <= daysInMonth; day++) {
         var key = calYear + '-' + String(calMonth + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         var v = daily[key];
-        var cnt = (dailyTickets[key] || []).length;
+        var dList = (dailyTickets[key] || []).slice().sort(function (a, b) {
+          return Number(a.closedAt || a.createdAt || 0) - Number(b.closedAt || b.createdAt || 0);
+        });
+        var cnt = dList.length;
+        var dPctHtml = '';
+        var dTitle = 'Cliquer pour voir le détail du ' + key;
+        if (v !== undefined && cnt > 0) {
+          var dFirst = capStats.byId[dList[0].id];
+          var dLast = capStats.byId[dList[cnt - 1].id];
+          var dStart = dFirst ? dFirst.balBefore : capStats.startBal;
+          var dEnd = dLast ? dLast.balAfter : Math.max(0.01, dStart + v);
+          var dPct = dStart > 0 ? (v / dStart) * 100 : 0;
+          dPctHtml = '<span class="mono ' + (v > 0 ? 'up' : v < 0 ? 'down' : '') + '" style="font-size:8.5px;opacity:0.9">' + fmtSignedPctVal(dPct, 1) + '</span>';
+          dTitle = key + ' · ' + fmtSignedUsd(v, 2) + ' (' + fmtSignedPctVal(dPct, 2) + ') · Cap ' + fmtUsd(dStart, 2) + ' → ' + fmtUsd(dEnd, 2);
+        }
         var isSel = selectedCalDay === key;
         var cls = 'cal-cell' + (v > 0 ? ' pos' : v < 0 ? ' neg' : '');
         var selStyle = isSel ? 'outline:2px solid var(--accent);outline-offset:-1px;cursor:pointer' : 'cursor:pointer';
         html +=
-          '<div class="' + cls + '" style="' + selStyle + '" onclick="selectCalendarDay(&quot;' + key + '&quot;)" title="Cliquer pour voir le détail du ' + key + '">' +
+          '<div class="' + cls + '" style="' + selStyle + '" onclick="selectCalendarDay(&quot;' + key + '&quot;)" title="' + escHtml(dTitle) + '">' +
           '<div style="display:flex;justify-content:space-between;width:100%;align-items:center">' +
           '<span style="color:var(--fg-2)">' + day + '</span>' +
           (cnt > 0 ? ('<span class="mono" style="font-size:9px;color:var(--fg-3)">' + cnt + 't</span>') : '') +
           '</div>' +
           '<span class="mono ' + (v > 0 ? 'up' : v < 0 ? 'down' : '') + '">' + (v !== undefined ? fmtSignedUsd(v, 2) : '') + '</span>' +
+          dPctHtml +
           '</div>';
       }
       host.innerHTML = html;
@@ -6518,8 +6643,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (!deskState) return;
       var t = (deskState.tickets || []).find(function (x) { return x.id === id; });
       if (!t) return;
+      var closedSummaryHtml = '';
+      if (t.status === 'closed') {
+        var csInsp = buildClosedTradeCapitalStats().byId[t.id];
+        var pVal = Number(t.pnl || 0);
+        var pCls = pVal >= 0 ? 'up' : 'down';
+        closedSummaryHtml =
+          '<div style="padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--ring-1);margin-bottom:8px">' +
+          '<div class="mono ' + pCls + '" style="font-weight:700">Résultat clôturé : ' + fmtSignedUsd(pVal, 2) + (csInsp ? (' (' + fmtSignedPctVal(csInsp.tradePct, 2) + ' du capital)') : '') + '</div>' +
+          (csInsp ? ('<div class="mono" style="font-size:11px;color:var(--fg-2);margin-top:3px">Évolution capital : ' + fmtUsd(csInsp.balBefore, 2) + ' → <strong style="color:var(--fg-0)">' + fmtUsd(csInsp.balAfter, 2) + '</strong> <span class="' + (csInsp.cumulPct >= 0 ? 'up' : 'down') + '">(Cumul ' + fmtSignedPctVal(csInsp.cumulPct, 2) + ' depuis ' + fmtUsd(csInsp.startBal, 2) + ')</span></div>') : '') +
+          '</div>';
+      }
       document.getElementById('jDrawerTitle').textContent = t.id + ' · ' + t.asset;
       document.getElementById('jDrawerBody').innerHTML =
+        closedSummaryHtml +
         '<div><strong>Thèse :</strong><br>' + (t.thesis || '--') + '</div>' +
         '<div class="mono">Entrée : ' + fmtPx(t.entry) + ' | Stop : ' + fmtPx(t.invalidation) + ' | Cible : ' + fmtPx(t.target) + '</div>' +
         '<div class="mono">Levier : ' + (t.leverage || 1) + 'x | LiqPrice : ' + (t.liqPrice ? fmtPx(t.liqPrice) : '--') + ' | MAE : ' + Number(t.maxAdverseExcursion || 0).toFixed(2) + 'R</div>' +
@@ -8635,10 +8772,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var pmBody = document.getElementById('revTabPostMortemBody');
       if (pmBody) {
+        var capStatsPm = buildClosedTradeCapitalStats();
         var closedTickets = (deskState.tickets || [])
           .filter(function (t) { return t.status === 'closed'; })
           .slice()
-          .sort(function (a, b) { return (b.closedAt || 0) - (a.closedAt || 0); })
+          .sort(function (a, b) {
+            var ta = Number(a.closedAt || a.createdAt || 0);
+            var tb = Number(b.closedAt || b.createdAt || 0);
+            if (tb !== ta) return tb - ta;
+            var ca = Number(a.createdAt || 0);
+            var cb = Number(b.createdAt || 0);
+            if (cb !== ca) return cb - ca;
+            return String(b.id || '').localeCompare(String(a.id || ''));
+          })
           .slice(0, 25);
         if (!closedTickets.length) {
           pmBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--fg-3)">Aucun trade clôturé.</td></tr>';
@@ -8650,13 +8796,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             var dirCls = t.direction === 'long' ? 'up' : 'down';
             var reason = t.closeReason || 'closed';
             if (t.progressiveLockRatio) reason += ' (BE ' + Math.round(t.progressiveLockRatio * 100) + '%)';
+            var csPm = capStatsPm.byId[t.id];
             return '<tr>' +
               '<td class="mono">' + ts + '</td>' +
               '<td><strong>' + escHtml(t.asset) + '</strong></td>' +
               '<td class="mono ' + dirCls + '">' + String(t.direction || '').toUpperCase() + '</td>' +
               '<td>' + escHtml(t.engine || t.playbook || '-') + '</td>' +
               '<td style="color:var(--fg-2)">' + escHtml(reason) + '</td>' +
-              '<td class="mono ' + cls + '" style="text-align:right">' + (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '€</td>' +
+              '<td class="mono" style="text-align:right;white-space:nowrap">' +
+              '<div class="' + cls + '" style="font-weight:700">' + fmtSignedUsd(pnl, 2) + (csPm ? (' (' + fmtSignedPctVal(csPm.tradePct, 2) + ')') : '') + '</div>' +
+              (csPm ? ('<div style="font-size:10px;color:var(--fg-2)">' + fmtUsd(csPm.balBefore, 2) + ' → ' + fmtUsd(csPm.balAfter, 2) + ' <span class="' + (csPm.cumulPct >= 0 ? 'up' : 'down') + '">(' + fmtSignedPctVal(csPm.cumulPct, 2) + ')</span></div>') : '') +
+              '</td>' +
             '</tr>';
           }).join('');
         }

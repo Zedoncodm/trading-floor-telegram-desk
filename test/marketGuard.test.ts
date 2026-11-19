@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Ticket } from "../src/types.ts";
+import { DASHBOARD_HTML } from "../src/ui.ts";
 
 test("MarketSessionGuard bloque XAUUSD pendant le rollover quotidien 21:40-23:10 UTC", () => {
   // Mercredi 18 nov 2026 à 21:42:17 UTC (heure exacte de l'incident XAUUSD)
@@ -755,4 +756,51 @@ test("G10 Forex Crosses micro-sizing (35.90€ 1:500) & chat anti-spam deduplica
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("Closed trades capital % and evolution helper in DASHBOARD_HTML", () => {
+  assert.ok(DASHBOARD_HTML.includes("function buildClosedTradeCapitalStats()"));
+  assert.ok(DASHBOARD_HTML.includes("function fmtSignedPctVal("));
+  assert.ok(DASHBOARD_HTML.includes('id="ledgerPnlColHdr"'));
+  assert.ok(DASHBOARD_HTML.includes("PnL / % Cap. &amp; Évol."));
+
+  const fnStart = DASHBOARD_HTML.indexOf("function fmtSignedPctVal(");
+  const fnEnd = DASHBOARD_HTML.indexOf("function fmtPx(");
+  assert.ok(fnStart > 0 && fnEnd > fnStart, "Helpers must sit cleanly before fmtPx");
+  const helperCode = DASHBOARD_HTML.slice(fnStart, fnEnd);
+
+  const mockState = {
+    startEquity: 40,
+    realizedPnl: -0.14,
+    mt5Live: { connected: true, balance: 36.73, currency: "EUR" },
+    tickets: [
+      { id: "T-3", status: "closed", pnl: 0.4, closedAt: 3000, createdAt: 2500 },
+      { id: "T-1", status: "closed", pnl: -0.97, closedAt: 1000, createdAt: 900 },
+      { id: "T-2", status: "closed", pnl: 0.43, closedAt: 2000, createdAt: 1500 },
+      { id: "T-OPEN", status: "open", pnl: 0.25, createdAt: 3500 },
+    ],
+  };
+
+  const evaluator = new Function(
+    "deskState",
+    `${helperCode}; return { stats: buildClosedTradeCapitalStats(), fmt: fmtSignedPctVal };`,
+  );
+  const { stats, fmt } = evaluator(mockState);
+
+  assert.equal(stats.count, 3);
+  assert.equal(stats.startBal, 36.87);
+  assert.equal(stats.endBal, 36.73);
+  assert.equal(stats.byId["T-OPEN"], undefined);
+
+  assert.equal(stats.byId["T-1"].balBefore, 36.87);
+  assert.equal(stats.byId["T-1"].balAfter, 35.9);
+  assert.equal(fmt(stats.byId["T-1"].tradePct, 2), "-2.63%");
+
+  assert.equal(stats.byId["T-2"].balBefore, 35.9);
+  assert.equal(stats.byId["T-2"].balAfter, 36.33);
+  assert.equal(fmt(stats.byId["T-2"].tradePct, 2), "+1.20%");
+
+  assert.equal(stats.byId["T-3"].balBefore, 36.33);
+  assert.equal(stats.byId["T-3"].balAfter, 36.73);
+  assert.equal(fmt(stats.byId["T-3"].tradePct, 2), "+1.10%");
 });
