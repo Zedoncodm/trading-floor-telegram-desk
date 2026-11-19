@@ -1016,7 +1016,9 @@ export async function fetchMacroEconomicCalendar(now = Date.now()): Promise<{
         const n = Number(String(v).replace(/[^0-9.+-]/g, ""));
         return Number.isFinite(n) ? n : 0;
       };
-      const actual = parseNum(row.actual);
+      const rawActual = String(row.actual ?? "").trim();
+      const hasActual = rawActual.length > 0 && /[0-9]/.test(rawActual);
+      const actual = hasActual ? parseNum(rawActual) : 0;
       const forecast = parseNum(row.forecast);
       const previous = parseNum(row.previous);
       events.push({
@@ -1026,7 +1028,10 @@ export async function fetchMacroEconomicCalendar(now = Date.now()): Promise<{
         previous,
         timestamp: ts,
         impact,
-        surpriseIndex: forecast !== 0 ? (actual - forecast) / Math.abs(forecast) : 0,
+        surpriseIndex:
+          hasActual && forecast !== 0
+            ? Math.max(-1, Math.min(1, (actual - forecast) / Math.abs(forecast)))
+            : 0,
       });
     }
     cachedMacroCalendar = { at: now, events };

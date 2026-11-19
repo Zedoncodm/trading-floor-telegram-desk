@@ -3993,7 +3993,13 @@ export class TradingFloorDesk {
       if (trigger !== "initial") {
         const cal = await fetchMacroEconomicCalendar(now).catch(() => ({ events: [] as DeskState["macroEvents"], imminentHighImpact: undefined }));
         if (cal.events.length > 0) {
-          const existing = (this.state.macroEvents ?? []).filter((e) => e.timestamp >= now - 24 * 3600_000);
+          const freshKeys = new Set(cal.events.map((e) => `${e.event}@${e.timestamp}`));
+          const existing = (this.state.macroEvents ?? []).filter((e) => {
+            if (e.timestamp < now - 24 * 3600_000) return false;
+            // Purger les anciennes entrées ForexFactory empoisonnées (actual=0 -> surpriseIndex=-1) ou déjà présentes dans le flux frais
+            if (e.actual === 0 && e.forecast !== 0 && (e.surpriseIndex ?? 0) === -1) return false;
+            return !freshKeys.has(`${e.event}@${e.timestamp}`);
+          });
           const merged = [...cal.events.slice(0, 20), ...existing].slice(0, 30);
           this.state.macroEvents = merged;
           if (cal.imminentHighImpact && !this.isVolatilityShieldActive(now)) {
@@ -4228,11 +4234,15 @@ export class TradingFloorDesk {
           now,
         );
         if (!MarketAnalystAgent.allowsDirection(idea.dir, macroEval.macroScore)) {
-          await this.say(
-            "analyst",
-            `[MACRO FILTER] ${candidate.symbol} ${idea.dir.toUpperCase()} bloqué (${macroEval.reason} contre la tendance fondamentale).`,
-            "plain",
-          );
+          const mfKey = `macro-filter:${candidate.symbol}:${idea.dir}`;
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(mfKey) ?? 0) >= 3 * 60_000) {
+            this.marketGuardLogAt.set(mfKey, now);
+            await this.say(
+              "analyst",
+              `[MACRO FILTER] ${candidate.symbol} ${idea.dir.toUpperCase()} bloqué (${macroEval.reason} contre la tendance fondamentale).`,
+              "plain",
+            );
+          }
           continue;
         }
 

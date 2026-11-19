@@ -9,6 +9,7 @@ import {
 } from "../src/agents/marketGuard.ts";
 import { ActiveTradeManager } from "../src/agents/activeTradeManager.ts";
 import { ReviewerAgent } from "../src/agents/reviewer.ts";
+import { MarketAnalystAgent } from "../src/agents/analyst.ts";
 import { TraderSkillsEngine } from "../src/agents/traderSkills.ts";
 import { computeRiskBasedLots } from "../src/lotSizing.ts";
 import { loadConfig } from "../src/config.ts";
@@ -648,4 +649,42 @@ test("MT5 source de vérité absolue : écrase -0.01€ par +0.09€ réel, purg
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("MarketAnalystAgent ignore les annonces non publiées/futures et isole les surprises par devise de la paire", () => {
+  const now = Date.now();
+
+  // 1) Événement non publié (actual=0 -> surpriseIndex=0) + événement futur (surpriseIndex=-1 dans 1h) -> neutre (0)
+  const unreleasedAndFuture = [
+    { event: "CAD · CPI m/m", actual: 0, forecast: 0.4, previous: 0.1, timestamp: now - 600_000, impact: "HIGH" as const, surpriseIndex: 0 },
+    { event: "USD · Retail Sales m/m", actual: 0, forecast: 0.3, previous: 0.2, timestamp: now + 3_600_000, impact: "HIGH" as const, surpriseIndex: -1 },
+  ];
+  const neutralUsdCad = MarketAnalystAgent.computeMacroScore("USDCAD", unreleasedAndFuture, {}, now);
+  const neutralEurUsd = MarketAnalystAgent.computeMacroScore("EURUSD", unreleasedAndFuture, {}, now);
+  assert.equal(neutralUsdCad.macroScore, 0);
+  assert.equal(neutralEurUsd.macroScore, 0);
+  assert.equal(MarketAnalystAgent.allowsDirection("long", neutralUsdCad.macroScore), true);
+  assert.equal(MarketAnalystAgent.allowsDirection("short", neutralEurUsd.macroScore), true);
+
+  // 2) Surprise GBP négative (-1) ne doit PAS affecter USDCAD ; surprise CAD négative (-1) doit être HAUSSIÈRE sur USDCAD (+0.6)
+  const crossCcyEvents = [
+    { event: "GBP · CPI y/y", actual: 2.0, forecast: 3.6, previous: 3.5, timestamp: now - 1_000, impact: "HIGH" as const, surpriseIndex: -1 },
+  ];
+  assert.equal(MarketAnalystAgent.computeMacroScore("USDCAD", crossCcyEvents, {}, now).macroScore, 0);
+
+  const cadMiss = [
+    ...crossCcyEvents,
+    { event: "CAD · CPI m/m", actual: 0.1, forecast: 0.4, previous: 0.2, timestamp: now - 1_000, impact: "HIGH" as const, surpriseIndex: -1 },
+  ];
+  const cadOnUsdCad = MarketAnalystAgent.computeMacroScore("USDCAD", cadMiss, {}, now);
+  assert.equal(cadOnUsdCad.macroScore, 0.6);
+  assert.equal(MarketAnalystAgent.allowsDirection("long", cadOnUsdCad.macroScore), true);
+  assert.equal(MarketAnalystAgent.allowsDirection("short", cadOnUsdCad.macroScore), false);
+
+  // 3) Vraie surprise USD positive (+1) : haussière sur USDCAD (+0.6), baissière sur EURUSD (-0.6)
+  const usBeat = [
+    { event: "US CPI YoY", actual: 3.4, forecast: 3.1, previous: 3.0, timestamp: now - 1_000, impact: "HIGH" as const, surpriseIndex: 1 },
+  ];
+  assert.equal(MarketAnalystAgent.computeMacroScore("USDCAD", usBeat, {}, now).macroScore, 0.6);
+  assert.equal(MarketAnalystAgent.computeMacroScore("EURUSD", usBeat, {}, now).macroScore, -0.6);
 });
