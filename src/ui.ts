@@ -2773,7 +2773,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     var ASSET_CATALOG = [
       {
         id: 'forex',
-        cat: 'Forex (Devises Majeures)',
+        cat: 'Forex — Majeures (USD)',
         tag: 'FOREX',
         items: [
           { s: 'EURUSD', l: 'EUR/USD' },
@@ -2783,6 +2783,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           { s: 'AUDUSD', l: 'AUD/USD' },
           { s: 'USDCAD', l: 'USD/CAD' },
           { s: 'NZDUSD', l: 'NZD/USD' }
+        ]
+      },
+      {
+        id: 'forex_crosses',
+        cat: 'Forex — Croisées (Sans USD · Diversification)',
+        tag: 'CROSS',
+        items: [
+          { s: 'EURGBP', l: 'EUR/GBP' },
+          { s: 'EURJPY', l: 'EUR/JPY' },
+          { s: 'GBPJPY', l: 'GBP/JPY' },
+          { s: 'EURCHF', l: 'EUR/CHF' },
+          { s: 'AUDJPY', l: 'AUD/JPY' },
+          { s: 'CADJPY', l: 'CAD/JPY' },
+          { s: 'CHFJPY', l: 'CHF/JPY' },
+          { s: 'NZDJPY', l: 'NZD/JPY' },
+          { s: 'EURAUD', l: 'EUR/AUD' },
+          { s: 'EURCAD', l: 'EUR/CAD' },
+          { s: 'GBPAUD', l: 'GBP/AUD' },
+          { s: 'GBPCAD', l: 'GBP/CAD' },
+          { s: 'GBPCHF', l: 'GBP/CHF' },
+          { s: 'AUDCAD', l: 'AUD/CAD' },
+          { s: 'AUDNZD', l: 'AUD/NZD' }
         ]
       },
       {
@@ -2794,20 +2816,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           { s: 'ES1!', l: 'S&P 500 (ES1!)' },
           { s: 'YM1!', l: 'Dow Jones (YM1!)' },
           { s: 'FDAX1!', l: 'DAX 40 (FDAX1!)' }
-        ]
-      },
-      {
-        id: 'forex',
-        cat: 'Forex (Devises Majeures)',
-        tag: 'FOREX',
-        items: [
-          { s: 'EURUSD', l: 'EUR/USD' },
-          { s: 'GBPUSD', l: 'GBP/USD' },
-          { s: 'USDJPY', l: 'USD/JPY' },
-          { s: 'USDCHF', l: 'USD/CHF' },
-          { s: 'AUDUSD', l: 'AUD/USD' },
-          { s: 'USDCAD', l: 'USD/CAD' },
-          { s: 'NZDUSD', l: 'NZD/USD' }
         ]
       },
       {
@@ -5172,7 +5180,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     function mapSymbolToTradingView(sym) {
       var s = String(sym || 'EURUSD').toUpperCase();
-      if (/^(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD|EURGBP|EURJPY)$/.test(s)) return 'FX:' + s;
+      if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(s)) return 'FX:' + s;
       if (s === 'XAUUSD' || s === 'XAGUSD') return 'OANDA:' + s;
       if (s === 'USOIL') return 'TVC:USOIL';
       if (s === 'NGAS') return 'NYMEX:NG1!';

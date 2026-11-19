@@ -1140,7 +1140,11 @@ void WriteMt5StateToFile() {
    }
    json += "],";
 
-   string quoteSyms[] = { "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD", "XAGUSD" };
+   string quoteSyms[] = {
+      "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "XAUUSD", "XAGUSD",
+      "EURGBP", "EURJPY", "GBPJPY", "EURCHF", "AUDJPY", "CADJPY", "CHFJPY", "NZDJPY",
+      "EURAUD", "EURCAD", "GBPAUD", "GBPCAD", "GBPCHF", "AUDCAD", "AUDNZD"
+   };
    json += "\\"quotes\\":[";
    bool firstQ = true;
    for(int q = 0; q < ArraySize(quoteSyms); q++) {

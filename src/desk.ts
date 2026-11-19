@@ -54,7 +54,14 @@ import {
 } from "./market.ts";
 import { DeskStore, emitPulse, setAgentActivity } from "./store.ts";
 import { TelegramFloorRoom } from "./telegram.ts";
-import { computeRiskBasedLots, defaultRiskPercent, formatLotLog, riskSizingEnabled, type LotSizingResult } from "./lotSizing.ts";
+import {
+  computeRiskBasedLots,
+  defaultRiskPercent,
+  formatLotLog,
+  riskSizingEnabled,
+  usdPerPriceUnitPerLot,
+  type LotSizingResult,
+} from "./lotSizing.ts";
 import { dayKey, isOvernight, isoWeek, localParts, ticketDay } from "./time.ts";
 import type {
   AgentId,
@@ -2746,6 +2753,19 @@ export class TradingFloorDesk {
     source: "telegram" | "web" | "desk" = "desk",
   ): Promise<void> {
     const now = Date.now();
+    // Anti-spam global sur le chat : évite de répéter un message identique (veto/veille/critique) sous 2 min
+    if (
+      speaker !== "human" &&
+      tone !== "fill" &&
+      tone !== "ticket" &&
+      tone !== "report"
+    ) {
+      const normTxt = text.trim();
+      const dupRecent = this.state.messages.some(
+        (m) => m.speaker === speaker && m.text.trim() === normTxt && now - m.at < 120_000,
+      );
+      if (dupRecent) return;
+    }
     this.state.nonce += 1;
     this.state.messages = [
       ...this.state.messages.slice(-299),
@@ -3287,9 +3307,7 @@ export class TradingFloorDesk {
     const isMicroFx = acctEqNow > 0 && acctEqNow < 250 && /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/i.test(chosen.symbol);
     if (isMicroFx) {
       const maxMicroRiskUsd = Math.max(1.2, acctEqNow * 0.07);
-      const usdPerUnitMinLot = chosen.symbol.toUpperCase().startsWith("USD")
-        ? 1000 / Math.max(entry, 1e-9)
-        : 1000;
+      const usdPerUnitMinLot = usdPerPriceUnitPerLot(chosen.symbol, entry) * 0.01;
       const maxMicroStopDist = Math.max(minPipFloor, maxMicroRiskUsd / Math.max(usdPerUnitMinLot, 1e-6));
       stopDist = Math.min(stopDist, maxMicroStopDist);
     }
@@ -3919,7 +3937,7 @@ export class TradingFloorDesk {
         x.symbol === entry.symbol &&
         x.outcome === entry.outcome &&
         x.flawsIdentified[0] === entry.flawsIdentified[0] &&
-        now - x.at < 60_000,
+        now - x.at < 5 * 60_000,
     );
     if (recentDup && entry.outcome === "PRE_TRADE_SELF_VETO") return false;
     this.state.selfAuditHistory = [...existing, entry].slice(-80);
@@ -4093,7 +4111,11 @@ export class TradingFloorDesk {
         return true;
       });
       if (!pool.length) {
-        await this.say("analyst", "Tous les actifs sont en période de cooldown ou déjà en position.");
+        const cdAllKey = "all-cooldown";
+        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(cdAllKey) ?? 0) >= 5 * 60_000) {
+          this.marketGuardLogAt.set(cdAllKey, now);
+          await this.say("analyst", "Tous les actifs sont en période de cooldown ou déjà en position.");
+        }
         return;
       }
 
@@ -4127,7 +4149,7 @@ export class TradingFloorDesk {
       } | null = null;
 
       let bestAlphaScore = -Infinity;
-      const candidatesEvaluatedLimit = Math.min(orderedPool.length, 10);
+      const candidatesEvaluatedLimit = Math.min(orderedPool.length, 24);
       let evaluatedCount = 0;
 
       for (const candidate of orderedPool) {
@@ -4216,7 +4238,7 @@ export class TradingFloorDesk {
         if (dirCool && dirCool.until > now && dirCool.bannedDir === idea.dir) {
           const remMin = Math.ceil((dirCool.until - now) / 60_000);
           const dlLogKey = `adl:${dirKey}`;
-          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(dlLogKey) ?? 0) >= 3 * 60_000) {
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(dlLogKey) ?? 0) >= 5 * 60_000) {
             this.marketGuardLogAt.set(dlLogKey, now);
             await this.say(
               "risk",
@@ -4235,7 +4257,7 @@ export class TradingFloorDesk {
         );
         if (!MarketAnalystAgent.allowsDirection(idea.dir, macroEval.macroScore)) {
           const mfKey = `macro-filter:${candidate.symbol}:${idea.dir}`;
-          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(mfKey) ?? 0) >= 3 * 60_000) {
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(mfKey) ?? 0) >= 5 * 60_000) {
             this.marketGuardLogAt.set(mfKey, now);
             await this.say(
               "analyst",
@@ -4278,8 +4300,12 @@ export class TradingFloorDesk {
           this.latestBarsBySymbol,
         );
         if (!corrCheck.allowed) {
-          emitPulse(this.state, "risk", "strategist", "veto", `CORRÉLATION ${candidate.symbol}`, candidate.symbol, now);
-          await this.say("risk", corrCheck.summary, "veto");
+          const corrKey = `corr:${candidate.symbol}:${idea.dir}`;
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(corrKey) ?? 0) >= 5 * 60_000) {
+            this.marketGuardLogAt.set(corrKey, now);
+            emitPulse(this.state, "risk", "strategist", "veto", `CORRÉLATION ${candidate.symbol}`, candidate.symbol, now);
+            await this.say("risk", corrCheck.summary, "veto");
+          }
           continue;
         }
         if (corrCheck.details.length > 0) {
@@ -4468,7 +4494,7 @@ export class TradingFloorDesk {
         const cleanKillReason = bt?.killReason ?? "Critères statistiques IS/OOS ou TimeMachine non validés";
         const spamKey = `scan-kill:${chosen.symbol}:${cleanKillReason.slice(0, 60)}`;
         const isDuplicateScheduledSpam =
-          trigger === "scheduled" && now - (this.marketGuardLogAt.get(spamKey) ?? 0) < 90_000;
+          trigger === "scheduled" && now - (this.marketGuardLogAt.get(spamKey) ?? 0) < 5 * 60_000;
         if (isDuplicateScheduledSpam) {
           return;
         }
@@ -4513,7 +4539,11 @@ export class TradingFloorDesk {
             "kill",
           );
         } else {
-          await this.say("lead", `Aucun signal confirmé sur les ${orderedPool.length} paires scannées (${scannedListStr}). Veille maintenue.`);
+          const watchKey = "scan-no-signal";
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(watchKey) ?? 0) >= 5 * 60_000) {
+            this.marketGuardLogAt.set(watchKey, now);
+            await this.say("lead", `Aucun signal confirmé sur les ${orderedPool.length} paires scannées (${scannedListStr}). Veille maintenue.`);
+          }
         }
         return;
       }
@@ -4568,7 +4598,7 @@ export class TradingFloorDesk {
         emitPulse(this.state, "risk", "lead", "veto", `VETO ${chosen.symbol}`, chosen.symbol, now);
         const vetoReason = sized.reason ?? "Veto Liquidation Guard.";
         const vetoKey = `sizing-veto:${vetoReason.slice(0, 60)}`;
-        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(vetoKey) ?? 0) >= 3 * 60_000) {
+        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(vetoKey) ?? 0) >= 5 * 60_000) {
           this.marketGuardLogAt.set(vetoKey, now);
           await this.say("risk", vetoReason, "veto");
           await this.say(
@@ -4706,7 +4736,7 @@ export class TradingFloorDesk {
         setAgentActivity(this.state, "strategist", "killed", `TimeMachine Veto (${chosen.symbol})`, now, { asset: chosen.symbol });
         emitPulse(this.state, "strategist", "reviewer", "backtest_kill", `TIMEMACHINE VETO ${chosen.symbol}`, chosen.symbol, now);
         const tmLogKey = `tm-veto:${chosen.symbol}:${activeDir}`;
-        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(tmLogKey) ?? 0) >= 3 * 60_000) {
+        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(tmLogKey) ?? 0) >= 5 * 60_000) {
           this.marketGuardLogAt.set(tmLogKey, now);
           await this.say("strategist", tmSim.verdict, "kill");
         }
@@ -4715,7 +4745,11 @@ export class TradingFloorDesk {
       if (sevenPtRisk.status === "BLOCK") {
         setAgentActivity(this.state, "risk", "veto", `Risk 7-Points BLOCK (${chosen.symbol})`, now, { asset: chosen.symbol });
         emitPulse(this.state, "risk", "lead", "veto", `RISK BLOCK ${chosen.symbol}`, chosen.symbol, now);
-        await this.say("risk", `[TRADER-RISK 7-POINTS BLOCK] ${chosen.symbol} bloqué : ${sevenPtRisk.blockedReasons.join(" | ")}`, "veto");
+        const r7Key = `risk7:${chosen.symbol}:${activeDir}`;
+        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(r7Key) ?? 0) >= 5 * 60_000) {
+          this.marketGuardLogAt.set(r7Key, now);
+          await this.say("risk", `[TRADER-RISK 7-POINTS BLOCK] ${chosen.symbol} bloqué : ${sevenPtRisk.blockedReasons.join(" | ")}`, "veto");
+        }
         return;
       }
 
@@ -4733,12 +4767,12 @@ export class TradingFloorDesk {
         now,
       });
       if (!finalSelfQ.pass) {
-        if (finalSelfQ.auditEntry) {
-          this.recordSelfAuditEntry(finalSelfQ.auditEntry, now);
-        }
+        const loggedFinalAudit = finalSelfQ.auditEntry ? this.recordSelfAuditEntry(finalSelfQ.auditEntry, now) : true;
         setAgentActivity(this.state, finalSelfQ.vetoAgent, "veto", `Auto-Critique (${chosen.symbol})`, now, { asset: chosen.symbol });
         emitPulse(this.state, finalSelfQ.vetoAgent, "reviewer", "veto", `SELF-VETO ${chosen.symbol}`, chosen.symbol, now);
-        await this.say(finalSelfQ.vetoAgent, finalSelfQ.selfQuestioningLog, "veto");
+        if (trigger !== "scheduled" || !finalSelfQ.auditEntry || loggedFinalAudit) {
+          await this.say(finalSelfQ.vetoAgent, finalSelfQ.selfQuestioningLog, "veto");
+        }
         return;
       }
       if (finalSelfQ.riskScaleMultiplier < 0.99) {

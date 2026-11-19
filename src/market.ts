@@ -611,6 +611,21 @@ const YAHOO_MAP: Record<string, string> = {
   AUDUSD: "AUDUSD=X",
   USDCAD: "USDCAD=X",
   NZDUSD: "NZDUSD=X",
+  EURGBP: "EURGBP=X",
+  EURJPY: "EURJPY=X",
+  GBPJPY: "GBPJPY=X",
+  EURCHF: "EURCHF=X",
+  AUDJPY: "AUDJPY=X",
+  CADJPY: "CADJPY=X",
+  CHFJPY: "CHFJPY=X",
+  NZDJPY: "NZDJPY=X",
+  EURAUD: "EURAUD=X",
+  EURCAD: "EURCAD=X",
+  GBPAUD: "GBPAUD=X",
+  GBPCAD: "GBPCAD=X",
+  GBPCHF: "GBPCHF=X",
+  AUDCAD: "AUDCAD=X",
+  AUDNZD: "AUDNZD=X",
   XAUUSD: "GC=F",
   XAGUSD: "SI=F",
   USOIL: "CL=F",
@@ -621,6 +636,16 @@ const YAHOO_MAP: Record<string, string> = {
   MSFT: "MSFT",
   AMZN: "AMZN",
 };
+
+function resolveYahooSymbol(symbol: string): string {
+  const up = symbol.toUpperCase();
+  if (YAHOO_MAP[up]) return YAHOO_MAP[up];
+  if (YAHOO_MAP[symbol]) return YAHOO_MAP[symbol];
+  if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(up)) return `${up}=X`;
+  return symbol;
+}
+
+const yahooKlineCache = new Map<string, { at: number; bars: Kline[] }>();
 
 export function aggregateKlines(bars: Kline[], factor: number): Kline[] {
   const n = Math.max(1, Math.round(factor));
@@ -655,7 +680,18 @@ export async function fetchYahooKlines(
   yahooInterval = "1h",
   yahooRange = "1mo",
 ): Promise<Kline[]> {
-  const ySym = YAHOO_MAP[symbol] ?? symbol;
+  const ySym = resolveYahooSymbol(symbol);
+  const cacheKey = `${ySym}:${yahooInterval}:${yahooRange}`;
+  const ttlMs =
+    yahooInterval === "1m" || yahooInterval === "5m" || yahooInterval === "15m"
+      ? 25_000
+      : yahooInterval === "1h"
+        ? 90_000
+        : 300_000;
+  const cached = yahooKlineCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < ttlMs && cached.bars.length > 0) {
+    return cached.bars;
+  }
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=${encodeURIComponent(yahooInterval)}&range=${encodeURIComponent(yahooRange)}`;
   const data = await getJson<{
     chart?: {
@@ -707,6 +743,9 @@ export async function fetchYahooKlines(
       });
     }
   }
+  if (bars.length > 0) {
+    yahooKlineCache.set(cacheKey, { at: Date.now(), bars });
+  }
   return bars;
 }
 
@@ -730,7 +769,7 @@ export async function fetchTrainingHistorySince2021(
 }
 
 async function fetchYahooMarketSnapshot(symbol: string, now: number): Promise<MarketSnapshot> {
-  const ySym = YAHOO_MAP[symbol] ?? symbol;
+  const ySym = resolveYahooSymbol(symbol);
   const mt5Local = Mt5CloudBridge.readLocalMt5State(25_000);
   const mt5Quote = mt5Local?.quotes?.find((q) => q.symbol.toUpperCase() === symbol.toUpperCase() || Mt5CloudBridge.mapMt5SymbolToDesk(q.symbol).toUpperCase() === symbol.toUpperCase());
   const nativeMt5Bars5m: Kline[] = (mt5Quote?.barsM5 ?? [])

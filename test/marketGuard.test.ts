@@ -688,3 +688,71 @@ test("MarketAnalystAgent ignore les annonces non publiées/futures et isole les 
   assert.equal(MarketAnalystAgent.computeMacroScore("USDCAD", usBeat, {}, now).macroScore, 0.6);
   assert.equal(MarketAnalystAgent.computeMacroScore("EURUSD", usBeat, {}, now).macroScore, -0.6);
 });
+
+test("G10 Forex Crosses micro-sizing (35.90€ 1:500) & chat anti-spam deduplication", async () => {
+  // 1) Crosses JPY et non-USD autorisés sur micro-compte 35.90€ (1:500) avec calcul exact en devise de cotation
+  const eurJpy = evaluateMicroAccountMarginGuard({
+    symbol: "EURJPY",
+    entry: 175.0,
+    stopLoss: 174.8,
+    equity: 35.9,
+    freeMargin: 32.5,
+    accountLeverage: 500,
+  });
+  assert.equal(eurJpy.ok, true, `EURJPY doit être autorisé, reçu ${eurJpy.reason}`);
+  assert.ok(eurJpy.estMinRisk < 2.5, `Risque minimal EURJPY attendu < 2.5, reçu ${eurJpy.estMinRisk}`);
+
+  const gbpJpy = evaluateMicroAccountMarginGuard({
+    symbol: "GBPJPY",
+    entry: 209.0,
+    stopLoss: 208.75,
+    equity: 35.9,
+    freeMargin: 32.5,
+    accountLeverage: 500,
+  });
+  assert.equal(gbpJpy.ok, true, `GBPJPY doit être autorisé, reçu ${gbpJpy.reason}`);
+
+  const eurGbp = evaluateMicroAccountMarginGuard({
+    symbol: "EURGBP",
+    entry: 0.838,
+    stopLoss: 0.836,
+    equity: 35.9,
+    freeMargin: 32.5,
+    accountLeverage: 500,
+  });
+  assert.equal(eurGbp.ok, true, `EURGBP doit être autorisé, reçu ${eurGbp.reason}`);
+
+  const xau = evaluateMicroAccountMarginGuard({
+    symbol: "XAUUSD",
+    entry: 3670,
+    stopLoss: 3662,
+    equity: 35.9,
+    freeMargin: 32.5,
+    accountLeverage: 500,
+  });
+  assert.equal(xau.ok, false, "XAUUSD doit rester bloqué sur micro-compte 35.90€");
+
+  // 2) Anti-spam global dans say() : déduplique deux messages veto identiques < 120s, laisse toujours passer "fill" et "human"
+  const dir = mkdtempSync(join(tmpdir(), "tf-antispam-"));
+  try {
+    const cfg = loadConfig(["--console"]);
+    cfg.dataDir = dir;
+    const desk = new TradingFloorDesk(cfg, new DeskStore(dir), new TelegramFloorRoom(cfg));
+    const sayFn = (desk as unknown as {
+      say: (speaker: string, text: string, tone?: string) => Promise<void>;
+    }).say.bind(desk);
+
+    const baseCount = desk.state.messages.length;
+    await sayFn("risk", "[EXPOSITION DEVISE SATURÉE] Test dédup", "veto");
+    await sayFn("risk", "[EXPOSITION DEVISE SATURÉE] Test dédup", "veto");
+    assert.equal(desk.state.messages.length, baseCount + 1, "Deux vetos identiques < 120s ne doivent écrire qu'un seul message");
+
+    await sayFn("execution", "Exécution confirmée 0.01 lot", "fill");
+    await sayFn("execution", "Exécution confirmée 0.01 lot", "fill");
+    await sayFn("human", "scan", "plain");
+    await sayFn("human", "scan", "plain");
+    assert.equal(desk.state.messages.length, baseCount + 5, "Les messages fill et human ne doivent jamais être supprimés");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

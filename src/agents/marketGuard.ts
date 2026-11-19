@@ -1,3 +1,5 @@
+import { usdPerPriceUnitPerLot } from "../lotSizing.ts";
+
 export type MarketSessionStatus =
   | "OPEN"
   | "PRE_ROLLOVER_WARN"
@@ -240,11 +242,23 @@ export function evaluateMicroAccountMarginGuard(input: {
   const equity = Math.max(1, input.equity);
   const freeMargin = Math.max(0, input.freeMargin);
 
+  const isFx = /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(sym);
   let contractSize = 1;
   let notionalOneLot = input.entry;
-  if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(sym)) {
+  if (isFx) {
     contractSize = 100_000;
-    notionalOneLot = sym.startsWith("USD") ? 100_000 : sym.endsWith("USD") ? 100_000 * input.entry : 100_000;
+    const baseUsdApprox: Record<string, number> = {
+      USD: 1,
+      EUR: 1.10,
+      GBP: 1.31,
+      AUD: 0.67,
+      NZD: 0.56,
+      CAD: 0.70,
+      CHF: 1.18,
+      JPY: 0.0065,
+    };
+    const base = sym.slice(0, 3);
+    notionalOneLot = 100_000 * (baseUsdApprox[base] ?? 1);
   } else if (/^(XAU|GOLD)/.test(sym)) {
     contractSize = 100;
     notionalOneLot = 100 * input.entry;
@@ -262,9 +276,7 @@ export function evaluateMicroAccountMarginGuard(input: {
   const minNotional = notionalOneLot * minLot;
   const estMinMargin = Number((minNotional / lev).toFixed(2));
   const slDist = Math.abs(input.entry - input.stopLoss);
-  const usdPerUnitPerLot = /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(sym) && sym.startsWith("USD")
-    ? contractSize / Math.max(input.entry, 1e-9)
-    : contractSize;
+  const usdPerUnitPerLot = isFx ? usdPerPriceUnitPerLot(sym, input.entry) : contractSize;
   const estMinRisk = Number((slDist * usdPerUnitPerLot * minLot).toFixed(2));
 
   if (freeMargin > 0 && estMinMargin > freeMargin * 0.45) {
