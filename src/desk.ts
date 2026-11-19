@@ -4155,6 +4155,26 @@ export class TradingFloorDesk {
       const candidatesEvaluatedLimit = Math.min(orderedPool.length, 24);
       let evaluatedCount = 0;
 
+      const lookupLiveMt5Quote = (sym: string): { bid: number; ask: number } | null => {
+        const norm = sym.toUpperCase();
+        const q = mt5SnapshotNow?.quotes?.find(
+          (item) =>
+            item.bid > 0 &&
+            item.ask > 0 &&
+            item.ask >= item.bid &&
+            (String(item.symbol ?? "").toUpperCase() === norm ||
+              Mt5CloudBridge.mapMt5SymbolToDesk(item.symbol).toUpperCase() === norm),
+        );
+        if (q) return { bid: q.bid, ask: q.ask };
+        return this.mt5.getCachedQuote?.(sym) ?? null;
+      };
+      const bars5mRangeAtr = (bars?: Array<{ high: number; low: number }>): number | undefined => {
+        if (!bars || bars.length < 14) return undefined;
+        const tail = bars.slice(-14);
+        const avg = tail.reduce((s, b) => s + Math.max(0, b.high - b.low), 0) / tail.length;
+        return avg > 0 ? avg : undefined;
+      };
+
       for (const candidate of orderedPool) {
         if (evaluatedCount >= candidatesEvaluatedLimit) break;
         if (!candidate || !candidate.primary) continue;
@@ -4177,7 +4197,19 @@ export class TradingFloorDesk {
           }
           continue;
         }
-        const liveMt5Quote = this.mt5.getCachedQuote?.(candidate.symbol);
+        const liveMt5Quote = lookupLiveMt5Quote(candidate.symbol);
+        if (!liveMt5Quote && this.state.mt5Live?.connected && mt5SnapshotNow && (mt5SnapshotNow.quotes?.length ?? 0) > 0) {
+          const noQKey = `noquote:${candidate.symbol}`;
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(noQKey) ?? 0) > 5 * 60_000) {
+            this.marketGuardLogAt.set(noQKey, now);
+            await this.say(
+              "risk",
+              `[SPREAD_GUARD (${candidate.symbol})] Cotation Bid/Ask MT5 absente — spread réel invérifiable. Entrée bloquée (rechargez TradingFloorBridge sur MT5 pour activer les 24 cotations).`,
+              "veto",
+            );
+          }
+          continue;
+        }
         if (liveMt5Quote) {
           this.staleQuoteTracker.observe(candidate.symbol, liveMt5Quote.bid, liveMt5Quote.ask, now);
           const staleCheck = this.staleQuoteTracker.check(candidate.symbol, now, 45_000);
@@ -4196,16 +4228,24 @@ export class TradingFloorDesk {
           const estSlDist = idea.customStop
             ? Math.abs((idea.customEntry ?? candidate.primary.price) - idea.customStop)
             : (candidate.atr || candidate.primary.price * 0.001) * 1.2;
+          const estTpDist = idea.customTarget
+            ? Math.abs(idea.customTarget - (idea.customEntry ?? candidate.primary.price))
+            : estSlDist * Math.max(1.2, this.state.settings.tpVal || 1.6);
+          const candAtr5m = bars5mRangeAtr(candidate.bars5m) ?? (candidate.atr ?? undefined);
           const spreadCheck = evaluateSpreadGuard({
             symbol: candidate.symbol,
             bid: liveMt5Quote.bid,
             ask: liveMt5Quote.ask,
             slDist: estSlDist,
-            atr5m: candidate.atr ?? undefined,
+            tpDist: estTpDist > 0 ? estTpDist : undefined,
+            atr5m: candAtr5m,
+            equity: this.accountEquity(),
+            lotSize: 0.01,
+            isScalping: isScalp || activeStyle === "scalping",
           });
           if (!spreadCheck.ok) {
             const spKey = `spread:${candidate.symbol}`;
-            if (now - (this.marketGuardLogAt.get(spKey) ?? 0) > 3 * 60_000) {
+            if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(spKey) ?? 0) > 5 * 60_000) {
               this.marketGuardLogAt.set(spKey, now);
               await this.say("risk", `[${spreadCheck.reason}] Entrée bloquée.`, "veto");
             }
@@ -4639,9 +4679,50 @@ export class TradingFloorDesk {
         sized.notional,
       );
       const { finalTarget, finalStop } = finalLevels;
+      const finalAcctEq = this.accountEquity();
+
+      // Garde-fou Spread FINAL après calibration réelle du SL/TP (bloque NZDUSD/crosses si spread > plafond ou coûts excessifs)
+      const finalMt5Quote = lookupLiveMt5Quote(chosen.symbol);
+      if (!finalMt5Quote && this.state.mt5Live?.connected && mt5SnapshotNow && (mt5SnapshotNow.quotes?.length ?? 0) > 0) {
+        const noQFinalKey = `noquote-final:${chosen.symbol}`;
+        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(noQFinalKey) ?? 0) >= 5 * 60_000) {
+          this.marketGuardLogAt.set(noQFinalKey, now);
+          await this.say(
+            "risk",
+            `[SPREAD_GUARD (${chosen.symbol})] Cotation Bid/Ask MT5 absente — spread réel invérifiable. Entrée bloquée.`,
+            "veto",
+          );
+        }
+        return;
+      }
+      if (finalMt5Quote) {
+        const finalSlDist = Math.abs(entry - finalStop);
+        const finalTpDist = Math.abs(finalTarget - entry);
+        const finalAtr5m = bars5mRangeAtr(chosen.bars5m) ?? (localAtr ?? chosen.atr ?? undefined);
+        const isFxChosen = /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/i.test(chosen.symbol);
+        const estFinalLot = Math.max(0.01, isFxChosen ? sized.qty / 100_000 : 0.01);
+        const finalSpreadCheck = evaluateSpreadGuard({
+          symbol: chosen.symbol,
+          bid: finalMt5Quote.bid,
+          ask: finalMt5Quote.ask,
+          slDist: finalSlDist,
+          tpDist: finalTpDist > 0 ? finalTpDist : undefined,
+          atr5m: finalAtr5m,
+          equity: finalAcctEq,
+          lotSize: estFinalLot,
+          isScalping: isScalp || activeStyle === "scalping",
+        });
+        if (!finalSpreadCheck.ok) {
+          const spFinalKey = `spread-final:${chosen.symbol}`;
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(spFinalKey) ?? 0) >= 5 * 60_000) {
+            this.marketGuardLogAt.set(spFinalKey, now);
+            await this.say("risk", `[${finalSpreadCheck.reason}] Entrée bloquée.`, "veto");
+          }
+          return;
+        }
+      }
 
       // Double vérification Micro-Compte sur le SL FINAL (empêche XAUUSD/XAGUSD avec SL $12+ de passer sur un compte 35€)
-      const finalAcctEq = this.accountEquity();
       if (finalAcctEq > 0 && finalAcctEq < 500) {
         const finalMicroCheck = evaluateMicroAccountMarginGuard({
           symbol: chosen.symbol,
@@ -5875,17 +5956,30 @@ export class TradingFloorDesk {
 
         // 6) Spread-Guard + Anti-Stacking (pas de 2e ordre au même tick) + Budget Risque Ouvert en live
         if (!isTestEnv) {
+          if (this.state.mt5Live?.connected && mt5Now && (mt5Now.quotes?.length ?? 0) > 0 && !(liveBid > 0 && liveAsk > 0)) {
+            const noQKeyHft = `hft-noquote:${focusSym}`;
+            if (now - (this.marketGuardLogAt.get(noQKeyHft) ?? 0) > 5 * 60_000) {
+              this.marketGuardLogAt.set(noQKeyHft, now);
+              await this.say("risk", `[SPREAD_GUARD (${focusSym})] Cotation Bid/Ask MT5 absente — tir HFT bloqué.`, "veto");
+            }
+            break;
+          }
           if (liveBid > 0 && liveAsk > 0) {
+            const hftTpDist = stopDist * Math.max(1.2, tpVal > 0 ? tpVal : 1.6);
             const spCheck = evaluateSpreadGuard({
               symbol: focusSym,
               bid: liveBid,
               ask: liveAsk,
               slDist: stopDist,
+              tpDist: hftTpDist,
               atr5m: atrForSpread > 0 ? atrForSpread : undefined,
+              equity: this.accountEquity(),
+              lotSize: 0.01,
+              isScalping: true,
             });
             if (!spCheck.ok) {
               const spKey = `hft-sp:${focusSym}`;
-              if (now - (this.marketGuardLogAt.get(spKey) ?? 0) > 2 * 60_000) {
+              if (now - (this.marketGuardLogAt.get(spKey) ?? 0) > 5 * 60_000) {
                 this.marketGuardLogAt.set(spKey, now);
                 await this.say("risk", `[${spCheck.reason}] Tir HFT bloqué.`, "veto");
               }

@@ -16,8 +16,12 @@ export type MarketSessionCheck = {
 export type SpreadGuardResult = {
   ok: boolean;
   spread: number;
+  spreadPips?: number;
   spreadToSlPct?: number;
+  spreadToTpPct?: number;
   spreadToAtrPct?: number;
+  spreadCostUsd?: number;
+  spreadCostEquityPct?: number;
   reason?: string;
 };
 
@@ -139,54 +143,135 @@ export function isPreRolloverScalpExitWindow(symbol: string, nowMs = Date.now())
 }
 
 /**
- * Filtre Spread-Guard : rejette toute entrée si le spread Bid/Ask dépasse
- * 18% de la distance au Stop-Loss ou 35% de l'ATR 5m.
+ * Filtre Spread-Guard strict (adapté scalping & micro-compte) :
+ * rejette toute entrée si le spread Bid/Ask dépasse le plafond en pips,
+ * les ratios max vs SL / TP / ATR(5m), ou le coût instantané en % du capital (< 500).
  */
 export function evaluateSpreadGuard(input: {
   symbol: string;
   bid?: number;
   ask?: number;
   slDist: number;
+  tpDist?: number;
   atr5m?: number;
+  equity?: number;
+  lotSize?: number;
+  isScalping?: boolean;
   maxSpreadToSlRatio?: number;
+  maxSpreadToTpRatio?: number;
   maxSpreadToAtrRatio?: number;
+  maxSpreadPips?: number;
+  maxSpreadCostEquityPct?: number;
 }): SpreadGuardResult {
   const bid = Number(input.bid ?? 0);
   const ask = Number(input.ask ?? 0);
   if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0 || ask < bid) {
     return { ok: true, spread: 0 };
   }
+  const sym = input.symbol.toUpperCase();
+  const isFx = isForexSymbol(sym);
+  const isMajorFx = /^(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD)$/.test(sym);
+  const isCrossFx = isFx && !isMajorFx;
+  const isGold = sym.startsWith("XAU") || sym.startsWith("GOLD");
+  const isSilver = sym.startsWith("XAG") || sym.startsWith("SILVER");
+
   const spread = ask - bid;
-  const maxSlRatio = input.maxSpreadToSlRatio ?? 0.18;
-  const maxAtrRatio = input.maxSpreadToAtrRatio ?? 0.35;
+  const pipSize = isFx ? (sym.endsWith("JPY") ? 0.01 : 0.0001) : isGold ? 0.1 : isSilver ? 0.01 : 0;
+  const spreadPips = pipSize > 0 ? Number((spread / pipSize).toFixed(2)) : undefined;
+
+  const equityVal = Number(input.equity ?? 0);
+  const isMicro = Number.isFinite(equityVal) && equityVal > 0 && equityVal < 500;
+  const strictMode = Boolean(input.isScalping || isMicro);
+
+  const defaultMaxPips = isMajorFx
+    ? strictMode
+      ? 2.0
+      : 3.5
+    : isCrossFx
+      ? strictMode
+        ? 2.5
+        : 4.5
+      : isGold
+        ? strictMode
+          ? 6.0
+          : 12.0
+        : isSilver
+          ? strictMode
+            ? 4.0
+            : 8.0
+          : undefined;
+  const maxPips = input.maxSpreadPips ?? defaultMaxPips;
+
+  const maxSlRatio = input.maxSpreadToSlRatio ?? (strictMode ? 0.15 : 0.18);
+  const maxTpRatio = input.maxSpreadToTpRatio ?? (strictMode ? 0.12 : 0.15);
+  const maxAtrRatio = input.maxSpreadToAtrRatio ?? (strictMode ? 0.25 : 0.35);
 
   const spreadToSlPct = input.slDist > 0 ? spread / input.slDist : undefined;
+  const spreadToTpPct = input.tpDist && input.tpDist > 0 ? spread / input.tpDist : undefined;
   const spreadToAtrPct = input.atr5m && input.atr5m > 0 ? spread / input.atr5m : undefined;
 
+  const effLot = Math.max(0.01, Number(input.lotSize ?? 0.01));
+  const mid = (bid + ask) / 2;
+  const usdPerUnit = isFx ? usdPerPriceUnitPerLot(sym, mid) : isGold ? 100 : isSilver ? 5_000 : 1;
+  const spreadCostUsd =
+    Number.isFinite(equityVal) && equityVal > 0 ? Number((spread * usdPerUnit * effLot).toFixed(3)) : undefined;
+  const spreadCostEquityPct =
+    spreadCostUsd !== undefined && equityVal > 0
+      ? Number(((spreadCostUsd / equityVal) * 100).toFixed(2))
+      : undefined;
+
+  const diag = {
+    spread,
+    spreadPips,
+    spreadToSlPct: spreadToSlPct !== undefined ? Number((spreadToSlPct * 100).toFixed(1)) : undefined,
+    spreadToTpPct: spreadToTpPct !== undefined ? Number((spreadToTpPct * 100).toFixed(1)) : undefined,
+    spreadToAtrPct: spreadToAtrPct !== undefined ? Number((spreadToAtrPct * 100).toFixed(1)) : undefined,
+    spreadCostUsd,
+    spreadCostEquityPct,
+  };
+
+  if (maxPips !== undefined && spreadPips !== undefined && spreadPips > maxPips) {
+    return {
+      ok: false,
+      ...diag,
+      reason: `SPREAD_GUARD (${input.symbol}) : spread trop large ${spreadPips.toFixed(2)} pips (> max ${maxPips.toFixed(1)} pips${strictMode ? " scalping/micro-compte" : ""}).`,
+    };
+  }
   if (spreadToSlPct !== undefined && spreadToSlPct > maxSlRatio) {
     return {
       ok: false,
-      spread,
-      spreadToSlPct: Number((spreadToSlPct * 100).toFixed(1)),
-      spreadToAtrPct: spreadToAtrPct !== undefined ? Number((spreadToAtrPct * 100).toFixed(1)) : undefined,
-      reason: `SPREAD_GUARD (${input.symbol}) : spread ${spread.toPrecision(4)} = ${(spreadToSlPct * 100).toFixed(1)}% du SL (> ${(maxSlRatio * 100).toFixed(0)}%).`,
+      ...diag,
+      reason: `SPREAD_GUARD (${input.symbol}) : spread ${spread.toPrecision(4)}${spreadPips !== undefined ? ` (${spreadPips.toFixed(2)}p)` : ""} = ${(spreadToSlPct * 100).toFixed(1)}% du SL (> ${(maxSlRatio * 100).toFixed(0)}%).`,
+    };
+  }
+  if (spreadToTpPct !== undefined && spreadToTpPct > maxTpRatio) {
+    return {
+      ok: false,
+      ...diag,
+      reason: `SPREAD_GUARD (${input.symbol}) : spread ${spread.toPrecision(4)}${spreadPips !== undefined ? ` (${spreadPips.toFixed(2)}p)` : ""} = ${(spreadToTpPct * 100).toFixed(1)}% du TP (> ${(maxTpRatio * 100).toFixed(0)}%).`,
     };
   }
   if (spreadToAtrPct !== undefined && spreadToAtrPct > maxAtrRatio) {
     return {
       ok: false,
-      spread,
-      spreadToSlPct: spreadToSlPct !== undefined ? Number((spreadToSlPct * 100).toFixed(1)) : undefined,
-      spreadToAtrPct: Number((spreadToAtrPct * 100).toFixed(1)),
-      reason: `SPREAD_GUARD (${input.symbol}) : spread ${spread.toPrecision(4)} = ${(spreadToAtrPct * 100).toFixed(1)}% de l'ATR 5m (> ${(maxAtrRatio * 100).toFixed(0)}%).`,
+      ...diag,
+      reason: `SPREAD_GUARD (${input.symbol}) : spread ${spread.toPrecision(4)}${spreadPips !== undefined ? ` (${spreadPips.toFixed(2)}p)` : ""} = ${(spreadToAtrPct * 100).toFixed(1)}% de l'ATR 5m (> ${(maxAtrRatio * 100).toFixed(0)}%).`,
     };
+  }
+  if (isMicro && spreadCostEquityPct !== undefined) {
+    const maxCostPct = input.maxSpreadCostEquityPct ?? (input.isScalping ? 0.55 : 0.75);
+    if (spreadCostEquityPct > maxCostPct) {
+      return {
+        ok: false,
+        ...diag,
+        reason: `SPREAD_GUARD (${input.symbol}) : coût instantané ${spreadCostUsd!.toFixed(2)} = ${spreadCostEquityPct.toFixed(2)}% du capital ${equityVal.toFixed(2)} (> max ${maxCostPct.toFixed(2)}%).`,
+      };
+    }
   }
 
   return {
     ok: true,
-    spread,
-    spreadToSlPct: spreadToSlPct !== undefined ? Number((spreadToSlPct * 100).toFixed(1)) : undefined,
-    spreadToAtrPct: spreadToAtrPct !== undefined ? Number((spreadToAtrPct * 100).toFixed(1)) : undefined,
+    ...diag,
   };
 }
 

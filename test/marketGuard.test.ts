@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Ticket } from "../src/types.ts";
 import { DASHBOARD_HTML } from "../src/ui.ts";
+import { Mt5CloudBridge } from "../src/mt5.ts";
 
 test("MarketSessionGuard bloque XAUUSD pendant le rollover quotidien 21:40-23:10 UTC", () => {
   // Mercredi 18 nov 2026 à 21:42:17 UTC (heure exacte de l'incident XAUUSD)
@@ -803,4 +804,96 @@ test("Closed trades capital % and evolution helper in DASHBOARD_HTML", () => {
   assert.equal(stats.byId["T-3"].balBefore, 36.33);
   assert.equal(stats.byId["T-3"].balAfter, 36.73);
   assert.equal(fmt(stats.byId["T-3"].tradePct, 2), "+1.10%");
+});
+
+test("SpreadGuard strict scalping & micro-compte bloque NZDUSD 3.6p, EURJPY 7p et SL trop court, mais autorise EURUSD 0.8p et AUDUSD 1.4p", () => {
+  // 1) NZDUSD réel observé (3.6 pips) bloqué même avec SL large 25 pips
+  const nzdWide = evaluateSpreadGuard({
+    symbol: "NZDUSD",
+    bid: 0.54866,
+    ask: 0.54902,
+    slDist: 0.0025,
+    tpDist: 0.004,
+    atr5m: 0.0015,
+    equity: 37,
+    lotSize: 0.01,
+    isScalping: true,
+  });
+  assert.equal(nzdWide.ok, false, "NZDUSD 3.6 pips doit être bloqué en scalping/micro-compte");
+  assert.equal(nzdWide.spreadPips, 3.6);
+
+  // 2) NZDUSD avec SL serré 2.0 pips / TP 3.3 pips (cas TF-20261119-53)
+  const nzdTight = evaluateSpreadGuard({
+    symbol: "NZDUSD",
+    bid: 0.54866,
+    ask: 0.54902,
+    slDist: 0.0002,
+    tpDist: 0.00033,
+    equity: 37,
+    lotSize: 0.01,
+    isScalping: true,
+  });
+  assert.equal(nzdTight.ok, false);
+
+  // 3) EURJPY 7.0 pips bloqué (cas TF-20261119-52)
+  const eurJpy = evaluateSpreadGuard({
+    symbol: "EURJPY",
+    bid: 175.135,
+    ask: 175.205,
+    slDist: 0.098,
+    tpDist: 0.162,
+    equity: 37,
+    lotSize: 0.01,
+    isScalping: true,
+  });
+  assert.equal(eurJpy.ok, false, "EURJPY 7.0 pips doit être bloqué");
+  assert.equal(eurJpy.spreadPips, 7);
+
+  // 4) GBPUSD 2.4 pips (> 2.0 pips scalping/micro)
+  const gbp = evaluateSpreadGuard({
+    symbol: "GBPUSD",
+    bid: 1.30907,
+    ask: 1.30931,
+    slDist: 0.002,
+    tpDist: 0.003,
+    atr5m: 0.0012,
+    equity: 37,
+    lotSize: 0.01,
+    isScalping: true,
+  });
+  assert.equal(gbp.ok, false, "GBPUSD 2.4 pips doit être bloqué > 2.0p en scalping micro-compte");
+
+  // 5) EURUSD 0.8 pips autorisé avec SL 7p / TP 11p / ATR 5p
+  const eur = evaluateSpreadGuard({
+    symbol: "EURUSD",
+    bid: 1.09683,
+    ask: 1.09691,
+    slDist: 0.0007,
+    tpDist: 0.0011,
+    atr5m: 0.0005,
+    equity: 37,
+    lotSize: 0.01,
+    isScalping: true,
+  });
+  assert.equal(eur.ok, true, `EURUSD 0.8p devrait passer, reçu: ${eur.reason}`);
+
+  // 6) AUDUSD 1.4 pips autorisé avec SL 10p / TP 16p / ATR 7p
+  const aud = evaluateSpreadGuard({
+    symbol: "AUDUSD",
+    bid: 0.66578,
+    ask: 0.66592,
+    slDist: 0.001,
+    tpDist: 0.0016,
+    atr5m: 0.0007,
+    equity: 37,
+    lotSize: 0.01,
+    isScalping: true,
+  });
+  assert.equal(aud.ok, true, `AUDUSD 1.4p devrait passer, reçu: ${aud.reason}`);
+
+  // 7) Vérifier que l'EA MQL5 généré embarque les 3 garde-fous spread natifs
+  const mq5 = Mt5CloudBridge.generateMql5ExpertAdvisor();
+  assert.ok(mq5.includes("InpMaxSpreadPipsFx"));
+  assert.ok(mq5.includes("SPREAD_TOO_WIDE:"));
+  assert.ok(mq5.includes("SPREAD_COST_CAP:"));
 });

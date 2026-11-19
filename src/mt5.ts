@@ -714,6 +714,9 @@ input int    InpPollSeconds = 1;
 input long   InpMagic       = 4080;
 input double InpMaxLotCap   = 10.0;   // Plafond de sécurité (MAX_LOT_CAP)
 input bool   InpRiskSizing  = true;   // Recalcul du lot via riskUsd / (SL pts * TickValue)
+input double InpMaxSpreadPipsFx   = 2.5;   // Garde-fou spread max Forex (pips)
+input double InpMaxSpreadToSlPct  = 25.0;  // Garde-fou spread max % de la distance SL
+input double InpMaxSpreadCostPct  = 0.70;  // Coût spread max en % du capital micro-compte (< 500)
 
 CTrade trade;
 double gMyMasterId = 0.0;
@@ -1382,6 +1385,44 @@ void OnTimer() {
 
       double slAbs = (entry > 0.0 && sl > 0.0) ? MathAbs(entry - sl) : 0.0;
       lots = ComputeRiskLots(realSym, riskUsd, slAbs, lots);
+
+      // Garde-fou Spread temps réel avant exécution MT5 (protège scalping & micro-comptes)
+      double liveSpread = (ask > 0.0 && bid > 0.0 && ask >= bid) ? (ask - bid) : 0.0;
+      if(liveSpread > 0.0) {
+         double spPipUnit = (digits == 3 || digits == 5) ? (point * 10.0) : point;
+         string spSymUp = realSym;
+         StringToUpper(spSymUp);
+         bool isMetalSp = (StringFind(spSymUp, "XAU") == 0 || StringFind(spSymUp, "XAG") == 0 || StringFind(spSymUp, "GOLD") == 0 || StringFind(spSymUp, "SILVER") == 0);
+         double spreadPips = (spPipUnit > 0.0) ? (liveSpread / spPipUnit) : 0.0;
+         if(!isMetalSp && InpMaxSpreadPipsFx > 0.0 && spreadPips > InpMaxSpreadPipsFx) {
+            RecordRejectedOrder(id, realSym, "SPREAD_TOO_WIDE:" + DoubleToString(spreadPips, 2) + "p");
+            gFailedIds += id + "|";
+            stateDirty = true;
+            continue;
+         }
+         if(slAbs > 0.0 && InpMaxSpreadToSlPct > 0.0 && (liveSpread / slAbs) * 100.0 > InpMaxSpreadToSlPct) {
+            RecordRejectedOrder(id, realSym, "SPREAD_TOO_WIDE:SL_" + DoubleToString((liveSpread / slAbs) * 100.0, 1) + "%");
+            gFailedIds += id + "|";
+            stateDirty = true;
+            continue;
+         }
+         double acctEqSp = AccountInfoDouble(ACCOUNT_EQUITY);
+         double tSizeSp  = SymbolInfoDouble(realSym, SYMBOL_TRADE_TICK_SIZE);
+         double tValSp   = SymbolInfoDouble(realSym, SYMBOL_TRADE_TICK_VALUE);
+         if(acctEqSp > 0.0 && acctEqSp < 500.0 && tSizeSp > 0.0 && tValSp > 0.0 && InpMaxSpreadCostPct > 0.0) {
+            double vMinSp = SymbolInfoDouble(realSym, SYMBOL_VOLUME_MIN);
+            if(vMinSp <= 0.0) vMinSp = 0.01;
+            double checkLotSp = MathMax(vMinSp, MathMin(lots > 0.0 ? lots : 0.01, InpMaxLotCap));
+            double spCostAcct = (liveSpread / tSizeSp) * tValSp * checkLotSp;
+            double spCostPct  = (spCostAcct / acctEqSp) * 100.0;
+            if(spCostPct > InpMaxSpreadCostPct) {
+               RecordRejectedOrder(id, realSym, "SPREAD_COST_CAP:" + DoubleToString(spCostPct, 2) + "%");
+               gFailedIds += id + "|";
+               stateDirty = true;
+               continue;
+            }
+         }
+      }
 
       if(side == "BUY" && ask > 0.0) {
          double normLots = ComputeBrokerSafeLots(realSym, lots, notional, ORDER_TYPE_BUY, ask);
