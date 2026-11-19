@@ -4161,7 +4161,7 @@ export class TradingFloorDesk {
             // le mode Mean-Reversion donne simplement un bonus de priorité au fade en cas d'égalité.
             const playbookMismatch =
               (effectiveForceMeanRev && activePlaybook === "breakout" && bt.outOfSample.expectancyR < 0.05) ||
-              (idea.playbook === "Macro_FVG_Mitigation" && activePlaybook === "fade");
+              (idea.playbook === "Macro_FVG_Mitigation" && activePlaybook === "fade" && bt.outOfSample.expectancyR < 0.05);
             if (bt.pass && !playbookMismatch) {
               const candLevels = this.resolveCandidateTradeLevels(
                 candidate,
