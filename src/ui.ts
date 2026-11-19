@@ -4290,7 +4290,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       coolRim.position.set(-9, 6.2, -7);
       scene3d.add(coolRim);
 
-      // Closed Institutional Quant Trading Room (all 8 agents inside one shared room)
+      // ==================== ROTONDE QUANT ARCHITECTURALE 3D (CITADEL / IRON MAN COMMAND CENTER) ====================
+      scene3d.fog = new THREE.FogExp2(0x02050d, 0.017);
       coreMesh3d = null;
       ring1_3d = null;
       ring2_3d = null;
@@ -4299,40 +4300,76 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       pulseArcs = [];
       profitBursts3d = [];
 
-      var studioDeck = new THREE.Mesh(
-        new THREE.BoxGeometry(28.0, 0.36, 26.0),
-        new THREE.MeshPhysicalMaterial({ color: 0x070d18, metalness: 0.68, roughness: 0.28, clearcoat: 0.65 })
-      );
-      studioDeck.position.set(0, -1.68, 1.8);
+      var obsidianMat = new THREE.MeshPhysicalMaterial({ color: 0x050a14, metalness: 0.82, roughness: 0.18, clearcoat: 0.9, clearcoatRoughness: 0.12 });
+      var roomWallMat = new THREE.MeshStandardMaterial({ color: 0x0b1326, roughness: 0.52, metalness: 0.48 });
+      var roomPanelMat = new THREE.MeshStandardMaterial({ color: 0x13203a, roughness: 0.38, metalness: 0.62 });
+      var glassPanelMat = new THREE.MeshPhysicalMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.16, roughness: 0.08, metalness: 0.9, clearcoat: 1.0 });
+      var ledBarMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.9 });
+      var emeraldLedMat = new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.8 });
+
+      // Sol circulaire principal en obsidienne polie (rayon 15.2)
+      var studioDeck = new THREE.Mesh(new THREE.CylinderGeometry(15.2, 15.6, 0.36, 64), obsidianMat);
+      studioDeck.position.set(0, -1.68, 0);
       studioDeck.receiveShadow = true;
       scene3d.add(studioDeck);
 
-      var grid = new THREE.GridHelper(27, 27, 0x1e3a5f, 0x0b1526);
-      grid.position.set(0, -1.49, 1.8);
-      scene3d.add(grid);
+      // Podium central surélevé
+      var innerPodium = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.8, 0.22, 48), roomPanelMat);
+      innerPodium.position.set(0, -1.42, 0);
+      innerPodium.receiveShadow = true;
+      scene3d.add(innerPodium);
 
-      // ==================== PIÈCE FERMÉE QUANT DESK (4 MURS + PLAFOND + ÉCRAN WALL STREET) ====================
-      var roomWallMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.72, metalness: 0.28 });
-      var roomPanelMat = new THREE.MeshStandardMaterial({ color: 0x162238, roughness: 0.55, metalness: 0.42 });
-      var glassPanelMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, roughness: 0.12, metalness: 0.85 });
-      var ledBarMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 });
+      // Anneaux lumineux concentriques au sol
+      [3.65, 7.6, 11.4, 14.9].forEach(function (rad, rIdx) {
+        var fRing = new THREE.Mesh(
+          new THREE.RingGeometry(rad - 0.04, rad + 0.04, 72),
+          rIdx % 2 === 0 ? ledBarMat : emeraldLedMat
+        );
+        fRing.rotation.x = -Math.PI / 2;
+        fRing.position.set(0, -1.48, 0);
+        scene3d.add(fRing);
+      });
 
-      // Plinthe lumineuse périphérique
-      var trimMesh = new THREE.Mesh(
-        new THREE.BoxGeometry(27.8, 0.08, 25.8),
-        new THREE.MeshBasicMaterial({ color: 0x1e3a8a, transparent: true, opacity: 0.35 })
+      // 12 colonnes architecturales périphériques + Halo lumineux de plafond suspendu
+      for (var ci = 0; ci < 12; ci++) {
+        var ang = (ci / 12) * Math.PI * 2;
+        var colX = Math.sin(ang) * 14.4;
+        var colZ = Math.cos(ang) * 14.4;
+        var colPillar = new THREE.Mesh(new THREE.BoxGeometry(0.42, 10.6, 0.65), roomWallMat);
+        colPillar.position.set(colX, 3.8, colZ);
+        colPillar.rotation.y = ang;
+        scene3d.add(colPillar);
+
+        var colStrip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 9.6, 0.08), ci % 2 === 0 ? ledBarMat : emeraldLedMat);
+        colStrip.position.set(Math.sin(ang) * 14.05, 3.8, Math.cos(ang) * 14.05);
+        scene3d.add(colStrip);
+      }
+
+      // Halo architectural de plafond (double anneau LED suspendu)
+      var ceilingHaloOuter = new THREE.Mesh(new THREE.TorusGeometry(13.6, 0.14, 16, 80), roomPanelMat);
+      ceilingHaloOuter.rotation.x = Math.PI / 2;
+      ceilingHaloOuter.position.set(0, 8.8, 0);
+      scene3d.add(ceilingHaloOuter);
+
+      var ceilingHaloLed = new THREE.Mesh(new THREE.TorusGeometry(13.2, 0.05, 12, 80), ledBarMat);
+      ceilingHaloLed.rotation.x = Math.PI / 2;
+      ceilingHaloLed.position.set(0, 8.65, 0);
+      scene3d.add(ceilingHaloLed);
+
+      var ceilingInnerHalo = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.06, 12, 64), emeraldLedMat);
+      ceilingInnerHalo.rotation.x = Math.PI / 2;
+      ceilingInnerHalo.position.set(0, 8.2, 0);
+      scene3d.add(ceilingInnerHalo);
+
+      // Faisceau volumétrique central descendant du plafond vers le noyau holographique
+      var holoBeam = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.9, 2.4, 9.4, 32, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.045, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending })
       );
-      trimMesh.position.set(0, -1.48, 1.8);
-      scene3d.add(trimMesh);
+      holoBeam.position.set(0, 3.4, 0);
+      scene3d.add(holoBeam);
 
-      // Mur du fond (z = -11.0) + Écran géant Wall Street
-      var backWall = new THREE.Mesh(new THREE.BoxGeometry(28.2, 11.2, 0.4), roomWallMat);
-      backWall.position.set(0, 3.9, -11.0);
-      scene3d.add(backWall);
-
-      var tickerFrame = new THREE.Mesh(new THREE.BoxGeometry(16.8, 4.4, 0.18), roomPanelMat);
-      tickerFrame.position.set(0, 4.3, -10.72);
-      scene3d.add(tickerFrame);
+      // Écran Panoramique Courbé Wall Street (110° face au centre de la rotonde)
       var wallCanvas3d = document.createElement('canvas');
       wallCanvas3d.width = 1024;
       wallCanvas3d.height = 256;
@@ -4348,33 +4385,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var modeLbl = style === 'scalping' ? 'SCALPING 5M' : style === 'longtrade' ? 'SWING MACRO 4H' : 'DAY TRADING 1H';
         var mt5Ok = Boolean(st.mt5Connected);
         var grad = ctx.createLinearGradient(0, 0, 1024, 256);
-        grad.addColorStop(0, '#040b17');
-        grad.addColorStop(0.5, '#09182e');
-        grad.addColorStop(1, '#040b17');
+        grad.addColorStop(0, '#030916');
+        grad.addColorStop(0.5, '#0a1c36');
+        grad.addColorStop(1, '#030916');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, 1024, 256);
-        ctx.strokeStyle = 'rgba(56,189,248,0.22)';
+        ctx.strokeStyle = 'rgba(56,189,248,0.18)';
         ctx.lineWidth = 1;
         for (var gx = 0; gx < 1024; gx += 64) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, 256); ctx.stroke(); }
         for (var gy = 0; gy < 256; gy += 64) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(1024, gy); ctx.stroke(); }
         ctx.fillStyle = '#38bdf8';
         ctx.font = 'bold 20px monospace';
-        ctx.fillText('TRADING FLOOR QUANT DESK  ·  ' + modeLbl, 28, 38);
+        ctx.fillText('QUANT COMMAND ROTUNDA  ·  ' + modeLbl, 28, 38);
         ctx.fillStyle = mt5Ok ? '#10b981' : '#f59e0b';
-        ctx.beginPath(); ctx.arc(905, 31, 7, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(898, 31, 7, 0, Math.PI * 2); ctx.fill();
         ctx.font = 'bold 17px monospace';
-        ctx.fillText(mt5Ok ? 'MT5 LIVE' : 'MT5 SYNC', 920, 37);
+        ctx.fillText(mt5Ok ? 'MT5 LIVE' : 'MT5 SYNC', 914, 37);
         ctx.fillStyle = '#f8fafc';
         ctx.font = 'bold 54px monospace';
         ctx.fillText(eq > 0 ? ('$' + eq.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : 'SYNCING...', 28, 118);
         ctx.fillStyle = '#94a3b8';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText('POSITIONS OUVERTES : ' + openCount + '   ·   9 AGENTS ACTIFS   ·   MARKET GUARD ON', 28, 152);
+        ctx.font = 'bold 17px monospace';
+        ctx.fillText('POSITIONS : ' + openCount + '   ·   9 AGENTS AUTONOMES   ·   MARKET GUARD ACTIF', 28, 152);
         var tape = Array.isArray(st.tape) ? st.tape.slice(0, 6) : [];
         var tx = 28;
-        ctx.fillStyle = 'rgba(15,23,42,0.88)';
+        ctx.fillStyle = 'rgba(7,15,30,0.92)';
         ctx.fillRect(0, 184, 1024, 72);
-        ctx.strokeStyle = 'rgba(56,189,248,0.35)';
+        ctx.strokeStyle = 'rgba(56,189,248,0.4)';
         ctx.beginPath(); ctx.moveTo(0, 184); ctx.lineTo(1024, 184); ctx.stroke();
         tape.forEach(function (row) {
           var chg = Number(row.changePct || 0);
@@ -4408,76 +4445,47 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         wallTex3d.needsUpdate = true;
       };
       window.refreshWallScreen3d();
-      var tickerScreen = new THREE.Mesh(
-        new THREE.BoxGeometry(16.0, 3.8, 0.08),
-        new THREE.MeshBasicMaterial({ map: wallTex3d })
-      );
-      tickerScreen.position.set(0, 4.3, -10.60);
+
+      var curvedWallGeo = new THREE.CylinderGeometry(13.1, 13.1, 4.4, 56, 1, true, Math.PI * 0.72, Math.PI * 0.56);
+      curvedWallGeo.scale(-1, 1, 1);
+      var tickerScreen = new THREE.Mesh(curvedWallGeo, new THREE.MeshBasicMaterial({ map: wallTex3d, side: THREE.DoubleSide }));
+      tickerScreen.position.set(0, 4.4, 0);
       scene3d.add(tickerScreen);
-      var tickerTopLed = new THREE.Mesh(new THREE.BoxGeometry(16.2, 0.08, 0.08), ledBarMat);
-      tickerTopLed.position.set(0, 6.26, -10.58);
-      scene3d.add(tickerTopLed);
-      var tickerBotLed = new THREE.Mesh(new THREE.BoxGeometry(16.2, 0.08, 0.08), ledBarMat);
-      tickerBotLed.position.set(0, 2.34, -10.58);
-      scene3d.add(tickerBotLed);
 
-      // Murs latéraux gauche/droit (x = ±14.0) avec piliers acoustiques & baies vitrées
-      [-14.0, 14.0].forEach(function (wallX) {
-        var sideWall = new THREE.Mesh(new THREE.BoxGeometry(0.4, 11.2, 26.2), roomWallMat);
-        sideWall.position.set(wallX, 3.9, 1.8);
-        scene3d.add(sideWall);
-        var sign = wallX < 0 ? 1 : -1;
-        for (var p = -6; p <= 6; p += 6) {
-          var pillar = new THREE.Mesh(new THREE.BoxGeometry(0.24, 10.6, 0.45), roomPanelMat);
-          pillar.position.set(wallX + sign * 0.25, 3.9, p);
-          scene3d.add(pillar);
-        }
-        var winGlass = new THREE.Mesh(new THREE.BoxGeometry(0.08, 5.0, 18.0), glassPanelMat);
-        winGlass.position.set(wallX + sign * 0.24, 3.6, 0.5);
-        scene3d.add(winGlass);
-        var sideLed = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 22.0), ledBarMat);
-        sideLed.position.set(wallX + sign * 0.28, 8.4, 1.5);
-        scene3d.add(sideLed);
-      });
-
-      // Mur avant derrière la caméra (z = +14.8) pour fermer complètement la salle
-      var frontWall = new THREE.Mesh(new THREE.BoxGeometry(28.2, 11.2, 0.4), roomWallMat);
-      frontWall.position.set(0, 3.9, 14.8);
-      scene3d.add(frontWall);
-
-      // Plafond fermé avec poutres LED encastrées (y = 9.4)
-      var ceilingMesh = new THREE.Mesh(new THREE.BoxGeometry(28.4, 0.4, 26.4), roomWallMat);
-      ceilingMesh.position.set(0, 9.4, 1.8);
-      scene3d.add(ceilingMesh);
-      [-5.5, 0, 5.5].forEach(function (beamZ) {
-        var ceilingBeam = new THREE.Mesh(new THREE.BoxGeometry(24.0, 0.14, 0.42), roomPanelMat);
-        ceilingBeam.position.set(0, 9.15, beamZ);
-        scene3d.add(ceilingBeam);
-        var beamLed = new THREE.Mesh(new THREE.BoxGeometry(22.0, 0.06, 0.12), ledBarMat);
-        beamLed.position.set(0, 9.06, beamZ);
-        scene3d.add(beamLed);
-      });
-
-      // Table centrale de briefing Quant au centre de la pièce + Noyau Holographique
-      var centerTable = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.14, 2.2), roomPanelMat);
-      centerTable.position.set(0, -0.58, 0.2);
+      // Socle holographique central + Noyau Quantique Multi-Anneaux Gyroscopiques
+      var centerTable = new THREE.Mesh(new THREE.CylinderGeometry(1.85, 2.05, 0.22, 48), glassPanelMat);
+      centerTable.position.set(0, -0.48, 0);
+      scene3d.add(centerTable);
+      var tableBase = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.55, 0.88, 36), obsidianMat);
+      tableBase.position.set(0, -1.02, 0);
+      scene3d.add(tableBase);
       coreMesh3d = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.46, 0),
-        new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.75, wireframe: true })
+        new THREE.IcosahedronGeometry(0.62, 1),
+        new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0ea5e9, emissiveIntensity: 0.95, wireframe: true })
       );
-      coreMesh3d.position.set(0, 0.55, 0.2);
+      coreMesh3d.position.set(0, 0.75, 0);
       scene3d.add(coreMesh3d);
       ring1_3d = new THREE.Mesh(
-        new THREE.TorusGeometry(0.86, 0.025, 12, 64),
-        new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.72 })
+        new THREE.TorusGeometry(1.08, 0.028, 12, 72),
+        new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.85 })
       );
       ring1_3d.rotation.x = Math.PI / 2;
-      ring1_3d.position.set(0, 0.55, 0.2);
+      ring1_3d.position.set(0, 0.75, 0);
       scene3d.add(ring1_3d);
-      scene3d.add(centerTable);
-      var tableBase = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.9, 1.2), roomWallMat);
-      tableBase.position.set(0, -1.08, 0.2);
-      scene3d.add(tableBase);
+      ring2_3d = new THREE.Mesh(
+        new THREE.TorusGeometry(1.36, 0.02, 12, 72),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.65 })
+      );
+      ring2_3d.rotation.y = Math.PI / 3;
+      ring2_3d.position.set(0, 0.75, 0);
+      scene3d.add(ring2_3d);
+      floorRing3d = new THREE.Mesh(
+        new THREE.TorusGeometry(1.62, 0.016, 12, 72),
+        new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.52 })
+      );
+      floorRing3d.rotation.x = Math.PI / 3;
+      floorRing3d.position.set(0, 0.75, 0);
+      scene3d.add(floorRing3d);
 
       // Asymmetric Spatial Zones where each Agent builds its own custom environment & roams freely
       var STUDIO_ZONES = {
@@ -4505,13 +4513,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var neonMat = new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 1.25, roughness: 0.2, metalness: 0.4 });
         var glassScreenMat = new THREE.MeshBasicMaterial({ map: makeScreenTexture(ag.color), transparent: true, opacity: 0.88, side: THREE.DoubleSide });
 
-        var island = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.12, 2.0), padMat);
-        island.position.y = 0.06;
+        var island = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.58, 0.14, 36), padMat);
+        island.position.y = 0.07;
         island.receiveShadow = true;
         habitat.add(island);
 
-        var accentTrim = new THREE.Mesh(new THREE.BoxGeometry(2.54, 0.03, 0.08), neonMat);
-        accentTrim.position.set(0, 0.12, 0.98);
+        var accentTrim = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.03, 10, 48), neonMat);
+        accentTrim.rotation.x = Math.PI / 2;
+        accentTrim.position.set(0, 0.14, 0);
         habitat.add(accentTrim);
 
         var holoScreens = [];
@@ -4787,6 +4796,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (!prefersReducedMotion) {
           pts3d.rotation.y += 0.0009;
           pts3d.position.y = Math.sin(clk * 0.45) * 0.12;
+          if (coreMesh3d) {
+            coreMesh3d.rotation.y += 0.012;
+            coreMesh3d.rotation.x += 0.006;
+            coreMesh3d.position.y = 0.78 + Math.sin(clk * 1.6) * 0.10;
+          }
+          if (ring1_3d) {
+            ring1_3d.rotation.z += 0.015;
+            ring1_3d.rotation.x = Math.PI / 2 + Math.sin(clk * 0.9) * 0.25;
+          }
+          if (ring2_3d) {
+            ring2_3d.rotation.y -= 0.018;
+            ring2_3d.rotation.z += 0.008;
+          }
+          if (floorRing3d) {
+            floorRing3d.rotation.x += 0.011;
+            floorRing3d.rotation.y += 0.014;
+          }
 
           if (clk - lastAmbientPulseClk > 1.8 && pulseArcs.length < 8) {
             lastAmbientPulseClk = clk;

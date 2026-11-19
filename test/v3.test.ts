@@ -1555,9 +1555,9 @@ test("Adaptive Break-Even 50-90%, dedicated Audit Reviewer tab & closed 3D Quant
   assert.ok(DASHBOARD_HTML.includes('id="view-reviewer"'));
   assert.ok(DASHBOARD_HTML.includes("renderReviewerTab()"));
   assert.ok(DASHBOARD_HTML.includes("Break-Even 50-90% Adaptatif"));
-  assert.ok(DASHBOARD_HTML.includes("backWall"));
-  assert.ok(DASHBOARD_HTML.includes("frontWall"));
-  assert.ok(DASHBOARD_HTML.includes("ceilingMesh"));
+  assert.ok(DASHBOARD_HTML.includes("curvedWallGeo"));
+  assert.ok(DASHBOARD_HTML.includes("ceilingHaloOuter"));
+  assert.ok(DASHBOARD_HTML.includes("holoBeam"));
   const scriptMatch2 = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
   assert.ok(scriptMatch2 && scriptMatch2[1]);
   assert.doesNotThrow(() => new Function(scriptMatch2[1]));
