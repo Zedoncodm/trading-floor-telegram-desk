@@ -1173,9 +1173,13 @@ export class TradingFloorDesk {
 
       // 0. Réinitialisation propre sur changement de compte MT5 (évite une fausse perte journalière de -99%)
       if ((accountSwitched || staleBaselineFromOldAccount) && validMt5Metrics) {
+        const liveMt5PosIds = new Set((mt5State.positions ?? []).map((p) => String(p.ticket)));
         // Détacher sans injecter de fausse perte les anciens tickets ouverts/en attente du compte précédent
         for (const oldT of this.state.tickets) {
-          if (oldT.status === "open" || oldT.status === "pending") {
+          if (
+            (oldT.status === "open" || oldT.status === "pending") &&
+            (!oldT.mt5PositionId || !liveMt5PosIds.has(String(oldT.mt5PositionId)))
+          ) {
             oldT.status = "closed";
             oldT.closedAt = now;
             oldT.closeReason = "flatten";
