@@ -1536,65 +1536,84 @@ export class TradingFloorDesk {
         structuralChange = true;
       }
 
-      // Réconciliation complète avec l'historique MT5 fermé (closedDeals) :
-      // récupère les trades ouverts/clôturés directement sur MT5 ou manqués lors d'un redémarrage (ex: -400€ Gold)
+      // Réconciliation 100% AUTORITATIVE avec l'historique MT5 fermé (closedDeals) :
+      // MetaTrader 5 fait foi à 100% pour chaque trade clôturé (PnL net = profit+swap+commission, prix d'entrée/sortie, lots, motif).
+      const mt5ClosedPosIds = new Set<string>();
       for (const deal of mt5State.closedDeals ?? []) {
         if (!deal || !deal.positionId || !deal.symbol) continue;
         const posIdStr = String(deal.positionId);
+        mt5ClosedPosIds.add(posIdStr);
         const dealComment = String(deal.id || "").trim();
+        const dealDeskSym = Mt5CloudBridge.mapMt5SymbolToDesk(deal.symbol);
+        const dealDir: Direction = deal.side === "SELL" ? "short" : "long";
+        const dealClosedAt = deal.closedAt > 0 ? deal.closedAt : now;
+        const mappedMt5Reason: CloseReason =
+          deal.profit > 0
+            ? "target"
+            : deal.dealReason === "MANUAL"
+              ? "flatten"
+              : deal.dealReason === "TP"
+                ? "target"
+                : "invalidation";
+
         const existing = this.state.tickets.find(
           (x) =>
             x.mt5PositionId === posIdStr ||
             (dealComment && x.id === dealComment && (x.status === "closed" || x.status === "open")) ||
-            x.id === `MT5-DEAL-${posIdStr}`,
+            x.id === `MT5-DEAL-${posIdStr}` ||
+            (x.status === "closed" &&
+              !x.mt5PositionId &&
+              x.asset === dealDeskSym &&
+              x.direction === dealDir &&
+              Math.abs((x.closedAt ?? x.createdAt ?? 0) - dealClosedAt) <= 10 * 60_000),
         );
         if (existing) {
           if (existing.status === "open") {
-            const closeReason: CloseReason =
-              deal.dealReason === "MANUAL"
-                ? "flatten"
-                : deal.dealReason === "SL"
-                  ? "invalidation"
-                  : deal.dealReason === "TP"
-                    ? "target"
-                    : deal.profit >= 0
-                      ? "target"
-                      : "invalidation";
             await this.closeOpenTicket(
               existing,
               deal.exit || existing.fillPrice || existing.entry,
-              closeReason,
-              deal.closedAt || now,
+              mappedMt5Reason,
+              dealClosedAt,
               deal.profit,
               deal.dealReason,
             );
             this.pushLocalMt5BridgePayload(now);
             structuralChange = true;
-          } else if (
-            existing.status === "closed" &&
-            existing.pnl !== undefined &&
-            Math.abs(existing.pnl - deal.profit) > 0.01 &&
-            (existing.mt5PositionId === posIdStr || (dealComment && existing.id === dealComment))
-          ) {
+          } else if (existing.status === "closed") {
             const prevPnl = Number(existing.pnl ?? 0);
             const realPnl = Number(deal.profit.toFixed(2));
-            this.state.realizedPnl = Number((this.state.realizedPnl + (realPnl - prevPnl)).toFixed(2));
-            existing.pnl = realPnl;
-            existing.mt5Profit = realPnl;
-            existing.mt5PositionId = posIdStr;
-            existing.exitPrice = deal.exit || existing.exitPrice;
-            if (realPnl >= 0 && prevPnl < 0) {
-              existing.closeReason = "target";
-              // Lever un éventuel cooldown Anti-Death-Loop déclenché par erreur avant la réconciliation MT5
-              const dk = `${existing.asset}:${existing.direction}`;
-              if (this.state.directionalCooldowns?.[dk]?.bannedDir === existing.direction) {
-                delete this.state.directionalCooldowns[dk];
+            const realExit = deal.exit || existing.exitPrice;
+            const realEntry = deal.entry > 0 ? deal.entry : existing.entry;
+            const needsSync =
+              Math.abs(prevPnl - realPnl) > 0.001 ||
+              existing.mt5PositionId !== posIdStr ||
+              existing.exitPrice !== realExit ||
+              (deal.lots > 0 && existing.mt5Lots !== deal.lots) ||
+              (realPnl > 0 && existing.closeReason !== "target");
+            if (needsSync) {
+              existing.pnl = realPnl;
+              existing.mt5Profit = realPnl;
+              existing.mt5PositionId = posIdStr;
+              existing.entry = realEntry;
+              existing.fillPrice = realEntry;
+              existing.exitPrice = realExit;
+              if (deal.lots > 0) existing.mt5Lots = deal.lots;
+              if (deal.closedAt > 0) existing.closedAt = deal.closedAt;
+              if (realPnl > 0) {
+                existing.closeReason = "target";
+                // Lever tout cooldown Anti-Death-Loop déclenché à tort avant la vérité MT5
+                const dk = `${existing.asset}:${existing.direction}`;
+                if (this.state.directionalCooldowns?.[dk]?.bannedDir === existing.direction) {
+                  delete this.state.directionalCooldowns[dk];
+                }
+                if (this.state.directionalCooldowns?.[existing.asset]?.bannedDir === existing.direction) {
+                  delete this.state.directionalCooldowns[existing.asset];
+                }
+              } else if (existing.closeReason === "halt") {
+                existing.closeReason = mappedMt5Reason;
               }
-              if (this.state.directionalCooldowns?.[existing.asset]?.bannedDir === existing.direction) {
-                delete this.state.directionalCooldowns[existing.asset];
-              }
+              structuralChange = true;
             }
-            structuralChange = true;
           }
           continue;
         }
@@ -1683,23 +1702,132 @@ export class TradingFloorDesk {
         structuralChange = true;
       }
 
-      // Mise à jour propre de la courbe d'équité sans écraser l'historique ni injecter de pic aberrant
+      // Purger tout ticket "closed" fantôme sans mt5PositionId (jamais exécuté sur MT5, ex: ordre fermé par halt hors-ligne)
+      // afin que l'historique des positions fermées, le Win Rate et le Calendrier reflètent 100% MetaTrader 5.
+      if (mt5State.connected && Array.isArray(mt5State.closedDeals)) {
+        for (const t of this.state.tickets) {
+          if (
+            t.status === "closed" &&
+            !t.mt5PositionId &&
+            (!t.accountLogin || String(t.accountLogin) === acctKeyNow)
+          ) {
+            t.status = "rejected";
+            t.vetoReason = "MT5_NOT_IN_BROKER_HISTORY";
+            t.pnl = 0;
+            structuralChange = true;
+          }
+        }
+        const exactMt5Realized = Number(
+          this.state.tickets
+            .filter((t) => t.status === "closed")
+            .reduce((sum, t) => sum + Number(t.pnl ?? 0), 0)
+            .toFixed(2),
+        );
+        if (Math.abs(this.state.realizedPnl - exactMt5Realized) > 0.001) {
+          this.state.realizedPnl = exactMt5Realized;
+          structuralChange = true;
+        }
+        if (Number.isFinite(mt5State.balance) && mt5State.balance > 0) {
+          const exactStart = Number((mt5State.balance - this.state.realizedPnl).toFixed(2));
+          if (Math.abs(this.state.startEquity - exactStart) > 0.001) {
+            this.state.startEquity = exactStart;
+            structuralChange = true;
+          }
+        }
+      }
+
+      // Synchronisation directe de la Courbe de Solde Réel & Équité Live à partir des vraies valeurs MetaTrader 5 :
+      // 1) Ancre les paliers historiques de solde réel depuis mt5State.closedDeals (en remontant depuis mt5State.balance)
+      const liveBalMt5 = Number(
+        (mt5State.balance > 0 ? mt5State.balance : this.state.startEquity + this.state.realizedPnl).toFixed(2),
+      );
+      const liveEqMt5 = Number(
+        (mt5State.equity > 0 ? mt5State.equity : currentEquity(this.state)).toFixed(2),
+      );
+      const liveProfitMt5 = Number((mt5State.balance > 0 ? liveEqMt5 - liveBalMt5 : unrealizedPnl(this.state)).toFixed(2));
+
+      if (mt5State.connected && liveBalMt5 > 0) {
+        // Purger les points PAPER par défaut (ex: 10 000 € initiaux sans accountLogin) qui fausseraient la médiane sanitizeEquityCurve
+        const beforeLen = this.state.curve.length;
+        this.state.curve = this.state.curve.filter((pt) => {
+          if (pt.accountLogin && String(pt.accountLogin) !== acctKeyNow) return false;
+          if (!pt.accountLogin && Math.abs(pt.eq - liveBalMt5) / Math.max(liveBalMt5, 1) > 1.5) return false;
+          return true;
+        });
+        if (this.state.curve.length !== beforeLen) structuralChange = true;
+      }
+
+      if (mt5State.connected && liveBalMt5 > 0 && (mt5State.closedDeals?.length ?? 0) > 0) {
+        const chronoDeals = [...(mt5State.closedDeals ?? [])]
+          .filter((d) => d && d.closedAt > 0 && Number.isFinite(d.profit))
+          .sort((a, b) => a.closedAt - b.closedAt);
+        if (chronoDeals.length > 0) {
+          const sumDealsProfit = chronoDeals.reduce((s, d) => s + Number(d.profit || 0), 0);
+          const initialBalBeforeDeals = Number(Math.max(0.01, liveBalMt5 - sumDealsProfit).toFixed(2));
+          const dealMilestones: Array<{ t: number; bal: number; realized: number }> = [
+            { t: Math.max(0, chronoDeals[0].closedAt - 60_000), bal: initialBalBeforeDeals, realized: 0 },
+          ];
+          let runBal = initialBalBeforeDeals;
+          let runReal = 0;
+          for (const d of chronoDeals) {
+            runBal = Number(Math.max(0.01, runBal + Number(d.profit || 0)).toFixed(2));
+            runReal = Number((runReal + Number(d.profit || 0)).toFixed(2));
+            dealMilestones.push({ t: d.closedAt, bal: runBal, realized: runReal });
+          }
+          let curveBackfilled = false;
+          for (const m of dealMilestones) {
+            const nearPt = this.state.curve.find((pt) => Math.abs(pt.t - m.t) <= 10_000);
+            if (nearPt) {
+              if (Math.abs((nearPt.balance ?? nearPt.eq) - m.bal) >= 0.01) {
+                nearPt.balance = m.bal;
+                nearPt.realized = m.realized;
+                curveBackfilled = true;
+              }
+            } else {
+              const newMilestone = {
+                t: m.t,
+                eq: m.bal,
+                balance: m.bal,
+                realized: m.realized,
+                unrealized: 0,
+                drawdownPct: 0,
+                accountLogin: acctKeyNow,
+              };
+              this.state.curve.push(newMilestone);
+              this.store.appendCurvePointToLedger(acctKeyNow, newMilestone);
+              curveBackfilled = true;
+            }
+          }
+          if (curveBackfilled) {
+            this.state.curve.sort((a, b) => a.t - b.t);
+            let runPeak = this.state.curve[0]?.eq ?? liveBalMt5;
+            for (const pt of this.state.curve) {
+              if (pt.eq > runPeak) runPeak = pt.eq;
+              pt.drawdownPct = runPeak > 0 ? Math.max(0, (runPeak - pt.eq) / runPeak) : 0;
+            }
+            structuralChange = true;
+          }
+        }
+      }
+
+      // 2) Point temps réel alimenté directement par mt5State.balance & mt5State.equity (jamais simulé quand MT5 est connecté)
       const lastCurve = this.state.curve[this.state.curve.length - 1];
-      const liveEq = currentEquity(this.state);
-      if (!lastCurve || now - lastCurve.t >= 15_000) {
+      const mt5BalChanged = Boolean(lastCurve && Math.abs((lastCurve.balance ?? lastCurve.eq) - liveBalMt5) >= 0.01);
+      if (!lastCurve || mt5BalChanged || now - lastCurve.t >= 15_000) {
         this.recordEquityPoint(now);
       } else if (
-        lastCurve.eq !== liveEq &&
-        liveEq > 0 &&
-        Math.abs(liveEq - lastCurve.eq) / Math.max(lastCurve.eq, 1) < 0.25
+        (lastCurve.eq !== liveEqMt5 || (lastCurve.balance ?? lastCurve.eq) !== liveBalMt5) &&
+        liveEqMt5 > 0 &&
+        Math.abs(liveEqMt5 - lastCurve.eq) / Math.max(lastCurve.eq, 1) < 0.25
       ) {
-        lastCurve.eq = liveEq;
-        lastCurve.unrealized = unrealizedPnl(this.state);
+        lastCurve.eq = liveEqMt5;
+        lastCurve.balance = liveBalMt5;
+        lastCurve.unrealized = liveProfitMt5;
         lastCurve.realized = this.state.realizedPnl;
       }
 
       this.pushLocalMt5BridgePayload(now);
-      this.lastKnownEquity = liveEq;
+      this.lastKnownEquity = liveEqMt5;
       if (structuralChange || telemetryChange) {
         this.broadcast();
       }

@@ -6159,8 +6159,40 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var merged = baseCurve.slice();
 
-      // Reconstitution en arrière UNIQUEMENT au démarrage vierge sans historique mesuré (< 2 points)
-      if (merged.length < 2) {
+      // En mode Solde Compte (Fermé) avec MT5 connecté : on reconstruit la courbe de solde directement
+      // depuis les deals clôturés MT5 ancrés sur deskState.mt5Live.balance (+ les points historiques persistés > 24h)
+      if (equityCurveMode === 'balance' && hasMt5 && liveBal > 0) {
+        var mt5ClosedAll = (deskState.tickets || [])
+          .filter(function (t) { return t.status === 'closed' && (t.closedAt || t.createdAt); })
+          .sort(function (a, b) { return (a.closedAt || a.createdAt) - (b.closedAt || b.createdAt); });
+        if (mt5ClosedAll.length > 0) {
+          var firstDealT = mt5ClosedAll[0].closedAt || mt5ClosedAll[0].createdAt;
+          var sumMt5Pnl = mt5ClosedAll.reduce(function (s, t) { return s + Number(t.pnl || 0); }, 0);
+          var startBalMt5 = Math.max(0.01, Number((liveBal - sumMt5Pnl).toFixed(2)));
+          var olderPersisted = baseCurve.filter(function (pt) { return pt.t < firstDealT - 60000; });
+          var runBalMt5 = startBalMt5;
+          var runRealMt5 = 0;
+          var peakBalMt5 = startBalMt5;
+          var mt5BalSeries = olderPersisted.concat([
+            { t: Math.max(0, firstDealT - 60000), eq: startBalMt5, balance: startBalMt5, realized: 0, unrealized: 0, drawdownPct: 0 }
+          ]);
+          mt5ClosedAll.forEach(function (t) {
+            var p = Number(t.pnl || 0);
+            runBalMt5 = Math.max(0.01, Number((runBalMt5 + p).toFixed(2)));
+            runRealMt5 = Number((runRealMt5 + p).toFixed(2));
+            if (runBalMt5 > peakBalMt5) peakBalMt5 = runBalMt5;
+            mt5BalSeries.push({
+              t: t.closedAt || t.createdAt,
+              eq: runBalMt5,
+              balance: runBalMt5,
+              realized: runRealMt5,
+              unrealized: 0,
+              drawdownPct: peakBalMt5 > 0 ? (peakBalMt5 - runBalMt5) / peakBalMt5 : 0
+            });
+          });
+          merged = mt5BalSeries;
+        }
+      } else if (merged.length < 2) {
         var closedAll = (deskState.tickets || [])
           .filter(function (t) { return t.status === 'closed' && (t.closedAt || t.createdAt); })
           .slice(-200)

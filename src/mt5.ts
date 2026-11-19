@@ -1185,15 +1185,15 @@ void WriteMt5StateToFile() {
    }
    json += "],";
 
-   // Historique des deals clôturés MT5 (14 derniers jours, max 60) pour synchroniser 100% le Ledger
+   // Historique des deals clôturés MT5 (180 derniers jours, max 300) pour synchroniser 100% le Ledger & la Courbe de Solde
    json += "\\"closedDeals\\":[";
-   datetime histFrom = TimeCurrent() - 14 * 86400;
+   datetime histFrom = TimeCurrent() - 180 * 86400;
    datetime histTo = TimeCurrent() + 3600;
    long tzOffsetSec = (long)TimeGMT() - (long)TimeCurrent();
    if(HistorySelect(histFrom, histTo)) {
       int totalDeals = HistoryDealsTotal();
       int emittedDeals = 0;
-      for(int d = totalDeals - 1; d >= 0 && emittedDeals < 60; d--) {
+      for(int d = totalDeals - 1; d >= 0 && emittedDeals < 300; d--) {
          ulong dealTicket = HistoryDealGetTicket(d);
          if(dealTicket == 0) continue;
          long dEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);

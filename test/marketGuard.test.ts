@@ -15,7 +15,7 @@ import { loadConfig } from "../src/config.ts";
 import { computeLeveragedSizing, TradingFloorDesk } from "../src/desk.ts";
 import { DeskStore } from "../src/store.ts";
 import { TelegramFloorRoom } from "../src/telegram.ts";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Ticket } from "../src/types.ts";
@@ -508,6 +508,143 @@ test("Audit performance micro-compte : pas de coupure prématurée en petite per
     const m5Play = (desk as unknown as { choosePlay: (s: unknown) => { dir: string; thesis: string } | null }).choosePlay(snap5);
     assert.ok(m5Play !== null, "En mode scalping 5m, le moteur M5 natif doit émettre un signal sans être tué par !smc.validSignal");
     assert.equal(m5Play?.dir, "long");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("MT5 source de vérité absolue : écrase -0.01€ par +0.09€ réel, purge les fermés fantômes, ancre la courbe de solde sur MT5", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-mt5-truth-"));
+  try {
+    const cfg = loadConfig(["--console"]);
+    cfg.dataDir = dir;
+    const desk = new TradingFloorDesk(cfg, new DeskStore(dir), new TelegramFloorRoom(cfg));
+    const now = Date.now();
+    const deal1Ts = now - 3600_000;
+    const deal2Ts = now - 600_000;
+
+    desk.state.mt5Live = {
+      connected: true,
+      updatedAt: now - 5_000,
+      login: 5059100180,
+      server: "MetaQuotes-Demo",
+      currency: "EUR",
+      balance: 39.10,
+      equity: 39.25,
+      profit: 0.15,
+      freeMargin: 36.0,
+      leverage: 500,
+      tradeAllowed: true,
+      positionsCount: 0,
+      cryptoSupported: false,
+      availableCryptos: [],
+      rejectedOrders: [],
+    };
+    desk.state.settings.mt5Login = "5059100180";
+    // Ticket NZDUSD mal estimé à -0.01€ par halt + cooldown erroné + ticket fantôme XAUUSD jamais exécuté sur MT5
+    desk.state.tickets = [
+      {
+        id: "TF-20261119-31",
+        asset: "NZDUSD",
+        direction: "short",
+        status: "closed",
+        entry: 0.55033,
+        fillPrice: 0.55033,
+        exitPrice: 0.55033,
+        invalidation: 0.5508,
+        target: 0.54953,
+        pnl: -0.01,
+        closeReason: "halt",
+        mt5PositionId: "59424873916",
+        accountLogin: "5059100180",
+        createdAt: deal2Ts - 120_000,
+        closedAt: deal2Ts - 10_000,
+      } as unknown as Ticket,
+      {
+        id: "TF-PHANTOM-33",
+        asset: "XAUUSD",
+        direction: "short",
+        status: "closed",
+        entry: 3683.22,
+        exitPrice: 3683.22,
+        pnl: -0.36,
+        closeReason: "halt",
+        accountLogin: "5059100180",
+        createdAt: deal2Ts,
+        closedAt: deal2Ts + 5_000,
+      } as unknown as Ticket,
+    ];
+    desk.state.directionalCooldowns = {
+      "NZDUSD:short": { until: now + 600_000, bannedDir: "short", reason: "false halt" },
+    };
+
+    // Écrire un vrai mt5_state.json dans le dossier temporaire isolé
+    writeFileSync(
+      join(dir, "mt5_state.json"),
+      JSON.stringify({
+        connected: true,
+        login: 5059100180,
+        server: "MetaQuotes-Demo",
+        currency: "EUR",
+        balance: 39.10,
+        equity: 39.25,
+        profit: 0.15,
+        freeMargin: 36.0,
+        leverage: 500,
+        tradeAllowed: true,
+        positions: [],
+        quotes: [],
+        closedDeals: [
+          {
+            deal: 1001,
+            positionId: 59423072432,
+            id: "TF-20261119-30",
+            symbol: "USDCHF",
+            side: "BUY",
+            lots: 0.01,
+            entry: 0.84384,
+            exit: 0.84292,
+            profit: -0.99,
+            dealReason: "EA",
+            closedAt: deal1Ts,
+          },
+          {
+            deal: 1002,
+            positionId: 59424873916,
+            id: "TF-20261119-31",
+            symbol: "NZDUSD",
+            side: "SELL",
+            lots: 0.01,
+            entry: 0.55033,
+            exit: 0.55023,
+            profit: 0.09,
+            dealReason: "EA",
+            closedAt: deal2Ts,
+          },
+        ],
+      }),
+    );
+
+    await desk.syncWithLocalMt5Bridge();
+
+    const nzd = desk.state.tickets.find((t) => t.id === "TF-20261119-31");
+    const phantom = desk.state.tickets.find((t) => t.id === "TF-PHANTOM-33");
+    const closedList = desk.state.tickets.filter((t) => t.status === "closed");
+
+    assert.equal(nzd?.pnl, 0.09, "NZDUSD doit être écrasé par le vrai gain MT5 +0.09€");
+    assert.equal(nzd?.exitPrice, 0.55023, "Prix de sortie NZDUSD doit venir de MT5");
+    assert.equal(nzd?.closeReason, "target", "Un gain MT5 doit basculer en target (WIN)");
+    assert.equal(desk.state.directionalCooldowns?.["NZDUSD:short"], undefined, "Le faux cooldown doit être levé");
+    assert.equal(phantom?.status, "rejected", "Le ticket fantôme jamais exécuté sur MT5 doit être purgé de l'historique fermé");
+    assert.equal(closedList.length, 2, "Exactement les 2 deals réels MT5 en fermé");
+    assert.equal(desk.state.realizedPnl, -0.9, "realizedPnl doit égaler exactement la somme MT5 (-0.99 + 0.09 = -0.90)");
+    assert.equal(desk.state.startEquity, 40, "Capital initial reconstitué exactement à 40.00€ (39.10 - (-0.90))");
+
+    // Vérifier que les paliers réels de solde MT5 (40.00 -> 39.01 -> 39.10) sont bien dans la courbe
+    const bals = desk.state.curve.map((pt) => Number((pt.balance ?? pt.eq).toFixed(2)));
+    assert.ok(bals.includes(40), `Solde initial 40.00€ attendu dans la courbe, reçu ${JSON.stringify(bals)}`);
+    assert.ok(bals.includes(39.01), `Palier intermédiaire 39.01€ attendu, reçu ${JSON.stringify(bals)}`);
+    assert.ok(bals.includes(39.1), `Solde final MT5 39.10€ attendu, reçu ${JSON.stringify(bals)}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
