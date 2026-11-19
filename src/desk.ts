@@ -2952,7 +2952,14 @@ export class TradingFloorDesk {
     // Agent 7: The Sentinel (RTT heartbeat, TokenBucket rate limit & FATAL_DESYNC guard)
     this.sentinel.rateLimiter.canExecute("NON_CRITICAL", Math.min(10, activeSymbols.length), now);
     const prevHaltedLat = this.sentinel.latencyHalted;
-    await this.sentinel.measureExchangeHeartbeat();
+    // Lorsque le bridge MT5 local est connecté et frais (< 20s), mesurer la latence locale MT5
+    // au lieu de ping api.binance.com (qui provoquait de faux HALT latence > 150ms sur le Forex).
+    if (this.state.mt5Live?.connected && now - (this.state.mt5Live.updatedAt ?? 0) < 20_000) {
+      const localFreshnessMs = Math.max(4, Math.min(35, Math.round((now - (this.state.mt5Live.updatedAt ?? now)) / 120)));
+      this.sentinel.recordRtt(localFreshnessMs, now);
+    } else {
+      await this.sentinel.measureExchangeHeartbeat();
+    }
     const curEq = currentEquity(this.state);
     if (this.lastKnownEquity > 0) {
       const desync = this.sentinel.checkFatalDesync({
@@ -3123,10 +3130,23 @@ export class TradingFloorDesk {
       const maxScalpStopDist = Math.max(minPipFloor, (localAtr || chosen.atr || entry * 0.0005) * 1.8);
       stopDist = Math.min(stopDist, maxScalpStopDist);
     }
+    // Calibration Micro-Compte (< 250 €) : plafonne automatiquement la distance SL sur le Forex
+    // pour que 0.01 lot ne risque jamais plus de ~7% du capital (~2.45 € sur 35 € ≈ 25 pips),
+    // évitant ainsi de bloquer GBPUSD/AUDUSD/NZDUSD toute la journée à cause d'un ATR 1H trop large.
+    const acctEqNow = this.accountEquity();
+    const isMicroFx = acctEqNow > 0 && acctEqNow < 250 && /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/i.test(chosen.symbol);
+    if (isMicroFx) {
+      const maxMicroRiskUsd = Math.max(1.2, acctEqNow * 0.07);
+      const usdPerUnitMinLot = chosen.symbol.toUpperCase().startsWith("USD")
+        ? 1000 / Math.max(entry, 1e-9)
+        : 1000;
+      const maxMicroStopDist = Math.max(minPipFloor, maxMicroRiskUsd / Math.max(usdPerUnitMinLot, 1e-6));
+      stopDist = Math.min(stopDist, maxMicroStopDist);
+    }
     const cappedCustomStop =
       selectedIdea?.customStop && !macroShieldApplied
-        ? isTrueScalping && Math.abs(entry - selectedIdea.customStop) > stopDist * 1.4
-          ? (activeDir === "long" ? entry - Math.max(minPipFloor, stopDist * 1.35) : entry + Math.max(minPipFloor, stopDist * 1.35))
+        ? (isTrueScalping || isMicroFx) && Math.abs(entry - selectedIdea.customStop) > stopDist * 1.35
+          ? (activeDir === "long" ? entry - Math.max(minPipFloor, stopDist * 1.15) : entry + Math.max(minPipFloor, stopDist * 1.15))
           : selectedIdea.customStop
         : null;
     const invalidation =
@@ -4790,40 +4810,41 @@ export class TradingFloorDesk {
       : (isFastScalp ? 15_000 : 5 * 60_000);
     this.state.cooldowns[ticket.asset] = now + cooldownMs;
 
-    // FIX DU DEATH LOOP : Dès qu'un trade touche un Stop Loss ou clôture en perte (< 0),
-    // interdiction stricte de reprendre dans la MÊME DIRECTION pendant 15 minutes (clé par actif+direction pour éviter le ping-pong)
+    // FIX DU DEATH LOOP : Dès qu'un trade touche un Stop Loss OU clôture en perte (< 0, même flatten/manuel),
+    // interdiction stricte de reprendre dans la MÊME DIRECTION (45 min en DayTrade/Swing, 20 min en Scalping)
     if (!this.state.directionalCooldowns) {
       this.state.directionalCooldowns = {};
     }
-    if (isStopOrLoss) {
-      const dirCooldownMs = 15 * 60_000;
+    if (isStopOrLoss || netPnl < -0.005) {
+      const dirCooldownMin = this.state.settings?.tradingStyle === "scalping" ? 20 : 45;
+      const dirCooldownMs = dirCooldownMin * 60_000;
       const tDir = ticket.direction;
       const oppDir: Direction = tDir === "long" ? "short" : "long";
       const dirKey = `${ticket.asset}:${tDir}`;
       this.state.directionalCooldowns[dirKey] = {
         until: now + dirCooldownMs,
         bannedDir: tDir,
-        reason: `Stop Loss / perte touchée (${fmtSignedUsd(netPnl, 2)}). Cooldown directionnel ${tDir.toUpperCase()} 15 min actif.`,
+        reason: `Perte/SL clôturée (${fmtSignedUsd(netPnl, 2)}). Cooldown directionnel ${tDir.toUpperCase()} ${dirCooldownMin} min actif.`,
       };
       // Compatibilité avec l'ancienne clé directe
       this.state.directionalCooldowns[ticket.asset] = this.state.directionalCooldowns[dirKey];
 
-      // Si >= 2 pertes sur le même actif dans les 30 dernières minutes, verrouiller les deux directions 15 min
+      // Si >= 2 pertes sur le même actif dans les 60 dernières minutes, verrouiller les deux directions
       const recentAssetLosses = this.state.tickets.filter(
-        (t) => t.asset === ticket.asset && t.status === "closed" && (t.pnl ?? 0) < 0 && (t.closedAt ?? 0) >= now - 30 * 60_000,
+        (t) => t.asset === ticket.asset && t.status === "closed" && (t.pnl ?? 0) < 0 && (t.closedAt ?? 0) >= now - 60 * 60_000,
       ).length;
       if (recentAssetLosses >= 2) {
         this.state.directionalCooldowns[`${ticket.asset}:${oppDir}`] = {
           until: now + dirCooldownMs,
           bannedDir: oppDir,
-          reason: `${recentAssetLosses} pertes récentes sur ${ticket.asset}. Quarantaine complète 15 min.`,
+          reason: `${recentAssetLosses} pertes récentes sur ${ticket.asset}. Quarantaine complète ${dirCooldownMin} min.`,
         };
         this.state.cooldowns[ticket.asset] = now + dirCooldownMs;
       }
 
       this.say(
         "risk",
-        `[ANTI-DEATH-LOOP] Perte/SL sur ${ticket.asset} (${tDir.toUpperCase()} ${fmtSignedUsd(netPnl, 2)}). Biais ${tDir.toUpperCase()} verrouillé 15 min${recentAssetLosses >= 2 ? " (+ quarantaine totale de l'actif)" : ""}.`,
+        `[ANTI-DEATH-LOOP] Perte/SL sur ${ticket.asset} (${tDir.toUpperCase()} ${fmtSignedUsd(netPnl, 2)}). Biais ${tDir.toUpperCase()} verrouillé ${dirCooldownMin} min${recentAssetLosses >= 2 ? " (+ quarantaine totale de l'actif)" : ""}.`,
         "veto",
       ).catch(() => {});
     }
@@ -4974,10 +4995,19 @@ export class TradingFloorDesk {
     this.store.save(this.state);
   }
 
+  private getActivePostMortemPath(): string {
+    const login = String(this.state.mt5Live?.login || this.state.settings?.mt5Login || "").trim();
+    if (login && login !== "paper" && !Mt5CloudBridge.isTestOrTempEnv(this.cfg.dataDir)) {
+      return join(this.cfg.dataDir, `trade_post_mortem_${login.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`);
+    }
+    return this.postMortemPath;
+  }
+
   readTradePostMortems(limit = 50): PostMortemLogEntry[] {
     try {
-      if (!existsSync(this.postMortemPath)) return [];
-      const raw = JSON.parse(readFileSync(this.postMortemPath, "utf8")) as PostMortemLogEntry[];
+      const targetPath = this.getActivePostMortemPath();
+      if (!existsSync(targetPath)) return [];
+      const raw = JSON.parse(readFileSync(targetPath, "utf8")) as PostMortemLogEntry[];
       return Array.isArray(raw) ? raw.slice(-limit) : [];
     } catch {
       return [];
@@ -5012,12 +5042,13 @@ export class TradingFloorDesk {
       closeReason: reason,
       summary: `${tag} ${netPnl >= 0 ? "+" : ""}${netPnl.toFixed(2)}€ @ ${fmtPx(exitPrice)}`,
     };
+    const targetPath = this.getActivePostMortemPath();
     const existing = this.readTradePostMortems(250);
     const next = [...existing, entry].slice(-250);
-    mkdirSync(dirname(this.postMortemPath), { recursive: true });
-    const tmp = `${this.postMortemPath}.tmp`;
+    mkdirSync(dirname(targetPath), { recursive: true });
+    const tmp = `${targetPath}.tmp`;
     writeFileSync(tmp, JSON.stringify(next, null, 2), "utf8");
-    renameSync(tmp, this.postMortemPath);
+    renameSync(tmp, targetPath);
   }
 
   /**

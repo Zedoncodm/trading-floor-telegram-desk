@@ -1023,7 +1023,10 @@ export class TraderSkillsEngine {
       }
     }
 
-    // Q2 : Gate Structurelle Post-Perte / Coupure Manuelle (zéro obstination dans la même direction sans retournement prouvé)
+    // Q2 : Gate Structurelle Post-Perte / Coupure Manuelle (TTL 3h pour ne pas bloquer toute la journée,
+    // et dans les 90 premières minutes : exige une bougie confirmée DANS le sens du trade pour éviter toute ré-entrée contre-bougie)
+    const lossGateFresh = gate && now - gate.at < 3 * 3600_000;
+    const lossGateRecent = gate && now - gate.at < 90 * 60_000;
     const deepValueReversal =
       gate && gate.lastDirection === direction
         ? direction === "long"
@@ -1032,7 +1035,7 @@ export class TraderSkillsEngine {
         : false;
 
     if (
-      gate &&
+      lossGateFresh &&
       (gate.lastOutcome === "LOSS_SL" || gate.lastOutcome === "HUMAN_MANUAL_CUT") &&
       gate.lastDirection === direction
     ) {
@@ -1043,13 +1046,33 @@ export class TraderSkillsEngine {
       const pocReclaimed =
         !marketProfile ||
         (direction === "long" ? entry >= marketProfile.poc : entry <= marketProfile.poc);
-      if (!((emaAligned && pocReclaimed) || deepValueReversal)) {
+      const candleConfirms = direction === "long" ? tech.lastCandleBull : tech.lastCandleBear;
+      const passesRecentCheck = !lossGateRecent || candleConfirms;
+      if (!((emaAligned && pocReclaimed && passesRecentCheck) || deepValueReversal)) {
         return buildVeto(
           "reviewer",
           "STUBBORN_SAME_DIRECTION_REENTRY",
           `🧠 [AUTO-CRITIQUE PRÉ-TRADE · ${symbol}] Notre précédent ${direction.toUpperCase()} a échoué (${gate.lastOutcome} ${gate.lastPnl.toFixed(2)}€ @ ${TraderSkillsEngine.fmtPrice(gate.lastExitPrice)}). Actuellement (${TraderSkillsEngine.fmtPrice(entry)}, EMA20=${TraderSkillsEngine.fmtPrice(tech.ema20)}, EMA50=${TraderSkillsEngine.fmtPrice(tech.ema50)}, RSI=${tech.rsi14}), la structure ne prouve aucun retournement -> refus de refaire la même erreur.`,
-          "Structure technique toujours défavorable après une perte/coupure manuelle (prix sous EMA20/POC ou momentum non retourné).",
-          `Exiger reconquête EMA20 (${TraderSkillsEngine.fmtPrice(tech.ema20)}) + POC et RSI ${direction === "long" ? ">= 50" : "<= 50"} (ou retournement extrême confirmé).`,
+          "Structure technique toujours défavorable ou bougie en sens inverse après une perte/coupure manuelle.",
+          `Exiger reconquête EMA20 (${TraderSkillsEngine.fmtPrice(tech.ema20)}) + POC + bougie confirmée ${direction.toUpperCase()} avant ré-entrée.`,
+        );
+      }
+    }
+
+    // Q4 : Anti-Chasing Sommet / Creux de Mèche (détecte un vrai spike vertical brutal sur les 3 dernières bougies + sur-extension vs EMA20,
+    // sans bloquer une tendance régulière et saine)
+    if (bars.length >= 20 && !deepValueReversal) {
+      const ref3 = bars[bars.length - 4]?.close ?? entry;
+      const impulse3 = entry - ref3;
+      const stretchedUp = direction === "long" && impulse3 > atrSafe * 1.9 && entry > tech.ema20 + atrSafe * 1.45;
+      const stretchedDown = direction === "short" && -impulse3 > atrSafe * 1.9 && entry < tech.ema20 - atrSafe * 1.45;
+      if (stretchedUp || stretchedDown) {
+        return buildVeto(
+          "strategist",
+          "SPIKE_EXHAUSTION_CHASING",
+          `🧠 [AUTO-CRITIQUE PRÉ-TRADE · ${symbol}] Entrée ${direction.toUpperCase()} @ ${TraderSkillsEngine.fmtPrice(entry)} trop étirée vs EMA20 (${TraderSkillsEngine.fmtPrice(tech.ema20)}, RSI=${tech.rsi14}) : risque élevé d'acheter un sommet ou vendre un creux -> REJETÉ (attendre un repli).`,
+          "Prix en sur-extension (> 1.45x ATR de l'EMA20 ou RSI extrême) — probabilité élevée de pullback immédiat.",
+          `Attendre un retour proche de l'EMA20 (${TraderSkillsEngine.fmtPrice(tech.ema20)}) avant d'entrer ${direction.toUpperCase()}.`,
         );
       }
     }

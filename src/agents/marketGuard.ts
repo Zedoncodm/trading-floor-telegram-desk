@@ -275,12 +275,16 @@ export function evaluateMicroAccountMarginGuard(input: {
       reason: `MICRO-COMPTE MARGE (${sym}) : 0.01 lot exige ~${estMinMargin.toFixed(2)} de marge (> 45% de la marge libre ${freeMargin.toFixed(2)}). Actif ignoré pour protéger le compte.`,
     };
   }
-  if (equity < 500 && estMinRisk > equity * 0.08) {
+  const isFxPair = /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(sym);
+  // Sur micro-compte (<500€), les paires Forex abordables en marge auront leur SL automatiquement calibré
+  // à <= 7% du capital au moment du ticket ; on ne bloque en amont que les actifs dont le risque minimal explose (> 18% FX / > 8% métaux).
+  const maxPreRiskRatio = isFxPair ? 0.18 : 0.08;
+  if (equity < 500 && estMinRisk > equity * maxPreRiskRatio) {
     return {
       ok: false,
       estMinMargin,
       estMinRisk,
-      reason: `MICRO-COMPTE RISQUE (${sym}) : le SL au lot minimum 0.01 risque ~${estMinRisk.toFixed(2)} (> 8% du capital ${equity.toFixed(2)}). Actif ignoré.`,
+      reason: `MICRO-COMPTE RISQUE (${sym}) : le SL au lot minimum 0.01 risque ~${estMinRisk.toFixed(2)} (> ${Math.round(maxPreRiskRatio * 100)}% du capital ${equity.toFixed(2)}). Actif ignoré.`,
     };
   }
   return { ok: true, estMinMargin, estMinRisk };

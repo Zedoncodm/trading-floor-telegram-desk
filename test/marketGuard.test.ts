@@ -9,6 +9,7 @@ import {
 } from "../src/agents/marketGuard.ts";
 import { ActiveTradeManager } from "../src/agents/activeTradeManager.ts";
 import { ReviewerAgent } from "../src/agents/reviewer.ts";
+import { TraderSkillsEngine } from "../src/agents/traderSkills.ts";
 import { computeRiskBasedLots } from "../src/lotSizing.ts";
 import { loadConfig } from "../src/config.ts";
 import { TradingFloorDesk } from "../src/desk.ts";
@@ -302,6 +303,81 @@ test("Isolation complète par compte MT5 : tickets, calendrier et audits Reviewe
     assert.equal(snapOld?.tickets[0].id, "OLD-1");
     assert.equal(snapNew?.tickets.length, 1);
     assert.equal(snapNew?.tickets[0].id, "NEW-1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Anti-Spike-Chasing (Q4) bloque l'achat d'un sommet étiré (cas USDJPY) et Q2 expire après 3h", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-q4-"));
+  try {
+    const cfg = loadConfig(["--console"]);
+    cfg.dataDir = dir;
+    const desk = new TradingFloorDesk(cfg, new DeskStore(dir), new TelegramFloorRoom(cfg));
+    const now = Date.now();
+    // 25 barres plates autour de 159.30 puis spike brutal à 159.65 (sommet étiré)
+    const bars = Array.from({ length: 25 }, (_, i) => {
+      const px = i < 23 ? 159.30 : i === 23 ? 159.45 : 159.65;
+      return {
+        openTime: now - (25 - i) * 300_000,
+        open: px - 0.02,
+        high: px + 0.03,
+        low: px - 0.03,
+        close: px,
+        volume: 100,
+        closeTime: now - (24 - i) * 300_000 - 1,
+      };
+    });
+    const resSpike = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+      state: desk.state,
+      symbol: "USDJPY",
+      direction: "long",
+      entry: 159.65,
+      stop: 159.35,
+      target: 160.25,
+      bars,
+      atr: 0.12,
+      now,
+    });
+    assert.equal(resSpike.pass, false);
+    assert.equal(resSpike.flawCode, "SPIKE_EXHAUSTION_CHASING");
+
+    // Gate post-perte vieille de 4h (> TTL 3h) ne bloque plus indéfiniment la paire
+    desk.state.structuralGates = {
+      EURUSD: {
+        symbol: "EURUSD",
+        at: now - 4 * 3600_000,
+        lastOutcome: "HUMAN_MANUAL_CUT",
+        lastDirection: "short",
+        lastEntryPrice: 1.0965,
+        lastExitPrice: 1.0976,
+        lastPnl: -1.04,
+        requireTrendAlignment: true,
+        riskScaleMultiplier: 1.0,
+        reason: "old manual cut",
+      },
+    };
+    const flatEur = Array.from({ length: 25 }, (_, i) => ({
+      openTime: now - (25 - i) * 300_000,
+      open: 1.0980,
+      high: 1.0985,
+      low: 1.0975,
+      close: 1.0979,
+      volume: 100,
+      closeTime: now - (24 - i) * 300_000 - 1,
+    }));
+    const resExpired = TraderSkillsEngine.evaluatePreTradeSelfQuestioning({
+      state: desk.state,
+      symbol: "EURUSD",
+      direction: "short",
+      entry: 1.0979,
+      stop: 1.0999,
+      target: 1.0945,
+      bars: flatEur,
+      atr: 0.0010,
+      now,
+    });
+    assert.equal(resExpired.pass, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
