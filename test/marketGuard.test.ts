@@ -461,6 +461,53 @@ test("Audit performance micro-compte : pas de coupure prématurée en petite per
       closeOpenTicket: (t: unknown, exitPx: number, reason: string, ts: number, ov?: number) => Promise<void>;
     }).closeOpenTicket(desk.state.tickets[0], 1.3125, "halt", now, -0.01);
     assert.equal(desk.state.directionalCooldowns?.["NZDUSD:short"], undefined, "Halt / -0.01€ ne doit pas poser d'Anti-Death-Loop");
+
+    // 5) Moteur Scalping 5m natif MT5 émet bien un signal M5 même sans SMC 4h ni blocage directive range
+    desk.state.settings.tradingStyle = "scalping";
+    desk.state.current_market_regime_directive = "Marché en équilibre : privilégiez les entrées proches du POC";
+    // Tendance haussière saine avec petits replis (RSI ~ 55-65, pas suracheté 100) + bougie M5 verte de reprise
+    const b5 = Array.from({ length: 50 }, (_, i) => {
+      const wave = i % 3 === 2 ? -0.00018 : 0.00016;
+      const base = 1.0950 + Math.floor(i / 3) * 0.00014 + wave;
+      const isLast = i === 49;
+      return {
+        openTime: now - (50 - i) * 300_000,
+        open: isLast ? base - 0.00008 : base - 0.00004,
+        high: base + 0.00025,
+        low: base - 0.00022,
+        close: isLast ? base + 0.00014 : base + (i % 3 === 2 ? -0.00010 : 0.00008),
+        volume: 150,
+        closeTime: now - (49 - i) * 300_000 - 1,
+      };
+    });
+    const lastPx = b5[b5.length - 1].close;
+    const snap5 = {
+      symbol: "EURUSD",
+      primary: { venue: "MT5", price: lastPx, ret1h: 0.0002, funding: 0, oiValue: 0, oiChange1h: 0, book: 0 },
+      secondary: null,
+      ret24h: 0.001,
+      atr: 0.00045,
+      bars5m: b5,
+      bars15m: b5,
+      bars4h: b5,
+      smcContext: {
+        symbol: "EURUSD",
+        engine: "ts_smc",
+        structureEvent: "NONE",
+        structureDirection: "NEUTRAL",
+        validSignal: false,
+        entryPrice: 0,
+        stopPrice: 0,
+        orderBlockPrice: { low: 0, high: 0 },
+        fvgState: { status: "NONE" },
+        liquiditySweepConfirmed: false,
+        signalJustification: "none",
+        updatedAt: now,
+      },
+    };
+    const m5Play = (desk as unknown as { choosePlay: (s: unknown) => { dir: string; thesis: string } | null }).choosePlay(snap5);
+    assert.ok(m5Play !== null, "En mode scalping 5m, le moteur M5 natif doit émettre un signal sans être tué par !smc.validSignal");
+    assert.equal(m5Play?.dir, "long");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

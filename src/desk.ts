@@ -1255,6 +1255,7 @@ export class TradingFloorDesk {
         this.state.haltKind = null;
         this.state.directionalCooldowns = {};
         this.state.cooldowns = {};
+        this.state.structuralGates = {};
         const restoredCurve = this.store.loadPersistedCurveForAccount(acctKeyNow, 365);
         this.state.curve =
           restoredCurve.length >= 2
@@ -3337,21 +3338,28 @@ export class TradingFloorDesk {
         partialTpPrice?: number;
         timeStopMs?: number;
         trailingAtr1m?: number;
+        scalpM5Native?: boolean;
       },
     ) => {
       const expectedDir = res.dir === "long" ? "LONG" : "SHORT";
       const hasSmcBreakout = smc.validSignal && smc.structureDirection === expectedDir;
-      // Règle stricte Market Profile : Interdiction de LONG > VAH ou SHORT < VAL en marché range (sauf confluence SMC validée)
-      const mpCheck = MarketProfileAnalyzer.checkRangeEntryAllowed(res.dir, px, mp, isRangeMarket, hasSmcBreakout);
+      // Règle stricte Market Profile : Interdiction de LONG > VAH ou SHORT < VAL en marché range (sauf confluence SMC validée ou scalp M5 natif)
+      const mpCheck = MarketProfileAnalyzer.checkRangeEntryAllowed(
+        res.dir,
+        px,
+        mp,
+        isRangeMarket,
+        hasSmcBreakout || Boolean(res.scalpM5Native && style === "scalping"),
+      );
       if (!mpCheck.allowed) {
         return null;
       }
-      // Si la directive Reviewer indique explicitement que les breakouts échouent sur cet actif en range, bloquer les breakouts purs
-      if (effectiveForceMeanRev && res.playbook === "breakout") {
+      // Si la directive Reviewer indique explicitement que les breakouts échouent sur cet actif en range, bloquer les breakouts purs hors scalping M5 natif
+      if (effectiveForceMeanRev && res.playbook === "breakout" && !res.scalpM5Native) {
         return null;
       }
-      // Exigence SMC stricte sur tout signal directionnel structurel (CHoCH/BOS + OB adossé FVG + Mitigation OB)
-      if (res.playbook === "breakout" || res.playbook === "Macro_FVG_Mitigation") {
+      // Exigence SMC stricte sur les setups structurels DayTrade/Swing ; en Scalping 5m natif, EMA9/21 + RSI5m + bougie M5 + Q4/WFO/TimeMachine font foi
+      if ((res.playbook === "breakout" || res.playbook === "Macro_FVG_Mitigation") && !res.scalpM5Native) {
         if (!smc.validSignal || smc.structureDirection !== expectedDir) {
           return null;
         }
@@ -3433,7 +3441,7 @@ export class TradingFloorDesk {
       if (px <= mp.val && px >= mp.val - stopBand * 1.15 && rewardToPoc >= stopBand * 1.25) {
         const cappedTarget = Math.min(mp.poc, px + stopBand * 2.2);
         const targetLabel = cappedTarget === mp.poc ? fmtPx(mp.poc) : `${fmtPx(cappedTarget)} (vers POC ${fmtPx(mp.poc)})`;
-        return withConfluence({
+        const mpLongPlay = withConfluence({
           dir: "long",
           playbook: "fade",
           thesis: `Market Profile Mean-Reversion : prix (${fmtPx(px)}) <= VAL (${fmtPx(mp.val)}) en range -> rebond ciblé sur ${targetLabel}.`,
@@ -3441,6 +3449,76 @@ export class TradingFloorDesk {
           customStop: Math.max(px * 0.5, px - stopBand),
           customTarget: cappedTarget,
         });
+        if (mpLongPlay) return mpLongPlay;
+      }
+    }
+
+    // Moteur Scalping 5m natif MT5 (prioritaire en mode scalping avant les moteurs 1h/4h pour éviter les retours null précoces)
+    if (style === "scalping" && (snap.bars5m?.length ?? 0) >= 22) {
+      const b5 = snap.bars5m!;
+      const closes5 = b5.map((k) => k.close);
+      const emaCalc = (vals: number[], period: number): number => {
+        const mult = 2 / (period + 1);
+        let e = vals[0];
+        for (let i = 1; i < vals.length; i++) e = (vals[i] - e) * mult + e;
+        return e;
+      };
+      const ema9 = emaCalc(closes5.slice(-30), 9);
+      const ema21 = emaCalc(closes5.slice(-45), 21);
+      const atr5 = b5.slice(-14).reduce((s, k) => s + Math.max(0, k.high - k.low), 0) / 14;
+      const last5 = b5[b5.length - 1];
+      const prev5 = b5[b5.length - 2];
+      const rsi5 = TraderSkillsEngine.computeQuickTech(b5, px).rsi14;
+      const minPipSl = 3 * pipSizeForAsset(snap.symbol, px);
+      const sl5 = Math.max(atr5 * 1.25, minPipSl, px * 0.00045);
+
+      // A) Continuation / Pullback sain dans le sens EMA9 vs EMA21 (sans courir après un pic étiré)
+      const bullTrend5 =
+        ema9 > ema21 &&
+        px >= ema21 - atr5 * 0.35 &&
+        px <= ema9 + atr5 * 1.25 &&
+        (last5.close >= last5.open || last5.close >= prev5.close) &&
+        rsi5 >= 42 &&
+        rsi5 <= 70;
+      const bearTrend5 =
+        ema9 < ema21 &&
+        px <= ema21 + atr5 * 0.35 &&
+        px >= ema9 - atr5 * 1.25 &&
+        (last5.close <= last5.open || last5.close <= prev5.close) &&
+        rsi5 >= 30 &&
+        rsi5 <= 58;
+
+      if (atr5 > 0 && (bullTrend5 || bearTrend5)) {
+        const dir5: Direction = bullTrend5 ? "long" : "short";
+        const m5TrendPlay = withConfluence({
+          dir: dir5,
+          playbook: "breakout",
+          scalpM5Native: true,
+          thesis: `Scalp M5 Tendance (${dir5.toUpperCase()}) : EMA9 ${bullTrend5 ? ">" : "<"} EMA21, pullback maîtrisé + bougie M5 confirmée, RSI5m=${rsi5.toFixed(0)}, ATR5m=${fmtPx(atr5)}.`,
+          customEntry: px,
+          customStop: dir5 === "long" ? px - sl5 : px + sl5,
+          customTarget: dir5 === "long" ? px + sl5 * 1.55 : px - sl5 * 1.55,
+          timeStopMs: 2 * 3600_000,
+        });
+        if (m5TrendPlay) return m5TrendPlay;
+      }
+
+      // B) Rebond Mean-Reversion M5 en marché équilibré / range (RSI5m extrême + bougie de retournement M5)
+      const bullBounce5 = rsi5 <= 38 && last5.close > last5.open && px <= ema21 + atr5 * 0.4;
+      const bearBounce5 = rsi5 >= 62 && last5.close < last5.open && px >= ema21 - atr5 * 0.4;
+      if (atr5 > 0 && (bullBounce5 || bearBounce5)) {
+        const dir5: Direction = bullBounce5 ? "long" : "short";
+        const m5BouncePlay = withConfluence({
+          dir: dir5,
+          playbook: "fade",
+          scalpM5Native: true,
+          thesis: `Scalp M5 Rebond (${dir5.toUpperCase()}) : RSI5m=${rsi5.toFixed(0)} + bougie de rejet M5 confirmée vers EMA21/POC (ATR5m=${fmtPx(atr5)}).`,
+          customEntry: px,
+          customStop: dir5 === "long" ? px - sl5 : px + sl5,
+          customTarget: dir5 === "long" ? px + sl5 * 1.5 : px - sl5 * 1.5,
+          timeStopMs: 2 * 3600_000,
+        });
+        if (m5BouncePlay) return m5BouncePlay;
       }
     }
 
@@ -3659,43 +3737,12 @@ export class TradingFloorDesk {
     if (Math.abs(ret1h) >= 0.0007) {
       const impDir: Direction = ret1h >= 0 ? "long" : "short";
       if ((impDir === "long" && tech.trendBias !== "bear") || (impDir === "short" && tech.trendBias !== "bull")) {
-        return withConfluence({
+        const impPlay = withConfluence({
           dir: impDir,
           playbook: "breakout",
           thesis: `Impulsion directionnelle (${fmtSignedPct(ret1h)}, RSI=${tech.rsi14.toFixed(0)}) validée par le carnet et la 2e source.`,
         });
-      }
-    }
-    // Moteur Scalping 5m natif MT5 (EMA9/EMA21 + RSI 5m + bougie confirmée — actif sur toutes les paires Forex/Métaux en mode scalping)
-    if (style === "scalping" && (snap.bars5m?.length ?? 0) >= 22) {
-      const b5 = snap.bars5m!;
-      const closes5 = b5.map((k) => k.close);
-      const emaCalc = (vals: number[], period: number): number => {
-        const mult = 2 / (period + 1);
-        let e = vals[0];
-        for (let i = 1; i < vals.length; i++) e = (vals[i] - e) * mult + e;
-        return e;
-      };
-      const ema9 = emaCalc(closes5.slice(-30), 9);
-      const ema21 = emaCalc(closes5.slice(-45), 21);
-      const atr5 = b5.slice(-14).reduce((s, k) => s + Math.max(0, k.high - k.low), 0) / 14;
-      const last5 = b5[b5.length - 1];
-      const prev5 = b5[b5.length - 2];
-      const rsi5 = TraderSkillsEngine.computeQuickTech(b5, px).rsi14;
-      const bull5 = ema9 > ema21 && px >= ema21 && px <= ema9 + atr5 * 1.1 && last5.close >= last5.open && last5.close >= prev5.close && rsi5 >= 46 && rsi5 <= 68;
-      const bear5 = ema9 < ema21 && px <= ema21 && px >= ema9 - atr5 * 1.1 && last5.close <= last5.open && last5.close <= prev5.close && rsi5 >= 32 && rsi5 <= 54;
-      if (atr5 > 0 && (bull5 || bear5)) {
-        const dir5: Direction = bull5 ? "long" : "short";
-        const sl5 = Math.max(atr5 * 1.35, px * 0.0005);
-        return withConfluence({
-          dir: dir5,
-          playbook: "breakout",
-          thesis: `Scalp M5 MT5 (${dir5.toUpperCase()}) : EMA9 ${bull5 ? ">" : "<"} EMA21, bougie M5 confirmée, RSI5m=${rsi5.toFixed(0)}, ATR5m=${fmtPx(atr5)}.`,
-          customEntry: px,
-          customStop: dir5 === "long" ? px - sl5 : px + sl5,
-          customTarget: dir5 === "long" ? px + sl5 * 1.55 : px - sl5 * 1.55,
-          timeStopMs: 3 * 3600_000,
-        });
+        if (impPlay) return impPlay;
       }
     }
     if (effectiveForceMeanRev && mp.vah > mp.val) {
@@ -3917,13 +3964,13 @@ export class TradingFloorDesk {
       }
 
       const activeStyle = this.state.settings.tradingStyle || (isScalp ? "scalping" : "daytrade");
-      const preferredTfs: Array<"1m" | "15m" | "1h" | "4h"> =
+      const preferredTfs: Array<"1m" | "5m" | "15m" | "1h" | "4h"> =
         activeStyle === "scalping"
-          ? ["15m", "1h", "4h", "1m"]
+          ? ["5m", "15m", "1h", "1m"]
           : activeStyle === "longtrade"
             ? ["4h", "1h", "15m"]
             : ["1h", "15m", "4h"];
-      const tf: "15m" | "1h" | "4h" = preferredTfs[0] === "1m" ? "15m" : preferredTfs[0];
+      const tf: "5m" | "15m" | "1h" | "4h" = preferredTfs[0] === "1m" ? "5m" : preferredTfs[0];
       const startIdx = this.scanCursor % pool.length;
       this.scanCursor = (this.scanCursor + 1) % pool.length;
       const orderedPool = [...pool.slice(startIdx), ...pool.slice(0, startIdx)];
@@ -4102,8 +4149,8 @@ export class TradingFloorDesk {
         }
 
         // Construction multi-timeframes réelle (Forex + Or + Indices)
-        const tfSets: Array<{ tfLabel: "1m" | "15m" | "1h" | "4h"; bars: MarketSnapshot["bars4h"] }> = [];
-        const addTfSet = (tfLabel: "1m" | "15m" | "1h" | "4h", b?: MarketSnapshot["bars4h"]) => {
+        const tfSets: Array<{ tfLabel: "1m" | "5m" | "15m" | "1h" | "4h"; bars: MarketSnapshot["bars4h"] }> = [];
+        const addTfSet = (tfLabel: "1m" | "5m" | "15m" | "1h" | "4h", b?: MarketSnapshot["bars4h"]) => {
           if (b && b.length >= 60 && !tfSets.some((x) => x.tfLabel === tfLabel)) {
             tfSets.push({ tfLabel, bars: b });
           }
@@ -4116,7 +4163,11 @@ export class TradingFloorDesk {
         const bars1m = candidate.bars1m ?? [];
 
         for (const pTf of preferredTfs) {
-          if (pTf === "15m") {
+          if (pTf === "5m") {
+            if (bars5m.length >= 60) {
+              addTfSet("5m", bars5m);
+            }
+          } else if (pTf === "15m") {
             if (bars15m.length >= 60) {
               addTfSet("15m", bars15m);
             } else if (candidate.symbol.endsWith("USDT")) {
@@ -4198,9 +4249,11 @@ export class TradingFloorDesk {
                 idea,
               );
               const tmBars =
-                idea.customStop !== undefined && bars15m.length >= 60
-                  ? bars15m
-                  : tfSet.bars;
+                activeStyle === "scalping" && bars5m.length >= 60
+                  ? bars5m
+                  : idea.customStop !== undefined && bars15m.length >= 60
+                    ? bars15m
+                    : tfSet.bars;
               const candTm = TraderSkillsEngine.runTimeMachineSimulation(
                 tmBars,
                 idea.dir,

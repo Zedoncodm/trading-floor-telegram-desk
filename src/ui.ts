@@ -6654,8 +6654,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var mappedRegime = style === 'longtrade' ? 'macro_fvg' : 'standard';
       var sel = document.getElementById('topActiveRegimeSelect');
       if (sel) sel.value = style;
-      if (typeof selectAutonomousStyle === 'function') {
-        selectAutonomousStyle(style);
+      if (typeof selectDeskStrategyMode === 'function') {
+        selectDeskStrategyMode(style);
         return;
       }
       fetch('/api/settings', {
@@ -8138,7 +8138,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           trainedAtrMult: 1.6,
           fixedStopAtr: 1.6,
           tradesPerMinute: 6,
-          progressiveSlEnabled: true,
+          progressiveStopEnabled: true,
           autoPaperScalp: true,
           executionMode: 'auto',
           regime: 'standard'
@@ -8150,7 +8150,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           trainedAtrMult: 1.15,
           fixedStopAtr: 1.15,
           tradesPerMinute: 12,
-          progressiveSlEnabled: true,
+          progressiveStopEnabled: true,
           autoPaperScalp: true,
           executionMode: 'auto',
           regime: 'standard'
@@ -8162,7 +8162,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           trainedAtrMult: 1.75,
           fixedStopAtr: 1.75,
           tradesPerMinute: 4,
-          progressiveSlEnabled: true,
+          progressiveStopEnabled: true,
           autoPaperScalp: true,
           executionMode: 'auto',
           regime: 'standard'
@@ -8292,7 +8292,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           localStEl.textContent = 'Connecté MT5 #' + deskState.mt5Live.login + ' (' + deskState.mt5Live.server + ') · Solde ' + Number(deskState.mt5Live.balance).toFixed(2) + ' ' + deskState.mt5Live.currency + ' · ' + deskState.mt5Live.positionsCount + ' position(s)';
         } else {
           localStEl.style.color = 'var(--fg-2)';
-          localStEl.textContent = 'En attente du terminal MT5 PC (TradingFloorBridge)...';
+          localStEl.textContent = 'En attente de TradingFloorBridge sur MT5 (glissez-le sur 1 graphique EURUSD + Algo Trading vert)';
         }
       }
 
