@@ -58,6 +58,7 @@ export type CloseReason =
   | "flatten"
   | "halt"
   | "drill"
+  | "pre_rollover"
   | "adverse_selection"
   | "flow_exhaustion";
 export type Binding = "risk" | "exposure" | "day";

@@ -897,3 +897,96 @@ test("SpreadGuard strict scalping & micro-compte bloque NZDUSD 3.6p, EURJPY 7p e
   assert.ok(mq5.includes("SPREAD_TOO_WIDE:"));
   assert.ok(mq5.includes("SPREAD_COST_CAP:"));
 });
+
+test("Rollover Forex 21:40-23:00 UTC bloque nouvelles entrées et PRE-ROLLOVER GUARD clôture les scalps avant 22h00 UTC sans Anti-Death-Loop", async () => {
+  // 1) Blackout Forex étendu 21:40–23:00 UTC (22:40–00:00 Paris)
+  const midRollover = Date.UTC(2026, 10, 19, 22, 30, 0);
+  const sessBlocked = evaluateMarketSession("EURJPY", midRollover);
+  assert.equal(sessBlocked.tradable, false);
+  assert.equal(sessBlocked.status, "ROLLOVER_BLACKOUT");
+
+  const afterRollover = Date.UTC(2026, 10, 19, 23, 5, 0);
+  assert.equal(evaluateMarketSession("EURJPY", afterRollover).tradable, true);
+
+  // 2) Fenêtre de clôture préventive 21:40–22:00 UTC (avant minuit courtier / swap overnight)
+  const inExitWin = Date.UTC(2026, 10, 19, 21, 41, 0);
+  const afterExitWin = Date.UTC(2026, 10, 19, 22, 5, 0);
+  assert.equal(isPreRolloverScalpExitWindow("EURUSD", inExitWin), true);
+  assert.equal(isPreRolloverScalpExitWindow("EURUSD", afterExitWin), false);
+
+  // 3) Clôture PRE-ROLLOVER ferme un scalp ouvert même légèrement négatif (-0.25€) sans déclencher d'Anti-Death-Loop
+  const dir = mkdtempSync(join(tmpdir(), "tf-preroll-"));
+  try {
+    const cfg = loadConfig(["--console"]);
+    cfg.dataDir = dir;
+    const desk = new TradingFloorDesk(cfg, new DeskStore(dir), new TelegramFloorRoom(cfg));
+    desk.state.settings.tradingStyle = "scalping";
+    desk.state.startEquity = 37;
+    desk.state.dayStartEquity = 37;
+    desk.state.mt5Live = {
+      connected: true,
+      updatedAt: inExitWin,
+      login: 5059100180,
+      server: "MetaQuotes-Demo",
+      currency: "EUR",
+      balance: 37,
+      equity: 36.75,
+      profit: -0.25,
+      freeMargin: 33,
+      leverage: 500,
+      tradeAllowed: true,
+      positionsCount: 1,
+      cryptoSupported: false,
+      availableCryptos: [],
+      rejectedOrders: [],
+    };
+    desk.state.tickets = [
+      {
+        id: "TF-PREROLL-1",
+        asset: "EURUSD",
+        direction: "long",
+        playbook: "breakout",
+        status: "open",
+        entry: 1.0968,
+        fillPrice: 1.0968,
+        invalidation: 1.0958,
+        target: 1.0985,
+        notional: 1096.8,
+        qty: 1000,
+        riskUsd: 0.91,
+        fees: 0.02,
+        mt5Profit: -0.25,
+        mt5CurrentPrice: 1.09655,
+        mt5PositionId: "999888777",
+        createdAt: inExitWin - 180_000,
+      } as unknown as Ticket,
+    ];
+    desk.state.directionalCooldowns = {};
+
+    const closeOpenTicketFn = (desk as unknown as {
+      closeOpenTicket: (
+        t: Ticket,
+        exitPrice: number,
+        reason: string,
+        now?: number,
+        realizedOverridePnl?: number,
+      ) => Promise<void>;
+    }).closeOpenTicket.bind(desk);
+
+    const t = desk.state.tickets[0];
+    assert.equal(
+      (desk.state.settings.tradingStyle === "scalping" || desk.state.settings.regime === "hft_kamikaze") &&
+        isPreRolloverScalpExitWindow(t.asset, inExitWin),
+      true,
+    );
+    await closeOpenTicketFn(t, 1.09655, "pre_rollover", inExitWin, -0.25);
+
+    const closed = desk.state.tickets.find((x) => x.id === "TF-PREROLL-1");
+    assert.equal(closed?.status, "closed");
+    assert.equal(closed?.closeReason, "pre_rollover");
+    assert.equal(closed?.pnl, -0.25);
+    assert.equal(desk.state.directionalCooldowns?.["EURUSD:long"], undefined, "pre_rollover ne doit pas créer de cooldown Anti-Death-Loop");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

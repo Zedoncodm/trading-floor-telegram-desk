@@ -39,7 +39,7 @@ function isForexSymbol(symbol: string): boolean {
  * Bouclier Horaires & Rollover (UTC) :
  * - Week-end : Vendredi 21:15 UTC -> Dimanche 22:20 UTC
  * - Métaux (XAU/XAG) : Rollover quotidien 21:40 UTC -> 23:10 UTC (22:40-00:10 Paris hiver)
- * - Forex : Rollover quotidien 21:45 UTC -> 22:20 UTC
+ * - Forex : Rollover quotidien 21:40 UTC -> 23:00 UTC (22:40-00:00 Paris hiver)
  * - Autres actifs CFD : Rollover 21:45 UTC -> 22:15 UTC
  */
 export function evaluateMarketSession(symbol: string, nowMs = Date.now()): MarketSessionCheck {
@@ -92,15 +92,15 @@ export function evaluateMarketSession(symbol: string, nowMs = Date.now()): Marke
     return { tradable: true, status: "OPEN" };
   }
 
-  // 3. Rollover quotidien Forex : 21:45 -> 22:20 UTC
+  // 3. Rollover quotidien Forex : 21:40 -> 23:00 UTC (22:40 -> 00:00 Paris : swap overnight + spreads élargis)
   if (isForexSymbol(symbol)) {
-    const startBlackout = 21 * 60 + 45;
-    const endBlackout = 22 * 60 + 20;
+    const startBlackout = 21 * 60 + 40;
+    const endBlackout = 23 * 60;
     if (mins >= startBlackout && mins < endBlackout) {
       return {
         tradable: false,
         status: "ROLLOVER_BLACKOUT",
-        reason: `Rollover quotidien Forex (${symbol}) : 21:45–22:20 UTC (spread élargi).`,
+        reason: `Rollover quotidien Forex (${symbol}) : 21:40–23:00 UTC (swap overnight & spread élargi).`,
       };
     }
     if (mins >= startBlackout - 10 && mins < startBlackout) {
@@ -128,8 +128,8 @@ export function evaluateMarketSession(symbol: string, nowMs = Date.now()): Marke
 }
 
 /**
- * Indique si un scalp ouvert doit être sécurisé/clôturé avant le rollover
- * pour ne pas subir le vide de liquidité de minuit ou du week-end.
+ * Indique si un scalp ouvert doit être clôturé avant le rollover quotidien (22h00 UTC / 23h00 Paris)
+ * pour éviter les frais de swap overnight et le vide de liquidité de minuit ou du week-end.
  */
 export function isPreRolloverScalpExitWindow(symbol: string, nowMs = Date.now()): boolean {
   const d = new Date(nowMs);
@@ -139,7 +139,7 @@ export function isPreRolloverScalpExitWindow(symbol: string, nowMs = Date.now())
   if (isMetalSymbol(symbol)) {
     return mins >= 21 * 60 + 35 && mins < 22 * 60;
   }
-  return mins >= 21 * 60 + 42 && mins < 22 * 60;
+  return mins >= 21 * 60 + 40 && mins < 22 * 60;
 }
 
 /**

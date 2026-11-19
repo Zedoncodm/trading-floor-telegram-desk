@@ -5265,13 +5265,14 @@ export class TradingFloorDesk {
     this.state.cooldowns[ticket.asset] = now + cooldownMs;
 
     // FIX DU DEATH LOOP INTELLIGENT :
-    // Verrouille la même direction uniquement sur une VRAIE perte / SL (jamais sur un HALT système ni un micro-scratch <= 0.15€ / < 15% R)
+    // Verrouille la même direction uniquement sur une VRAIE perte / SL (jamais sur un HALT système, un pre_rollover ni un micro-scratch <= 0.15€ / < 15% R)
     if (!this.state.directionalCooldowns) {
       this.state.directionalCooldowns = {};
     }
     const minRealLossForDeathLoop = Math.max(0.15, Math.min(2.0, (ticket.riskUsd || 1) * 0.15));
     const isMaterialTradingLoss =
       reason !== "halt" &&
+      reason !== "pre_rollover" &&
       (reason === "invalidation" ||
         reason === "adverse_selection" ||
         reason === "drill" ||
@@ -5296,6 +5297,7 @@ export class TradingFloorDesk {
           t.asset === ticket.asset &&
           t.status === "closed" &&
           t.closeReason !== "halt" &&
+          t.closeReason !== "pre_rollover" &&
           (t.pnl ?? 0) <= -0.15 &&
           (t.closedAt ?? 0) >= now - 60 * 60_000,
       ).length;
@@ -6392,11 +6394,11 @@ export class TradingFloorDesk {
         continue;
       }
 
-      // PROTECTION PRÉ-ROLLOVER SCALPING : clôturer les scalps en profit avant le vide de liquidité de minuit / week-end
+      // PROTECTION PRÉ-ROLLOVER SCALPING : clôturer tous les scalps ouverts avant minuit courtier (22h00 UTC / 23h00 Paris)
+      // pour éviter les frais de swap overnight (×3 le mercredi) et le vide de liquidité du rollover
       if (
-        this.state.settings?.tradingStyle === "scalping" &&
-        isPreRolloverScalpExitWindow(ticket.asset, now) &&
-        curUnrealized > Math.max(2, rtFees * 1.2)
+        (this.state.settings?.tradingStyle === "scalping" || this.state.settings?.regime === "hft_kamikaze") &&
+        isPreRolloverScalpExitWindow(ticket.asset, now)
       ) {
         const preRollQuote = this.mt5.getCachedQuote?.(ticket.asset);
         const preRollMark = ActiveTradeManager.effectiveExitPrice(
@@ -6405,17 +6407,23 @@ export class TradingFloorDesk {
           preRollQuote?.bid,
           preRollQuote?.ask,
         );
+        const preRollPnl =
+          ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit)
+            ? ticket.mt5Profit
+            : curUnrealized;
+        const ccyPre = this.state.mt5Live?.currency === "EUR" ? "€" : "$";
         await this.closeOpenTicket(
           ticket,
           preRollMark,
-          "target",
+          "pre_rollover",
           now,
-          ticket.mt5Profit !== undefined ? ticket.mt5Profit : curUnrealized,
+          ticket.mt5Profit !== undefined && Number.isFinite(ticket.mt5Profit) ? preRollPnl : undefined,
         );
+        this.pushLocalMt5BridgePayload(now);
         this.say(
           "execution",
-          `[PRE-ROLLOVER GUARD] Clôture préventive du scalp ${ticket.id} (${ticket.asset}) en profit (+${curUnrealized.toFixed(2)}€) avant la fermeture/rollover quotidien.`,
-          "fill",
+          `[PRE-ROLLOVER GUARD] Clôture préventive du scalp ${ticket.id} (${ticket.asset}) (${preRollPnl >= 0 ? "+" : "-"}${Math.abs(preRollPnl).toFixed(2)}${ccyPre}) avant le rollover quotidien (22h00 UTC / 23h00 Paris) pour éviter les frais de swap.`,
+          preRollPnl >= 0 ? "fill" : "plain",
           ticket.id,
         ).catch(() => {});
         continue;
