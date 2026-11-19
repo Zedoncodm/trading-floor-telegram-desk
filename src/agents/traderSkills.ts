@@ -410,7 +410,9 @@ export class TraderSkillsEngine {
     const openContributionR = Math.max(-0.35, Math.min(0.35, openSumR / simulations));
     const expectedR = (targetFirstPct / 100) * rr - (stopFirstPct / 100) * 1.0 + openContributionR;
     const winEdgePct = Number((targetFirstPct - stopFirstPct).toFixed(1));
-    const pass = expectedR > -0.05 && stopFirstPct <= Math.max(58, targetFirstPct * 1.45);
+    // Un trade à espérance mathématique strictement positive (E >= +0.02R) avec R:R >= 1.5 est statistiquement rentable même à 39-41% de WR
+    const maxAllowedStopPct = expectedR >= 0.02 ? Math.max(63, targetFirstPct * 1.6) : Math.max(58, targetFirstPct * 1.45);
+    const pass = expectedR > -0.05 && stopFirstPct <= maxAllowedStopPct;
     const verdict = pass
       ? `PASS TimeMachine (${simulations} sims, H=${horizonBars}b) : Cible ${targetFirstPct}% vs Stop ${stopFirstPct}% (E=${expectedR >= 0 ? "+" : ""}${expectedR.toFixed(2)}R, Hist ${historicalWins}W/${historicalLosses}L).`
       : `BLOCK TimeMachine (${simulations} sims, H=${horizonBars}b) : Probabilité Stop (${stopFirstPct}%) défavorable vs Cible (${targetFirstPct}%, E=${expectedR.toFixed(2)}R).`;

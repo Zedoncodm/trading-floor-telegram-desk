@@ -4505,7 +4505,13 @@ export class TradingFloorDesk {
       }
 
       // Validation TimeMachine, Risk 7-Points & Auto-Critique Finale AVANT toute annonce "Setup validé" du Stratège
-      const tmSim = TraderSkillsEngine.runTimeMachineSimulation(selectedBars, activeDir, entry, finalStop, finalTarget, 2500);
+      const tmBarsFinal =
+        activeStyle === "scalping" && (chosen.bars5m?.length ?? 0) >= 60
+          ? chosen.bars5m!
+          : selectedIdea?.customStop !== undefined && (chosen.bars15m?.length ?? 0) >= 60
+            ? chosen.bars15m!
+            : selectedBars;
+      const tmSim = TraderSkillsEngine.runTimeMachineSimulation(tmBarsFinal, activeDir, entry, finalStop, finalTarget, 2500);
       const sevenPtRisk = TraderSkillsEngine.runSevenPointRiskCheck({
         state: this.state,
         symbol: chosen.symbol,
@@ -4561,7 +4567,11 @@ export class TradingFloorDesk {
       if (!tmSim.pass) {
         setAgentActivity(this.state, "strategist", "killed", `TimeMachine Veto (${chosen.symbol})`, now, { asset: chosen.symbol });
         emitPulse(this.state, "strategist", "reviewer", "backtest_kill", `TIMEMACHINE VETO ${chosen.symbol}`, chosen.symbol, now);
-        await this.say("strategist", tmSim.verdict, "kill");
+        const tmLogKey = `tm-veto:${chosen.symbol}:${activeDir}`;
+        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(tmLogKey) ?? 0) >= 3 * 60_000) {
+          this.marketGuardLogAt.set(tmLogKey, now);
+          await this.say("strategist", tmSim.verdict, "kill");
+        }
         return;
       }
       if (sevenPtRisk.status === "BLOCK") {
