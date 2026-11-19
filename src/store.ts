@@ -235,17 +235,38 @@ export class DeskStore {
       .sort((a, b) => (b.closedAt ?? b.createdAt ?? 0) - (a.closedAt ?? a.createdAt ?? 0))
       .slice(0, 1500);
 
-    // Fusion de la courbe d'équité (chronologique, dédupliquée par timestamp + purge des pics aberrants)
+    // Fusion de la courbe d'équité par compte (SQLite 1 an + archive JSON + state.json — jamais perdue au redémarrage)
+    const activeAcctKey = String(state.mt5Live?.login || state.settings?.mt5Login || "paper");
     const curveMap = new Map<number, DeskState["curve"][number]>();
-    for (const pt of archive?.curve ?? []) {
+    const dbCurve = this.loadPersistedCurveForAccount(activeAcctKey);
+    for (const pt of dbCurve) {
       if (pt && Number.isFinite(pt.t) && Number.isFinite(pt.eq) && pt.eq > 0) curveMap.set(pt.t, pt);
     }
+    for (const pt of archive?.curve ?? []) {
+      if (
+        pt &&
+        Number.isFinite(pt.t) &&
+        Number.isFinite(pt.eq) &&
+        pt.eq > 0 &&
+        (!pt.accountLogin || String(pt.accountLogin) === activeAcctKey)
+      ) {
+        curveMap.set(pt.t, pt);
+      }
+    }
     for (const pt of state.curve ?? []) {
-      if (pt && Number.isFinite(pt.t) && Number.isFinite(pt.eq) && pt.eq > 0) curveMap.set(pt.t, pt);
+      if (
+        pt &&
+        Number.isFinite(pt.t) &&
+        Number.isFinite(pt.eq) &&
+        pt.eq > 0 &&
+        (!pt.accountLogin || String(pt.accountLogin) === activeAcctKey)
+      ) {
+        curveMap.set(pt.t, pt);
+      }
     }
     if (curveMap.size > 0) {
       const sorted = [...curveMap.values()].sort((a, b) => a.t - b.t);
-      state.curve = DeskStore.sanitizeEquityCurve(sorted).slice(-20_000);
+      state.curve = DeskStore.sanitizeEquityCurve(sorted).slice(-25_000);
     }
 
     // Fusion des Reviews 15 min
@@ -400,15 +421,80 @@ export class DeskStore {
     }
   }
 
+  /** Charge l'historique persistant (jusqu'à 365 jours) d'un compte donné depuis SQLite + fichier JSONL de secours. */
+  loadPersistedCurveForAccount(accountKey: string, retentionDays = 365): DeskState["curve"] {
+    const key = String(accountKey || "paper").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const byTs = new Map<number, DeskState["curve"][number]>();
+    const cutoff = Date.now() - Math.max(1, retentionDays) * 86_400_000;
+    if (this.db) {
+      for (const pt of this.db.loadAccountCurve(key, retentionDays)) {
+        if (pt.t >= cutoff) byTs.set(pt.t, pt);
+      }
+    }
+    const ledgerPath = join(this.dir, `equity_curve_${key}.jsonl`);
+    if (existsSync(ledgerPath)) {
+      try {
+        const lines = readFileSync(ledgerPath, "utf8").split(/\r?\n/);
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const pt = JSON.parse(line) as DeskState["curve"][number];
+            if (pt && Number.isFinite(pt.t) && pt.t >= cutoff && Number.isFinite(pt.eq) && pt.eq > 0) {
+              byTs.set(pt.t, pt);
+            }
+          } catch {
+            // ignore corrupted line
+          }
+        }
+      } catch {
+        // ignore read error
+      }
+    }
+    return [...byTs.values()].sort((a, b) => a.t - b.t).slice(-25_000);
+  }
+
+  /** Ajoute en mode append-only le dernier point dans le ledger courbe dédié au compte (jamais réinitialisé). */
+  appendCurvePointToLedger(accountKey: string, pt: DeskState["curve"][number]): void {
+    try {
+      mkdirSync(this.dir, { recursive: true });
+      const key = String(accountKey || "paper").replace(/[^a-zA-Z0-9_-]/g, "_");
+      const ledgerPath = join(this.dir, `equity_curve_${key}.jsonl`);
+      appendFileSync(ledgerPath, `${JSON.stringify(pt)}\n`, "utf8");
+    } catch {
+      // never crash main loop
+    }
+  }
+
   saveFullHistory(state: DeskState): void {
     try {
+      // Fusion additive avec l'archive existante du MÊME compte pour ne jamais écraser un historique plus long au redémarrage
+      const prevArchive = this.readHistoryArchive();
+      const activeAcctKey = String(state.mt5Live?.login || state.settings?.mt5Login || "paper");
+      const mergedCurveMap = new Map<number, DeskState["curve"][number]>();
+      for (const pt of prevArchive?.curve ?? []) {
+        if (
+          pt &&
+          Number.isFinite(pt.t) &&
+          Number.isFinite(pt.eq) &&
+          pt.eq > 0 &&
+          (!pt.accountLogin || String(pt.accountLogin) === activeAcctKey)
+        ) {
+          mergedCurveMap.set(pt.t, pt);
+        }
+      }
+      for (const pt of state.curve ?? []) {
+        if (pt && Number.isFinite(pt.t) && Number.isFinite(pt.eq) && pt.eq > 0) {
+          mergedCurveMap.set(pt.t, pt);
+        }
+      }
+      const mergedCurve = [...mergedCurveMap.values()].sort((a, b) => a.t - b.t).slice(-25_000);
       const archive: FullHistoryArchive = {
         version: 2,
         savedAt: Date.now(),
         startEquity: state.startEquity,
         realizedPnl: state.realizedPnl,
         tickets: (state.tickets ?? []).slice(0, 1500),
-        curve: (state.curve ?? []).slice(-20_000),
+        curve: mergedCurve,
         killed: (state.killed ?? []).slice(0, 100),
         messages: (state.messages ?? []).slice(-300),
         selfReflectionHistory: (state.selfReflectionHistory ?? []).slice(0, 120),

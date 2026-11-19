@@ -1194,10 +1194,42 @@ export class TradingFloorDesk {
         this.state.haltKind = null;
         this.state.directionalCooldowns = {};
         this.state.cooldowns = {};
-        this.state.curve = [
-          { t: now - 60_000, eq: mt5State.balance, realized: 0, unrealized: 0, drawdownPct: 0 },
-          { t: now, eq: mt5State.equity, realized: 0, unrealized: mt5State.profit, drawdownPct: 0 },
-        ];
+        const acctKey = String(mt5State.login || "paper");
+        const restoredCurve = this.store.loadPersistedCurveForAccount(acctKey, 365);
+        this.state.curve =
+          restoredCurve.length >= 2
+            ? [
+                ...restoredCurve,
+                {
+                  t: now,
+                  eq: mt5State.equity,
+                  balance: mt5State.balance,
+                  realized: 0,
+                  unrealized: mt5State.profit,
+                  drawdownPct: 0,
+                  accountLogin: acctKey,
+                },
+              ]
+            : [
+                {
+                  t: now - 60_000,
+                  eq: mt5State.balance,
+                  balance: mt5State.balance,
+                  realized: 0,
+                  unrealized: 0,
+                  drawdownPct: 0,
+                  accountLogin: acctKey,
+                },
+                {
+                  t: now,
+                  eq: mt5State.equity,
+                  balance: mt5State.balance,
+                  realized: 0,
+                  unrealized: mt5State.profit,
+                  drawdownPct: 0,
+                  accountLogin: acctKey,
+                },
+              ];
         this.lastKnownEquity = mt5State.equity;
         if ((this.state.settings.maxRiskPct ?? 0) < 0.01) {
           this.state.settings.maxRiskPct = 0.015;
@@ -2573,19 +2605,27 @@ export class TradingFloorDesk {
   }
 
   private recordEquityPoint(now = Date.now()): void {
-    const eq = currentEquity(this.state);
-    const realized = this.state.realizedPnl;
-    const unrealized = unrealizedPnl(this.state);
-    const retentionCutoff = now - 65 * 86_400_000; // Conserve au minimum 65 jours (2+ mois) d'historique réel
+    const hasMt5 = Boolean(this.state.mt5Live?.connected && this.state.mt5Live.balance > 0);
+    const eq = Number((hasMt5 ? this.state.mt5Live!.equity : currentEquity(this.state)).toFixed(2));
+    const realized = Number(this.state.realizedPnl.toFixed(2));
+    const balance = Number(
+      (hasMt5 ? this.state.mt5Live!.balance : this.state.startEquity + this.state.realizedPnl).toFixed(2),
+    );
+    const unrealized = Number((hasMt5 ? eq - balance : unrealizedPnl(this.state)).toFixed(2));
+    const accountLogin = String(this.state.mt5Live?.login || this.state.settings?.mt5Login || "paper");
+
+    const retentionCutoff = now - 365 * 86_400_000; // Conserve 1 an complet (12 mois) d'historique persistant
     const highResCutoff = now - 86_400_000; // Pleine résolution sur les dernières 24h
-    const bucketMs = 5 * 60_000; // Compression en pas de 5 min au-delà de 24h pour tenir largement sous 20 000 points
+    const midResCutoff = now - 65 * 86_400_000; // Pas de 5 min jusqu'à 65 jours, 1h de 65 à 365 jours
 
     const existing = this.state.curve.filter((p) => p.t >= retentionCutoff && p.t <= now + 60_000);
-    const archivedBuckets = new Map<number, (typeof existing)[number]>();
-    const recentPoints: (typeof existing) = [];
+    const archivedBuckets = new Map<string, (typeof existing)[number]>();
+    const recentPoints: typeof existing = [];
     for (const pt of existing) {
-      if (pt.t < highResCutoff) {
-        archivedBuckets.set(Math.floor(pt.t / bucketMs), pt);
+      if (pt.t < midResCutoff) {
+        archivedBuckets.set(`h:${Math.floor(pt.t / 3_600_000)}`, pt);
+      } else if (pt.t < highResCutoff) {
+        archivedBuckets.set(`m:${Math.floor(pt.t / (5 * 60_000))}`, pt);
       } else {
         recentPoints.push(pt);
       }
@@ -2599,14 +2639,19 @@ export class TradingFloorDesk {
     if (last && now - last.t < 60_000 && Math.abs(eq - last.eq) / Math.max(last.eq, 1) > 0.30) {
       return;
     }
-    // Enregistre sur variation d'équité (>= 5s) ou au minimum toutes les 5 min à plat
-    if (last && (now - last.t < 5_000 || (Math.abs(last.eq - eq) < 0.01 && now - last.t < 300_000))) {
+    const lastBal = Number(last?.balance ?? last?.eq ?? balance);
+    // Enregistre sur variation d'équité OU de solde fermé (>= 5s) ou au minimum toutes les 5 min à plat
+    if (
+      last &&
+      (now - last.t < 5_000 ||
+        (Math.abs(last.eq - eq) < 0.01 && Math.abs(lastBal - balance) < 0.01 && now - last.t < 300_000))
+    ) {
       return;
     }
-    this.state.curve = [
-      ...merged.slice(-19_999),
-      { t: now, eq, realized, unrealized, drawdownPct },
-    ];
+    const nextPt = { t: now, eq, balance, realized, unrealized, drawdownPct, accountLogin };
+    this.state.curve = [...merged.slice(-24_999), nextPt];
+    // Append-only sur disque par compte : ne disparaît jamais même après 100 redémarrages ou 3+ mois
+    this.store.appendCurvePointToLedger(accountLogin, nextPt);
   }
 
   async bootstrapIfFresh(): Promise<void> {

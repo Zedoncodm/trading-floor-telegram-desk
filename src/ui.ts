@@ -1886,17 +1886,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="kpi-strip" id="notionKpiStrip"></div>
 
       <div class="glass-card">
-        <div class="equity-header">
+        <div class="equity-header" style="gap:10px;flex-wrap:wrap">
           <div>
-            <div class="card-title">Courbe d'Équité &amp; PnL Portefeuille Temps Réel</div>
-            <div style="font-size:11px;color:var(--fg-2)">Historique persistant 60+ jours (1M / 2M / ALL) · Synchronisé avec le calendrier</div>
+            <div class="card-title" id="equityCardTitle">Courbe Solde Compte (Fermé) vs Équité Live</div>
+            <div style="font-size:11px;color:var(--fg-2)" id="equityCardSub">Persistance 1 an par compte (SQLite + Ledger) · Jamais réinitialisée au redémarrage</div>
           </div>
-          <div class="seg-group" id="equityTfGroup">
-            <button class="seg-btn" data-range="1D" onclick="setEquityRange(&quot;1D&quot;)">1D</button>
-            <button class="seg-btn" data-range="1W" onclick="setEquityRange(&quot;1W&quot;)">1W</button>
-            <button class="seg-btn" data-range="1M" onclick="setEquityRange(&quot;1M&quot;)">1M</button>
-            <button class="seg-btn" data-range="2M" onclick="setEquityRange(&quot;2M&quot;)">2M</button>
-            <button class="seg-btn active" data-range="ALL" onclick="setEquityRange(&quot;ALL&quot;)">ALL</button>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <div class="seg-group" id="equityModeGroup">
+              <button class="seg-btn active" data-eqmode="balance" onclick="setEquityCurveMode(&quot;balance&quot;)" title="Montre uniquement le solde réellement encaissé (positions clôturées, sans les positions ouvertes)">Solde Compte (Fermé)</button>
+              <button class="seg-btn" data-eqmode="equity" onclick="setEquityCurveMode(&quot;equity&quot;)" title="Montre l'équité en direct en incluant le PnL flottant des positions ouvertes">Équité Live (Avec Ouverts)</button>
+            </div>
+            <div class="seg-group" id="equityTfGroup">
+              <button class="seg-btn" data-range="1D" onclick="setEquityRange(&quot;1D&quot;)">1D</button>
+              <button class="seg-btn" data-range="1W" onclick="setEquityRange(&quot;1W&quot;)">1W</button>
+              <button class="seg-btn" data-range="1M" onclick="setEquityRange(&quot;1M&quot;)">1M</button>
+              <button class="seg-btn" data-range="2M" onclick="setEquityRange(&quot;2M&quot;)">2M</button>
+              <button class="seg-btn" data-range="3M" onclick="setEquityRange(&quot;3M&quot;)">3M</button>
+              <button class="seg-btn active" data-range="ALL" onclick="setEquityRange(&quot;ALL&quot;)">ALL</button>
+            </div>
           </div>
         </div>
         <div id="equityAreaWrap">
@@ -2881,6 +2888,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     var activeChannel = 'floor-general';
     var agentFilter = null;
     var equityRange = 'ALL';
+    var equityCurveMode = 'balance';
     var ledgerMode = 'open';
     var ledgerDir = 'ALL';
     var gridLocked = true;
@@ -6081,6 +6089,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderEquityChart();
     }
 
+    function setEquityCurveMode(mode) {
+      equityCurveMode = mode === 'equity' ? 'equity' : 'balance';
+      document.querySelectorAll('#equityModeGroup .seg-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-eqmode') === equityCurveMode);
+      });
+      var titleEl = document.getElementById('equityCardTitle');
+      if (titleEl) {
+        titleEl.textContent = equityCurveMode === 'balance'
+          ? 'Solde Compte Réel (Positions Fermées Uniquement)'
+          : 'Équité Portefeuille Live (Avec Positions Ouvertes)';
+      }
+      renderEquityChart();
+    }
+
     function buildEquitySeriesPoints() {
       if (!deskState) return { points: [], bySec: {} };
       var now = Date.now();
@@ -6089,6 +6111,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         : equityRange === '1W' ? now - 7 * 86400000
         : equityRange === '1M' ? now - 30 * 86400000
         : equityRange === '2M' ? now - 60 * 86400000
+        : equityRange === '3M' ? now - 90 * 86400000
         : 0;
 
       var hasMt5 = Boolean(deskState.mt5Live && deskState.mt5Live.connected);
@@ -6108,14 +6131,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (locMed > 0 && (Number(bPt.eq) > locMed * 1.30 || Number(bPt.eq) < locMed * 0.70)) {
           continue;
         }
-        baseCurve.push(bPt);
+        var ptBal = Number(bPt.balance) > 0
+          ? Number(bPt.balance)
+          : Math.max(0.01, Number(bPt.eq) - Number(bPt.unrealized || 0));
+        baseCurve.push({
+          t: Number(bPt.t),
+          eq: Number(bPt.eq),
+          balance: ptBal,
+          realized: Number(bPt.realized || 0),
+          unrealized: Number(bPt.unrealized || 0),
+          drawdownPct: Number(bPt.drawdownPct || 0)
+        });
       }
       var lastMeasured = baseCurve.length ? baseCurve[baseCurve.length - 1] : null;
       var liveEq = hasMt5
         ? Number(deskState.mt5Live.equity || 0)
         : Number((lastMeasured && lastMeasured.eq) || deskState.startEquity || 10000);
+      var liveBal = hasMt5
+        ? Number(deskState.mt5Live.balance || liveEq)
+        : Number((lastMeasured && lastMeasured.balance) || ((deskState.startEquity || 10000) + (deskState.realizedPnl || 0)));
       var liveUnreal = hasMt5
-        ? Number(deskState.mt5Live.profit || 0)
+        ? Number(deskState.mt5Live.profit || (liveEq - liveBal))
         : Number((lastMeasured && lastMeasured.unrealized) || 0);
 
       var merged = baseCurve.slice();
@@ -6127,28 +6163,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           .slice(-200)
           .sort(function (a, b) { return (a.closedAt || a.createdAt) - (b.closedAt || b.createdAt); });
         if (closedAll.length > 0) {
-          var anchorEq = liveEq > 0 ? liveEq : Number(deskState.startEquity || 10000);
+          var anchorEq = liveBal > 0 ? liveBal : Number(deskState.startEquity || 10000);
           var totalClosedPnl = closedAll.reduce(function (s, t) { return s + Number(t.pnl || 0); }, 0);
           var startAnchor = Math.max(1, anchorEq - totalClosedPnl);
           var runEq = startAnchor;
           var runRealized = 0;
           var peak = startAnchor;
-          var synth = [{ t: Math.max(0, (closedAll[0].closedAt || closedAll[0].createdAt) - 60000), eq: startAnchor, realized: 0, drawdownPct: 0 }];
+          var synth = [{ t: Math.max(0, (closedAll[0].closedAt || closedAll[0].createdAt) - 60000), eq: startAnchor, balance: startAnchor, realized: 0, unrealized: 0, drawdownPct: 0 }];
           closedAll.forEach(function (t) {
             var p = Number(t.pnl || 0);
             runEq = Math.max(1, runEq + p);
             runRealized += p;
             if (runEq > peak) peak = runEq;
-            synth.push({ t: t.closedAt || t.createdAt, eq: runEq, realized: runRealized, drawdownPct: peak > 0 ? (peak - runEq) / peak : 0 });
+            synth.push({ t: t.closedAt || t.createdAt, eq: runEq, balance: runEq, realized: runRealized, unrealized: 0, drawdownPct: peak > 0 ? (peak - runEq) / peak : 0 });
           });
           merged = synth;
         }
       }
 
-      if (liveEq > 0 && (!lastMeasured || now - lastMeasured.t >= 1000 || Math.abs(lastMeasured.eq - liveEq) >= 0.01)) {
+      if (liveEq > 0 && (!lastMeasured || now - lastMeasured.t >= 1000 || Math.abs(lastMeasured.eq - liveEq) >= 0.01 || Math.abs(lastMeasured.balance - liveBal) >= 0.01)) {
         merged.push({
           t: now,
           eq: liveEq,
+          balance: liveBal,
           realized: Number(deskState.realizedPnl || 0),
           unrealized: liveUnreal,
           drawdownPct: lastMeasured ? (lastMeasured.drawdownPct || 0) : 0
@@ -6159,7 +6196,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       if (rawCurve.length < 2 && merged.length >= 1) {
         var lastVal = merged[merged.length - 1];
         var anchorT = cutoff > 0 ? Math.max(cutoff, now - 3600000) : now - 60000;
-        rawCurve = [{ t: Math.min(anchorT, lastVal.t - 60000), eq: lastVal.eq, realized: lastVal.realized || 0, drawdownPct: lastVal.drawdownPct || 0 }, lastVal];
+        rawCurve = [{ t: Math.min(anchorT, lastVal.t - 60000), eq: lastVal.eq, balance: lastVal.balance, realized: lastVal.realized || 0, unrealized: lastVal.unrealized || 0, drawdownPct: lastVal.drawdownPct || 0 }, lastVal];
       }
 
       var bySec = {};
@@ -6167,10 +6204,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         var sec = Math.floor(Number(pt.t) / 1000);
         bySec[sec] = pt;
       });
+      var useBalance = equityCurveMode === 'balance';
       var points = Object.keys(bySec)
         .sort(function (a, b) { return Number(a) - Number(b); })
         .map(function (sec) {
-          return { time: Number(sec), value: Number(Number(bySec[sec].eq || 0).toFixed(2)) };
+          var row = bySec[sec];
+          var val = useBalance ? Number(row.balance || row.eq || 0) : Number(row.eq || 0);
+          return { time: Number(sec), value: Number(val.toFixed(2)) };
         });
       return { points: points, bySec: bySec };
     }
@@ -6192,7 +6232,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
       var w = wrap.clientWidth || 720;
       var h = wrap.clientHeight || 290;
-      var upHex = getCurrentThemePrefs().up || '#10b981';
+      var lineHex = equityCurveMode === 'balance' ? '#38bdf8' : (getCurrentThemePrefs().up || '#10b981');
 
       eqChart = LightweightCharts.createChart(wrap, {
         width: w,
@@ -6204,9 +6244,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       });
 
       eqAreaSeries = eqChart.addAreaSeries({
-        lineColor: upHex,
-        topColor: hexToRgba(upHex, 0.35),
-        bottomColor: hexToRgba(upHex, 0.02),
+        lineColor: lineHex,
+        topColor: hexToRgba(lineHex, 0.34),
+        bottomColor: hexToRgba(lineHex, 0.02),
         lineWidth: 2
       });
 
@@ -6223,10 +6263,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (!param || !param.time) { tip.style.display = 'none'; return; }
         var match = (window._eqBySec || {})[param.time];
         if (!match) { tip.style.display = 'none'; return; }
+        var balVal = Number(match.balance || match.eq || 0);
+        var fltVal = Number(match.eq || 0) - balVal;
         tip.innerHTML =
           '<div><strong>' + new Date(match.t).toLocaleString('fr-FR') + '</strong></div>' +
-          '<div>Équité : <span class="up">' + fmtUsd(match.eq, 2) + '</span></div>' +
-          '<div>Réalisé : ' + fmtSignedUsd(match.realized, 2) + ' · DD : ' + Number((match.drawdownPct || 0) * 100).toFixed(2) + '%</div>';
+          '<div>Solde fermé (Balance) : <span style="color:#38bdf8;font-weight:700">' + fmtUsd(balVal, 2) + '</span></div>' +
+          '<div>Équité live (Avec ouverts) : <span class="up">' + fmtUsd(match.eq, 2) + '</span></div>' +
+          '<div>Flottant ouverts : ' + fmtSignedUsd(fltVal, 2) + ' · DD : ' + Number((match.drawdownPct || 0) * 100).toFixed(2) + '%</div>';
         tip.style.display = 'block';
       });
 

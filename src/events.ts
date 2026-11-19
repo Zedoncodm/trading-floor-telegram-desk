@@ -16,9 +16,13 @@ export type ChatMessage = {
 export type EquityPoint = {
   t: number;
   eq: number;
+  /** Solde réel encaissé (positions clôturées uniquement, sans le PnL flottant des positions ouvertes). */
+  balance?: number;
   realized: number;
   unrealized: number;
   drawdownPct: number;
+  /** Identifiant du compte MT5 (ou "paper") pour isoler et conserver l'historique par compte sur 1 an. */
+  accountLogin?: string;
 };
 
 export type AgentActivity = {

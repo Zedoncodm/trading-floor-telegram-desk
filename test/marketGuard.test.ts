@@ -219,3 +219,54 @@ test("MicroAccountMarginGuard (39.88€, 1:100) autorise EURUSD 0.01 lot mais bl
   });
   assert.equal(gold.ok, false);
 });
+
+test("Persistance courbe d'équité 3+ mois (balance fermé vs équité live) survit aux redémarrages sans jamais se réinitialiser", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-curve-persist-"));
+  try {
+    const store1 = new DeskStore(dir);
+    const now = Date.now();
+    const ninetyDaysAgo = now - 90 * 86_400_000;
+    const thirtyDaysAgo = now - 30 * 86_400_000;
+    const acct = "5059099599";
+
+    store1.appendCurvePointToLedger(acct, {
+      t: ninetyDaysAgo,
+      eq: 40.0,
+      balance: 40.0,
+      realized: 0,
+      unrealized: 0,
+      drawdownPct: 0,
+      accountLogin: acct,
+    });
+    store1.appendCurvePointToLedger(acct, {
+      t: thirtyDaysAgo,
+      eq: 52.5,
+      balance: 50.0,
+      realized: 10.0,
+      unrealized: 2.5,
+      drawdownPct: 0,
+      accountLogin: acct,
+    });
+    store1.appendCurvePointToLedger(acct, {
+      t: now,
+      eq: 61.2,
+      balance: 64.0,
+      realized: 24.0,
+      unrealized: -2.8,
+      drawdownPct: 0.04,
+      accountLogin: acct,
+    });
+
+    // Simuler un redémarrage complet du desk (nouvelle instance DeskStore)
+    const store2 = new DeskStore(dir);
+    const loaded = store2.loadPersistedCurveForAccount(acct, 365);
+    assert.equal(loaded.length, 3);
+    assert.equal(loaded[0].balance, 40.0);
+    assert.equal(loaded[1].balance, 50.0);
+    assert.equal(loaded[1].eq, 52.5);
+    assert.equal(loaded[2].balance, 64.0);
+    assert.equal(loaded[2].eq, 61.2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

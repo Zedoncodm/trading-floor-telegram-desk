@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
   DeskState,
+  EquityPoint,
   TcaTransactionRecord,
   Ticket,
   XaiCognitiveAuditReport,
@@ -71,6 +72,19 @@ export class DeskDatabase {
         ts INTEGER PRIMARY KEY,
         equity REAL NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS account_equity_history (
+        account_key TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        balance REAL NOT NULL,
+        equity REAL NOT NULL,
+        realized REAL NOT NULL DEFAULT 0,
+        unrealized REAL NOT NULL DEFAULT 0,
+        drawdown_pct REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (account_key, ts)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_aeh_acct_ts ON account_equity_history(account_key, ts);
     `);
   }
 
@@ -103,6 +117,11 @@ export class DeskDatabase {
       const upsertCurve = this.db.prepare(`
         INSERT OR REPLACE INTO equity_curve (ts, equity) VALUES (?, ?)
       `);
+      const upsertAcctCurve = this.db.prepare(`
+        INSERT OR REPLACE INTO account_equity_history (account_key, ts, balance, equity, realized, unrealized, drawdown_pct)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const accountKey = String(state.mt5Live?.login || state.settings?.mt5Login || "paper");
 
       this.db.exec("BEGIN");
       try {
@@ -115,9 +134,23 @@ export class DeskDatabase {
             this.writeXaiRow(upsertXai, t.xaiAudit, t.id, t.asset, t.createdAt);
           }
         }
-        for (const pt of (state.curve ?? []).slice(-60)) {
-          if (Number.isFinite(pt.t) && Number.isFinite(pt.eq)) {
+        for (const pt of (state.curve ?? []).slice(-250)) {
+          if (Number.isFinite(pt.t) && Number.isFinite(pt.eq) && pt.eq > 0) {
+            const ptKey = pt.accountLogin ? String(pt.accountLogin) : accountKey;
+            const bal =
+              Number.isFinite(pt.balance) && (pt.balance ?? 0) > 0
+                ? Number(pt.balance)
+                : Math.max(0.01, Number((pt.eq - (pt.unrealized ?? 0)).toFixed(2)));
             upsertCurve.run(pt.t, pt.eq);
+            upsertAcctCurve.run(
+              ptKey,
+              Math.round(pt.t),
+              bal,
+              pt.eq,
+              Number(pt.realized ?? 0),
+              Number(pt.unrealized ?? 0),
+              Number(pt.drawdownPct ?? 0),
+            );
           }
         }
         this.db.exec("COMMIT");
@@ -167,6 +200,40 @@ export class DeskDatabase {
 
   private writeXaiRow(stmt: ReturnType<DatabaseSync["prepare"]>, x: XaiCognitiveAuditReport, ticketId: string, symbol: string, createdAt: number): void {
     stmt.run(x.audit_id, ticketId, symbol, createdAt, JSON.stringify(x));
+  }
+
+  loadAccountCurve(accountKey: string, retentionDays = 365): EquityPoint[] {
+    try {
+      const cutoff = Date.now() - Math.max(1, retentionDays) * 86_400_000;
+      const rows = this.db
+        .prepare(
+          `SELECT ts, balance, equity, realized, unrealized, drawdown_pct
+           FROM account_equity_history
+           WHERE account_key = ? AND ts >= ?
+           ORDER BY ts ASC`,
+        )
+        .all(String(accountKey || "paper"), cutoff) as Array<{
+          ts: number;
+          balance: number;
+          equity: number;
+          realized: number;
+          unrealized: number;
+          drawdown_pct: number;
+        }>;
+      return rows
+        .filter((r) => Number.isFinite(r.ts) && Number.isFinite(r.equity) && r.equity > 0)
+        .map((r) => ({
+          t: Number(r.ts),
+          eq: Number(r.equity),
+          balance: Number(r.balance > 0 ? r.balance : r.equity - (r.unrealized || 0)),
+          realized: Number(r.realized || 0),
+          unrealized: Number(r.unrealized || 0),
+          drawdownPct: Number(r.drawdown_pct || 0),
+          accountLogin: String(accountKey || "paper"),
+        }));
+    } catch {
+      return [];
+    }
   }
 
   getStats(): { tickets: number; tcaReports: number; xaiReports: number; curvePoints: number; dbPath: string } {
