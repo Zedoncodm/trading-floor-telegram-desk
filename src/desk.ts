@@ -3645,6 +3645,38 @@ export class TradingFloorDesk {
         });
       }
     }
+    // Moteur Scalping 5m natif MT5 (EMA9/EMA21 + RSI 5m + bougie confirmée — actif sur toutes les paires Forex/Métaux en mode scalping)
+    if (style === "scalping" && (snap.bars5m?.length ?? 0) >= 22) {
+      const b5 = snap.bars5m!;
+      const closes5 = b5.map((k) => k.close);
+      const emaCalc = (vals: number[], period: number): number => {
+        const mult = 2 / (period + 1);
+        let e = vals[0];
+        for (let i = 1; i < vals.length; i++) e = (vals[i] - e) * mult + e;
+        return e;
+      };
+      const ema9 = emaCalc(closes5.slice(-30), 9);
+      const ema21 = emaCalc(closes5.slice(-45), 21);
+      const atr5 = b5.slice(-14).reduce((s, k) => s + Math.max(0, k.high - k.low), 0) / 14;
+      const last5 = b5[b5.length - 1];
+      const prev5 = b5[b5.length - 2];
+      const rsi5 = TraderSkillsEngine.computeQuickTech(b5, px).rsi14;
+      const bull5 = ema9 > ema21 && px >= ema21 && px <= ema9 + atr5 * 1.1 && last5.close >= last5.open && last5.close >= prev5.close && rsi5 >= 46 && rsi5 <= 68;
+      const bear5 = ema9 < ema21 && px <= ema21 && px >= ema9 - atr5 * 1.1 && last5.close <= last5.open && last5.close <= prev5.close && rsi5 >= 32 && rsi5 <= 54;
+      if (atr5 > 0 && (bull5 || bear5)) {
+        const dir5: Direction = bull5 ? "long" : "short";
+        const sl5 = Math.max(atr5 * 1.35, px * 0.0005);
+        return withConfluence({
+          dir: dir5,
+          playbook: "breakout",
+          thesis: `Scalp M5 MT5 (${dir5.toUpperCase()}) : EMA9 ${bull5 ? ">" : "<"} EMA21, bougie M5 confirmée, RSI5m=${rsi5.toFixed(0)}, ATR5m=${fmtPx(atr5)}.`,
+          customEntry: px,
+          customStop: dir5 === "long" ? px - sl5 : px + sl5,
+          customTarget: dir5 === "long" ? px + sl5 * 1.55 : px - sl5 * 1.55,
+          timeStopMs: 3 * 3600_000,
+        });
+      }
+    }
     if (effectiveForceMeanRev && mp.vah > mp.val) {
       const stopBand = Math.max((snap.atr || px * 0.01) * 1.1, (mp.vah - mp.val) * 0.35);
       const mrDir: Direction = px >= mp.poc ? "short" : "long";
@@ -3847,9 +3879,17 @@ export class TradingFloorDesk {
         return true;
       };
       const focusSym = (this.state.settings?.focusSymbol ?? "").trim().toUpperCase();
-      const pool = focusSym
+      // Déduplication stricte de l'univers scanné pour éviter qu'une même paire soit évaluée 2 fois
+      const seenPoolSyms = new Set<string>();
+      const rawPool = focusSym
         ? snaps.filter((s) => s.symbol.toUpperCase() === focusSym && (this.state.settings?.strictQuotaMode || mt5AllowsSymbol(s.symbol)))
         : snaps.filter((s) => notCooledDown(s.symbol) && !hasActiveTicket(s.symbol) && mt5AllowsSymbol(s.symbol));
+      const pool = rawPool.filter((s) => {
+        const k = s.symbol.toUpperCase();
+        if (seenPoolSyms.has(k)) return false;
+        seenPoolSyms.add(k);
+        return true;
+      });
       if (!pool.length) {
         await this.say("analyst", "Tous les actifs sont en période de cooldown ou déjà en position.");
         return;
@@ -4117,8 +4157,10 @@ export class TradingFloorDesk {
               customParams,
             );
             const activePlaybook = bt.playbook;
+            // Ne jamais tuer un breakout statistiquement positif (OOS >= +0.05R) à cause d'une directive range ;
+            // le mode Mean-Reversion donne simplement un bonus de priorité au fade en cas d'égalité.
             const playbookMismatch =
-              (effectiveForceMeanRev && activePlaybook === "breakout") ||
+              (effectiveForceMeanRev && activePlaybook === "breakout" && bt.outOfSample.expectancyR < 0.05) ||
               (idea.playbook === "Macro_FVG_Mitigation" && activePlaybook === "fade");
             if (bt.pass && !playbookMismatch) {
               const candLevels = this.resolveCandidateTradeLevels(
@@ -4153,11 +4195,13 @@ export class TradingFloorDesk {
               }
               const curRegime = idea.regime ?? "MEAN_REVERTING";
               const rlWeight = this.grpo.getStrategyWeight(curRegime, activePlaybook);
+              const meanRevBonus = effectiveForceMeanRev && activePlaybook === "fade" ? 0.18 : 0;
               const alphaScore =
                 bt.outOfSample.expectancyR * 1.4 +
                 Math.min(2, Math.max(0, bt.outOfSample.profitFactor - 1)) * 0.6 +
                 (bt.outOfSample.deflatedSharpe ?? 0.5) * 0.8 +
                 rlWeight * 0.75 +
+                meanRevBonus +
                 (idea.fomoBoostApplied ?? 0);
               if (alphaScore > bestAlphaScore) {
                 bestAlphaScore = alphaScore;
@@ -4172,7 +4216,12 @@ export class TradingFloorDesk {
                 selectedCheck = check;
               }
             } else if (!bestFailedForCand) {
-              bestFailedForCand = { bt, playbook: activePlaybook };
+              const explicitReason =
+                bt.killReason ??
+                (playbookMismatch
+                  ? `Playbook ${activePlaybook} filtré par la directive de régime actif (Mean-Reversion prioritaire en range)`
+                  : "Critères statistiques IS/OOS non atteints");
+              bestFailedForCand = { bt: { ...bt, killReason: explicitReason }, playbook: activePlaybook };
             }
           }
         }
@@ -4199,11 +4248,20 @@ export class TradingFloorDesk {
         const bt = fallbackKilled?.bt;
         const activePlaybook = fallbackKilled?.playbook ?? "breakout";
         const testedTfsStr = fallbackKilled?.testedTfs?.length ? fallbackKilled.testedTfs.join("/") : tf;
+        const scannedListStr = orderedPool.map((x) => x.symbol).join(", ");
+        const cleanKillReason = bt?.killReason ?? "Critères statistiques IS/OOS ou TimeMachine non validés";
+        const spamKey = `scan-kill:${chosen.symbol}:${cleanKillReason.slice(0, 60)}`;
+        const isDuplicateScheduledSpam =
+          trigger === "scheduled" && now - (this.marketGuardLogAt.get(spamKey) ?? 0) < 90_000;
+        if (isDuplicateScheduledSpam) {
+          return;
+        }
+        this.marketGuardLogAt.set(spamKey, now);
 
-        const analystFallback = `[${chosen.symbol}] ${p.venue} ${fmtPx(p.price)} (1h ${fmtSignedPct(p.ret1h)}, 24h ${fmtSignedPct(chosen.ret24h)}) · Funding ${fmtFunding(p.funding)} · OI ${fmtCompactUsd(p.oiValue)} (${fmtSignedPct(p.oiChange1h)}) · Déséquilibre carnet ${(p.book ?? 0).toFixed(2)}${s ? ` | 2e source ${s.venue} : ${fmtPx(s.price)}` : ""}. — Données et contexte uniquement, je ne propose aucun trade.`;
+        const analystFallback = `[SCAN MULTI-PAIRES (${orderedPool.length}) : ${scannedListStr}] Focus principal ${chosen.symbol} (${p.venue} ${fmtPx(p.price)}, 1h ${fmtSignedPct(p.ret1h)}, 24h ${fmtSignedPct(chosen.ret24h)})${s ? ` | 2e source ${s.venue} : ${fmtPx(s.price)}` : ""}. — Données et contexte uniquement, je ne propose aucun trade.`;
         await this.speakWithAgentPrompt(
           "analyst",
-          `Actif=${chosen.symbol}, Prix1=${p.venue} ${fmtPx(p.price)}, Variation1h=${fmtSignedPct(p.ret1h)}, Variation24h=${fmtSignedPct(chosen.ret24h)}, Verification2eSource=${check.reason}. Rappel : ne propose aucun trade.`,
+          `Scannés=${scannedListStr}, Actif=${chosen.symbol}, Prix1=${p.venue} ${fmtPx(p.price)}, Variation1h=${fmtSignedPct(p.ret1h)}, Variation24h=${fmtSignedPct(chosen.ret24h)}, Verification2eSource=${check.reason}. Rappel : ne propose aucun trade.`,
           analystFallback,
         );
 
@@ -4215,7 +4273,7 @@ export class TradingFloorDesk {
               at: now,
               asset: chosen.symbol,
               playbook: activePlaybook,
-              reason: bt.killReason ?? "Échec backtest / OOS sur l'ensemble du pool",
+              reason: cleanKillReason,
               backtest: bt,
             },
             ...this.state.killed.slice(0, 39),
@@ -4226,10 +4284,10 @@ export class TradingFloorDesk {
           });
           emitPulse(this.state, "strategist", "reviewer", "backtest_kill", `IDÉE TUÉE ${chosen.symbol}`, chosen.symbol, now);
 
-          const killFallback = `IDÉE TUÉE [${chosen.symbol} · Cassure & Mean-Rev (${testedTfsStr})]. ${bt.killReason} (In-Sample : ${bt.inSample.trades} trades, ${fmtPct(bt.inSample.winRate, 0)} gagnants, ${fmtR(bt.inSample.expectancyR)} | OOS : ${bt.outOfSample.trades} trades, ${fmtR(bt.outOfSample.expectancyR)}). Aucune paire ni unité de temps (${testedTfsStr}) n'a validé les critères.`;
+          const killFallback = `IDÉE TUÉE [${chosen.symbol} · ${activePlaybook} (${testedTfsStr})]. ${cleanKillReason} (In-Sample : ${bt.inSample.trades} trades, ${fmtPct(bt.inSample.winRate, 0)} gagnants, ${fmtR(bt.inSample.expectancyR)} | OOS : ${bt.outOfSample.trades} trades, ${fmtR(bt.outOfSample.expectancyR)}). Pool scanné (${orderedPool.length}) : ${scannedListStr}.`;
           await this.speakWithAgentPrompt(
             "strategist",
-            `Décision=IDÉE TUÉE, Actif=${chosen.symbol}, TimeframesTestés=${testedTfsStr}, Setup=${activePlaybook}, Motif=${bt.killReason}.`,
+            `Décision=IDÉE TUÉE, Actif=${chosen.symbol}, TimeframesTestés=${testedTfsStr}, Setup=${activePlaybook}, Motif=${cleanKillReason}.`,
             killFallback,
             "kill",
           );
@@ -4239,7 +4297,7 @@ export class TradingFloorDesk {
             "kill",
           );
         } else {
-          await this.say("lead", "Aucun signal confirmé sur les actifs scannés. Veille maintenue.");
+          await this.say("lead", `Aucun signal confirmé sur les ${orderedPool.length} paires scannées (${scannedListStr}). Veille maintenue.`);
         }
         return;
       }
