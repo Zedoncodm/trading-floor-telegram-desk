@@ -209,34 +209,68 @@ export class DeskStore {
 
   private mergeFullHistoryIntoState(state: DeskState): void {
     const archive = this.readHistoryArchive();
-    const blotterClosed = this.reconstructTicketsFromBlotter();
+    const activeAcctKey = String(state.mt5Live?.login || state.settings?.mt5Login || "paper");
+    const acctSnap = this.loadAccountSnapshot(activeAcctKey);
 
-    const ticketMap = new Map<string, Ticket>();
-    // 1. Plus bas niveau : reconstruits du blotter (pour ne rien perdre même si ancien reset)
-    for (const bt of blotterClosed) {
-      ticketMap.set(bt.id, bt);
-    }
-    // 2. Archive persistante full_history.json (contient les objets Ticket complets)
-    for (const at of archive?.tickets ?? []) {
-      if (at && at.id) {
-        const prev = ticketMap.get(at.id);
-        if (!prev || at.status === "closed" || (at.status === "open" && prev.status !== "closed")) {
-          ticketMap.set(at.id, at);
+    if (acctSnap) {
+      // Compte MT5 déjà isolé : on charge STRICTEMENT ses propres tickets + revues (zéro mélange avec un ancien compte)
+      const ticketMap = new Map<string, Ticket>();
+      for (const at of acctSnap.tickets) {
+        if (at && at.id) ticketMap.set(at.id, at);
+      }
+      for (const st of state.tickets ?? []) {
+        if (st && st.id && (!st.accountLogin || String(st.accountLogin) === activeAcctKey)) {
+          ticketMap.set(st.id, st);
         }
       }
-    }
-    // 3. État actif state.json en priorité la plus haute
-    for (const st of state.tickets ?? []) {
-      if (st && st.id) {
-        ticketMap.set(st.id, st);
+      state.tickets = [...ticketMap.values()]
+        .sort((a, b) => (b.closedAt ?? b.createdAt ?? 0) - (a.closedAt ?? a.createdAt ?? 0))
+        .slice(0, 1500);
+
+      const revMap = new Map<string, SelfReflectionReviewEntry>();
+      for (const r of acctSnap.reviews) {
+        if (r && r.id) revMap.set(r.id, r);
       }
+      for (const r of state.selfReflectionHistory ?? []) {
+        if (r && r.id && (!r.accountLogin || String(r.accountLogin) === activeAcctKey)) {
+          revMap.set(r.id, r);
+        }
+      }
+      state.selfReflectionHistory = [...revMap.values()].sort((a, b) => b.at - a.at).slice(0, 120);
+    } else {
+      const blotterClosed = this.reconstructTicketsFromBlotter();
+      const ticketMap = new Map<string, Ticket>();
+      for (const bt of blotterClosed) {
+        ticketMap.set(bt.id, bt);
+      }
+      for (const at of archive?.tickets ?? []) {
+        if (at && at.id) {
+          const prev = ticketMap.get(at.id);
+          if (!prev || at.status === "closed" || (at.status === "open" && prev.status !== "closed")) {
+            ticketMap.set(at.id, at);
+          }
+        }
+      }
+      for (const st of state.tickets ?? []) {
+        if (st && st.id) {
+          ticketMap.set(st.id, st);
+        }
+      }
+      state.tickets = [...ticketMap.values()]
+        .sort((a, b) => (b.closedAt ?? b.createdAt ?? 0) - (a.closedAt ?? a.createdAt ?? 0))
+        .slice(0, 1500);
+
+      const revMap = new Map<string, SelfReflectionReviewEntry>();
+      for (const r of archive?.selfReflectionHistory ?? []) {
+        if (r && r.id) revMap.set(r.id, r);
+      }
+      for (const r of state.selfReflectionHistory ?? []) {
+        if (r && r.id) revMap.set(r.id, r);
+      }
+      state.selfReflectionHistory = [...revMap.values()].sort((a, b) => b.at - a.at).slice(0, 120);
     }
-    state.tickets = [...ticketMap.values()]
-      .sort((a, b) => (b.closedAt ?? b.createdAt ?? 0) - (a.closedAt ?? a.createdAt ?? 0))
-      .slice(0, 1500);
 
     // Fusion de la courbe d'équité par compte (SQLite 1 an + archive JSON + state.json — jamais perdue au redémarrage)
-    const activeAcctKey = String(state.mt5Live?.login || state.settings?.mt5Login || "paper");
     const curveMap = new Map<number, DeskState["curve"][number]>();
     const dbCurve = this.loadPersistedCurveForAccount(activeAcctKey);
     for (const pt of dbCurve) {
@@ -269,15 +303,6 @@ export class DeskStore {
       state.curve = DeskStore.sanitizeEquityCurve(sorted).slice(-25_000);
     }
 
-    // Fusion des Reviews 15 min
-    const revMap = new Map<string, SelfReflectionReviewEntry>();
-    for (const r of archive?.selfReflectionHistory ?? []) {
-      if (r && r.id) revMap.set(r.id, r);
-    }
-    for (const r of state.selfReflectionHistory ?? []) {
-      if (r && r.id) revMap.set(r.id, r);
-    }
-    state.selfReflectionHistory = [...revMap.values()].sort((a, b) => b.at - a.at).slice(0, 120);
     if (!state.current_market_regime_directive && archive?.current_market_regime_directive) {
       state.current_market_regime_directive = archive.current_market_regime_directive;
     }
@@ -453,6 +478,62 @@ export class DeskStore {
     return [...byTs.values()].sort((a, b) => a.t - b.t).slice(-25_000);
   }
 
+  /** Sauvegarde les tickets & audits Reviewer dédiés à un compte MT5 donné (jamais perdus ni mélangés). */
+  saveAccountSnapshot(accountKey: string, tickets: Ticket[], reviews: SelfReflectionReviewEntry[]): void {
+    try {
+      const key = String(accountKey || "paper").replace(/[^a-zA-Z0-9_-]/g, "_");
+      mkdirSync(this.dir, { recursive: true });
+      const snapPath = join(this.dir, `account_history_${key}.json`);
+      const prev = this.loadAccountSnapshot(key);
+      const tMap = new Map<string, Ticket>();
+      for (const t of prev?.tickets ?? []) {
+        if (t && t.id) tMap.set(t.id, t);
+      }
+      for (const t of tickets ?? []) {
+        if (t && t.id) tMap.set(t.id, { ...t, accountLogin: key });
+      }
+      const rMap = new Map<string, SelfReflectionReviewEntry>();
+      for (const r of prev?.reviews ?? []) {
+        if (r && r.id) rMap.set(r.id, r);
+      }
+      for (const r of reviews ?? []) {
+        if (r && r.id) rMap.set(r.id, { ...r, accountLogin: key });
+      }
+      const payload = {
+        accountKey: key,
+        savedAt: Date.now(),
+        tickets: [...tMap.values()]
+          .sort((a, b) => (b.closedAt ?? b.createdAt ?? 0) - (a.closedAt ?? a.createdAt ?? 0))
+          .slice(0, 2000),
+        reviews: [...rMap.values()].sort((a, b) => b.at - a.at).slice(0, 150),
+      };
+      const tmp = `${snapPath}.tmp`;
+      writeFileSync(tmp, JSON.stringify(payload, null, 2), "utf8");
+      renameSync(tmp, snapPath);
+    } catch {
+      // ignore archive error
+    }
+  }
+
+  /** Charge les tickets & audits Reviewer persistants d'un compte MT5 précis (ou null si inexistant). */
+  loadAccountSnapshot(accountKey: string): { tickets: Ticket[]; reviews: SelfReflectionReviewEntry[] } | null {
+    try {
+      const key = String(accountKey || "paper").replace(/[^a-zA-Z0-9_-]/g, "_");
+      const snapPath = join(this.dir, `account_history_${key}.json`);
+      if (!existsSync(snapPath)) return null;
+      const parsed = JSON.parse(readFileSync(snapPath, "utf8")) as {
+        tickets?: Ticket[];
+        reviews?: SelfReflectionReviewEntry[];
+      };
+      return {
+        tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
+        reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
   /** Ajoute en mode append-only le dernier point dans le ledger courbe dédié au compte (jamais réinitialisé). */
   appendCurvePointToLedger(accountKey: string, pt: DeskState["curve"][number]): void {
     try {
@@ -511,6 +592,11 @@ export class DeskStore {
       const hTmp = `${this.historyPath}.tmp`;
       writeFileSync(hTmp, JSON.stringify(archive, null, 2), "utf8");
       renameSync(hTmp, this.historyPath);
+      if (activeAcctKey && activeAcctKey !== "paper") {
+        const ownTickets = (state.tickets ?? []).filter((t) => !t.accountLogin || String(t.accountLogin) === activeAcctKey);
+        const ownReviews = (state.selfReflectionHistory ?? []).filter((r) => !r.accountLogin || String(r.accountLogin) === activeAcctKey);
+        this.saveAccountSnapshot(activeAcctKey, ownTickets, ownReviews);
+      }
     } catch {
       // Never crash main save on archive error
     }

@@ -370,6 +370,7 @@ export type PostMortemLogEntry = {
 
 export type SelfReflectionReviewEntry = {
   id: string;
+  accountLogin?: string;
   at: number;
   atIso: string;
   tradesAnalyzed: number;
@@ -482,6 +483,8 @@ export type ParameterOptimizationReport = {
 
 export type Ticket = {
   id: string;
+  /** Identifiant du compte MT5 (ou "paper") auquel appartient strictement ce ticket. */
+  accountLogin?: string;
   asset: string;
   direction: Direction;
   playbook: PlayKind;

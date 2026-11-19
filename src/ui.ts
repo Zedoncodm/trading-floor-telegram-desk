@@ -1925,11 +1925,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
                 <button class="seg-btn" data-dir="short" onclick="setLedgerDir(&quot;short&quot;)">SHORT</button>
               </div>
             </div>
-            <span class="mono up" style="font-size:10px">LIVE SYNC</span>
+            <span id="ledgerCountBadge" class="mono up" style="font-size:10px">LIVE SYNC</span>
           </div>
-          <div style="overflow-x:auto">
+          <div id="ledgerScrollWrap" style="max-height:360px;overflow-y:auto;overflow-x:auto;border:1px solid var(--border);border-radius:10px">
             <table class="ledger">
-              <thead>
+              <thead style="position:sticky;top:0;z-index:2;background:var(--surface-elevated)">
                 <tr>
                   <th>Ticket</th>
                   <th>Actif / Sens</th>
@@ -1947,7 +1947,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
         <div class="glass-card" style="overflow-x:auto;min-width:0">
           <div class="card-hdr">
-            <span class="card-title">Calendrier PnL Journalier</span>
+            <span class="card-title">Calendrier PnL Journalier <span style="font-size:10px;color:var(--fg-2);font-weight:500">(cliquer un jour)</span></span>
             <div style="display:flex;align-items:center;gap:6px">
               <button class="pill-btn" onclick="shiftCalendarMonth(-1)">◀</button>
               <span class="mono" style="font-size:11px" id="calMonthLabel">--</span>
@@ -1955,6 +1955,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             </div>
           </div>
           <div class="cal-grid" id="calGridHost"></div>
+          <div id="calendarDayDetailBox" style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.55);border:1px solid var(--ring-1);font-size:11.5px;color:var(--fg-1)">
+            Cliquez sur un jour du calendrier pour afficher le nombre de trades et le détail des gains/pertes.
+          </div>
         </div>
       </div>
     </div>
@@ -6337,6 +6340,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var rows = (ledgerMode === 'open' ? open : closed).filter(function (t) {
         return ledgerDir === 'ALL' || t.direction === ledgerDir;
       });
+      var cntBadge = document.getElementById('ledgerCountBadge');
+      if (cntBadge) {
+        cntBadge.textContent = rows.length + ' ' + (ledgerMode === 'open' ? 'OUVERTE(S)' : 'FERMÉE(S)') + (ledgerDir !== 'ALL' ? (' · ' + ledgerDir.toUpperCase()) : '');
+      }
       var tb = document.getElementById('ledgerTableBody');
       if (tb) {
         if (!rows.length) {
@@ -6368,6 +6375,58 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       renderCalendarHeatmap();
     }
 
+    var selectedCalDay = '';
+
+    function selectCalendarDay(dayKey) {
+      selectedCalDay = dayKey || '';
+      renderCalendarHeatmap();
+    }
+
+    function renderCalendarDayDetail(dayKey, dayTickets) {
+      var box = document.getElementById('calendarDayDetailBox');
+      if (!box) return;
+      if (!dayKey) {
+        box.innerHTML = '<div style="color:var(--fg-2)">Cliquez sur un jour du calendrier pour afficher le nombre de trades et le détail des gains/pertes.</div>';
+        return;
+      }
+      var list = Array.isArray(dayTickets) ? dayTickets : [];
+      var parts = dayKey.split('-');
+      var dtObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+      var dateLbl = dtObj.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      if (!list.length) {
+        box.innerHTML =
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
+          '<strong style="text-transform:capitalize">' + escHtml(dateLbl) + '</strong>' +
+          '<span class="mono" style="color:var(--fg-3)">0 trade</span></div>' +
+          '<div style="color:var(--fg-3)">Aucun trade clôturé ce jour-là sur ce compte.</div>';
+        return;
+      }
+      var wins = list.filter(function (t) { return (t.pnl || 0) > 0; }).length;
+      var losses = list.length - wins;
+      var net = list.reduce(function (s, t) { return s + Number(t.pnl || 0); }, 0);
+      var wr = ((wins / list.length) * 100).toFixed(0);
+      var rowsHtml = list.slice(0, 30).map(function (t) {
+        var p = Number(t.pnl || 0);
+        var cls = p >= 0 ? 'up' : 'down';
+        var hh = new Date(t.closedAt || t.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        return (
+          '<div onclick="openJournalInspector(&quot;' + t.id + '&quot;)" style="display:flex;justify-content:space-between;align-items:center;padding:5px 7px;border-radius:6px;background:rgba(255,255,255,0.03);cursor:pointer;margin-top:4px">' +
+          '<span class="mono"><strong>' + escHtml(t.asset) + '</strong> <span class="' + (t.direction === 'long' ? 'up' : 'down') + '">' + String(t.direction || '').toUpperCase() + '</span> · ' + hh + (t.mt5Lots ? (' · ' + Number(t.mt5Lots).toFixed(2) + ' lot') : '') + '</span>' +
+          '<span class="mono ' + cls + '" style="font-weight:700">' + fmtSignedUsd(p, 2) + '</span>' +
+          '</div>'
+        );
+      }).join('');
+      box.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:6px;border-bottom:1px solid var(--ring-1)">' +
+        '<strong style="text-transform:capitalize">' + escHtml(dateLbl) + '</strong>' +
+        '<span class="mono ' + (net >= 0 ? 'up' : 'down') + '" style="font-weight:800;font-size:12.5px">' + fmtSignedUsd(net, 2) + '</span>' +
+        '</div>' +
+        '<div class="mono" style="font-size:11px;color:var(--fg-2);margin:6px 0">' +
+        list.length + ' trade(s) clôturé(s) · ' + wins + 'W / ' + losses + 'L · Win Rate ' + wr + '%' +
+        '</div>' +
+        '<div style="max-height:170px;overflow-y:auto">' + rowsHtml + '</div>';
+    }
+
     function renderCalendarHeatmap() {
       var host = document.getElementById('calGridHost');
       var lbl = document.getElementById('calMonthLabel');
@@ -6376,11 +6435,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       lbl.textContent = months[calMonth] + ' ' + calYear;
 
       var daily = {};
+      var dailyTickets = {};
       (deskState.tickets || []).filter(function (t) { return t.status === 'closed' && t.closedAt; }).forEach(function (t) {
         var d = new Date(t.closedAt);
         var k = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
         daily[k] = (daily[k] || 0) + (t.pnl || 0);
+        if (!dailyTickets[k]) dailyTickets[k] = [];
+        dailyTickets[k].push(t);
       });
+
+      if (!selectedCalDay) {
+        var today = new Date();
+        selectedCalDay = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+      }
 
       var html = ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map(function (d) { return '<div class="cal-day-hdr">' + d + '</div>'; }).join('');
       var firstDay = new Date(Date.UTC(calYear, calMonth, 1)).getUTCDay();
@@ -6390,14 +6457,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       for (var day = 1; day <= daysInMonth; day++) {
         var key = calYear + '-' + String(calMonth + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         var v = daily[key];
+        var cnt = (dailyTickets[key] || []).length;
+        var isSel = selectedCalDay === key;
         var cls = 'cal-cell' + (v > 0 ? ' pos' : v < 0 ? ' neg' : '');
+        var selStyle = isSel ? 'outline:2px solid var(--accent);outline-offset:-1px;cursor:pointer' : 'cursor:pointer';
         html +=
-          '<div class="' + cls + '">' +
+          '<div class="' + cls + '" style="' + selStyle + '" onclick="selectCalendarDay(&quot;' + key + '&quot;)" title="Cliquer pour voir le détail du ' + key + '">' +
+          '<div style="display:flex;justify-content:space-between;width:100%;align-items:center">' +
           '<span style="color:var(--fg-2)">' + day + '</span>' +
-          '<span class="mono ' + (v > 0 ? 'up' : v < 0 ? 'down' : '') + '">' + (v !== undefined ? fmtSignedUsd(v, 0) : '') + '</span>' +
+          (cnt > 0 ? ('<span class="mono" style="font-size:9px;color:var(--fg-3)">' + cnt + 't</span>') : '') +
+          '</div>' +
+          '<span class="mono ' + (v > 0 ? 'up' : v < 0 ? 'down' : '') + '">' + (v !== undefined ? fmtSignedUsd(v, 2) : '') + '</span>' +
           '</div>';
       }
       host.innerHTML = html;
+      renderCalendarDayDetail(selectedCalDay, dailyTickets[selectedCalDay] || []);
     }
 
     function openJournalInspector(id) {
@@ -8456,6 +8530,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         if (npEl) {
           npEl.textContent = 'Net : ' + (latest.netPnl >= 0 ? '+' : '') + Number(latest.netPnl || 0).toFixed(2) + '€ · Range ' + (latest.rangeCount || 0) + '/' + (latest.totalProfiles || 0);
         }
+      } else {
+        if (wrEl) { wrEl.textContent = '0.0%'; wrEl.className = 'mono'; }
+        if (wlEl) wlEl.textContent = '0W / 0L (0 trades sur ce compte)';
+        if (awEl) awEl.textContent = '+0.00€';
+        if (alEl) alEl.textContent = '0.00€';
+        if (dsEl) dsEl.textContent = 'L 0t (+0.0€) · S 0t (+0.0€)';
+        if (npEl) npEl.textContent = 'Net : +0.00€ · Nouveau compte synchronisé';
       }
 
       var recHost = document.getElementById('revTabRecommendations');

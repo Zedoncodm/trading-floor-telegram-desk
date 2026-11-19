@@ -270,3 +270,39 @@ test("Persistance courbe d'équité 3+ mois (balance fermé vs équité live) su
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Isolation complète par compte MT5 : tickets, calendrier et audits Reviewer ne se mélangent jamais", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tf-acct-iso-"));
+  try {
+    const store = new DeskStore(dir);
+    const oldTicket = {
+      id: "OLD-1",
+      asset: "XAUUSD",
+      direction: "short",
+      status: "closed",
+      pnl: -950,
+      createdAt: Date.now() - 10_000,
+      closedAt: Date.now() - 5_000,
+    } as unknown as Ticket;
+    const newTicket = {
+      id: "NEW-1",
+      asset: "EURUSD",
+      direction: "long",
+      status: "open",
+      pnl: 0,
+      createdAt: Date.now(),
+    } as unknown as Ticket;
+
+    store.saveAccountSnapshot("115677386", [oldTicket], []);
+    store.saveAccountSnapshot("5059100180", [newTicket], []);
+
+    const snapOld = store.loadAccountSnapshot("115677386");
+    const snapNew = store.loadAccountSnapshot("5059100180");
+    assert.equal(snapOld?.tickets.length, 1);
+    assert.equal(snapOld?.tickets[0].id, "OLD-1");
+    assert.equal(snapNew?.tickets.length, 1);
+    assert.equal(snapNew?.tickets[0].id, "NEW-1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

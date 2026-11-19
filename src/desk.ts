@@ -1171,31 +1171,73 @@ export class TradingFloorDesk {
       this.state.settings.mt5Server = mt5State.server;
       this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${this.state.mt5Live.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s) · Forex/Métaux/Indices)`;
 
-      // 0. Réinitialisation propre sur changement de compte MT5 (évite une fausse perte journalière de -99%)
-      if ((accountSwitched || staleBaselineFromOldAccount) && validMt5Metrics) {
+      // 0. Réinitialisation & Isolation complète par compte MT5 (tickets, Win Rate, Calendrier, Reviewer, Courbe)
+      const acctKeyNow = String(mt5State.login || "paper");
+      const hasLegacyCrossAccountPollutingTickets =
+        validMt5Metrics &&
+        mt5State.balance < 500 &&
+        this.state.tickets.some(
+          (t) =>
+            t.status === "closed" &&
+            (!t.accountLogin || String(t.accountLogin) !== acctKeyNow) &&
+            (Math.abs(t.pnl ?? 0) > mt5State.balance * 1.5 || !t.accountLogin),
+        );
+
+      if ((accountSwitched || staleBaselineFromOldAccount || hasLegacyCrossAccountPollutingTickets) && validMt5Metrics) {
         const liveMt5PosIds = new Set((mt5State.positions ?? []).map((p) => String(p.ticket)));
-        // Détacher sans injecter de fausse perte les anciens tickets ouverts/en attente du compte précédent
-        for (const oldT of this.state.tickets) {
-          if (
-            (oldT.status === "open" || oldT.status === "pending") &&
-            (!oldT.mt5PositionId || !liveMt5PosIds.has(String(oldT.mt5PositionId)))
-          ) {
-            oldT.status = "closed";
-            oldT.closedAt = now;
-            oldT.closeReason = "flatten";
-            oldT.pnl = 0;
-            oldT.rMultiple = 0;
+        // Archiver les anciens tickets & audits Reviewer sous l'ancien compte (zéro perte si on y revient!)
+        const oldArchiveKey = accountSwitched && prevLogin ? prevLogin : "legacy_prev";
+        const legacyTickets = this.state.tickets.filter(
+          (t) =>
+            (!t.accountLogin || String(t.accountLogin) !== acctKeyNow) &&
+            !(t.status === "open" && t.mt5PositionId && liveMt5PosIds.has(String(t.mt5PositionId))),
+        );
+        const legacyReviews = (this.state.selfReflectionHistory ?? []).filter(
+          (r) => !r.accountLogin || String(r.accountLogin) !== acctKeyNow,
+        );
+        if (legacyTickets.length || legacyReviews.length) {
+          this.store.saveAccountSnapshot(oldArchiveKey, legacyTickets, legacyReviews);
+        }
+
+        // Charger UNIQUEMENT l'historique isolé du nouveau compte MT5 + ses positions ouvertes actuelles
+        const nextSnap = this.store.loadAccountSnapshot(acctKeyNow);
+        const nextTicketMap = new Map<string, Ticket>();
+        for (const nt of nextSnap?.tickets ?? []) {
+          if (nt && nt.id) nextTicketMap.set(nt.id, { ...nt, accountLogin: acctKeyNow });
+        }
+        for (const curT of this.state.tickets) {
+          const isOwnLiveOpen =
+            curT.status === "open" &&
+            ((curT.mt5PositionId && liveMt5PosIds.has(String(curT.mt5PositionId))) ||
+              (curT.accountLogin && String(curT.accountLogin) === acctKeyNow));
+          const isOwnClosed = curT.status === "closed" && curT.accountLogin && String(curT.accountLogin) === acctKeyNow;
+          if (isOwnLiveOpen || isOwnClosed) {
+            nextTicketMap.set(curT.id, { ...curT, accountLogin: acctKeyNow });
           }
         }
-        this.state.startEquity = mt5State.balance;
+        this.state.tickets = [...nextTicketMap.values()].sort(
+          (a, b) => (b.closedAt ?? b.createdAt ?? 0) - (a.closedAt ?? a.createdAt ?? 0),
+        );
+        this.state.selfReflectionHistory = (nextSnap?.reviews ?? []).map((r) => ({
+          ...r,
+          accountLogin: acctKeyNow,
+        }));
+        if (this.state.selfReflectionHistory.length === 0) {
+          this.state.current_market_regime_directive = undefined;
+          this.state.lastSelfReflectionAt = undefined;
+        }
+        const ownRealizedSum = this.state.tickets
+          .filter((t) => t.status === "closed")
+          .reduce((s, t) => s + Number(t.pnl ?? 0), 0);
+
+        this.state.startEquity = Number(Math.max(1, mt5State.balance - ownRealizedSum).toFixed(2));
         this.state.dayStartEquity = mt5State.balance;
-        this.state.realizedPnl = 0;
+        this.state.realizedPnl = Number(ownRealizedSum.toFixed(2));
         this.state.halted = false;
         this.state.haltKind = null;
         this.state.directionalCooldowns = {};
         this.state.cooldowns = {};
-        const acctKey = String(mt5State.login || "paper");
-        const restoredCurve = this.store.loadPersistedCurveForAccount(acctKey, 365);
+        const restoredCurve = this.store.loadPersistedCurveForAccount(acctKeyNow, 365);
         this.state.curve =
           restoredCurve.length >= 2
             ? [
@@ -1204,10 +1246,10 @@ export class TradingFloorDesk {
                   t: now,
                   eq: mt5State.equity,
                   balance: mt5State.balance,
-                  realized: 0,
+                  realized: this.state.realizedPnl,
                   unrealized: mt5State.profit,
                   drawdownPct: 0,
-                  accountLogin: acctKey,
+                  accountLogin: acctKeyNow,
                 },
               ]
             : [
@@ -1215,19 +1257,19 @@ export class TradingFloorDesk {
                   t: now - 60_000,
                   eq: mt5State.balance,
                   balance: mt5State.balance,
-                  realized: 0,
+                  realized: this.state.realizedPnl,
                   unrealized: 0,
                   drawdownPct: 0,
-                  accountLogin: acctKey,
+                  accountLogin: acctKeyNow,
                 },
                 {
                   t: now,
                   eq: mt5State.equity,
                   balance: mt5State.balance,
-                  realized: 0,
+                  realized: this.state.realizedPnl,
                   unrealized: mt5State.profit,
                   drawdownPct: 0,
-                  accountLogin: acctKey,
+                  accountLogin: acctKeyNow,
                 },
               ];
         this.lastKnownEquity = mt5State.equity;
@@ -1240,15 +1282,12 @@ export class TradingFloorDesk {
           this.state.settings.strictQuotaMode = false;
         }
         this.state.dailyEvolutionState = TraderSkillsEngine.buildModule4DailyEvolutionState(this.state, now);
-        setAgentActivity(this.state, "risk", "idle", `Nouveau compte #${mt5State.login} prêt`, now);
+        this.store.saveAccountSnapshot(acctKeyNow, this.state.tickets, this.state.selfReflectionHistory);
+        setAgentActivity(this.state, "risk", "idle", `Compte #${mt5State.login} isolé & synchronisé`, now);
         structuralChange = true;
         await this.say(
           "lead",
-          `🔄 [CHANGEMENT DE COMPTE MT5 DÉTECTÉ] Nouveau compte #${mt5State.login} (${mt5State.balance.toFixed(2)} ${mt5State.currency || "EUR"} · levier courtier 1:${mt5State.leverage || 100}). Référence capital, courbe d'equity, coupe-circuit journalier et cooldowns réinitialisés à neuf — le desk est débloqué et prêt !${
-            mt5State.balance < 500
-              ? " Mode Micro-Compte actif : filtrage automatique des paires exigeant > 45% de marge libre (ex: XAUUSD) pour trader proprement en 0.01 lot Forex."
-              : ""
-          }`,
+          `🔄 [SYNCHRONISATION COMPTE MT5 #${mt5State.login}] Capital ${mt5State.balance.toFixed(2)} ${mt5State.currency || "EUR"} · Historique, Win Rate, Calendrier, Audit Reviewer et Courbe isolés pour ce compte (${this.state.tickets.filter((t) => t.status === "open").length} ouvert(s) / ${this.state.tickets.filter((t) => t.status === "closed").length} fermé(s)). Les trades de l'ancien compte restent archivés séparément.`,
           "wake",
         );
       }
@@ -1472,6 +1511,7 @@ export class TradingFloorDesk {
         if (existingOrRecent) continue;
 
         const imported = this.buildImportedMt5Ticket(pos, now);
+        imported.accountLogin = String(mt5State.login || "paper");
         this.state.tickets = [imported, ...this.state.tickets];
         this.store.appendBlotter("POSITION_OPENED", imported, `Importée en direct depuis MT5 (#${pos.ticket})`, now);
         structuralChange = true;
@@ -1597,6 +1637,7 @@ export class TradingFloorDesk {
           sessionName: "MT5 Live Sync",
           setupGrade: deal.profit >= 0 ? "A" : "B",
         };
+        importedClosed.accountLogin = String(mt5State.login || "paper");
         this.state.tickets = [importedClosed, ...this.state.tickets];
         this.store.appendBlotter(
           "POSITION_CLOSED",
@@ -4491,6 +4532,7 @@ export class TradingFloorDesk {
       this.applyRiskBasedLotsToTicket(ticket, "Ticket");
       this.attachGovernanceToTicket(ticket, xaiAudit, atrKellySizing);
 
+      ticket.accountLogin = String(this.state.mt5Live?.login || this.state.settings?.mt5Login || "paper");
       this.state.tickets = [ticket, ...this.state.tickets];
       this.store.appendBlotter("TICKET_ISSUED", ticket, "Ticket émis par les moteurs quantitatifs", now);
 
@@ -5173,6 +5215,7 @@ export class TradingFloorDesk {
 
     const reviewEntry: SelfReflectionReviewEntry = {
       id: `REV-${new Date(now).toISOString().slice(11, 19).replace(/:/g, "")}-${(this.state.selfReflectionHistory?.length ?? 0) + 1}`,
+      accountLogin: String(this.state.mt5Live?.login || this.state.settings?.mt5Login || "paper"),
       at: now,
       atIso: new Date(now).toISOString(),
       tradesAnalyzed: closedFallback.length,
@@ -5591,7 +5634,8 @@ export class TradingFloorDesk {
           now,
         });
         this.attachGovernanceToTicket(ticket, hftXai, hftSizing);
-        this.state.tickets = [ticket, ...this.state.tickets];
+        ticket.accountLogin = String(this.state.mt5Live?.login || this.state.settings?.mt5Login || "paper");
+      this.state.tickets = [ticket, ...this.state.tickets];
         this.store.appendBlotter("TICKET_ISSUED", ticket, `Focus HFT ${focusSym} (${tpm}/min)`, now);
         this.store.appendBlotter("POSITION_OPENED", ticket, `Exécution HFT ${focusSym} @ ${fmtPx(livePx)}`, now);
         this.executionTimestampsMs.push(now);
