@@ -217,3 +217,71 @@ export class StaleQuoteTracker {
     };
   }
 }
+
+/**
+ * Garde-fou Marge & Micro-Compte (ex: compte 40€ - 500€) :
+ * Vérifie avant ouverture que le lot minimum courtier (0.01) ne consomme pas > 45%
+ * de la marge libre et ne risque pas > 8% du capital sur un seul trade.
+ * Ex: sur 39.88€ (1:100), EURUSD/AUDUSD/USDJPY (~6-10€ de marge) passent,
+ * mais XAUUSD (~37€ de marge = 93% du compte) est automatiquement bloqué.
+ */
+export function evaluateMicroAccountMarginGuard(input: {
+  symbol: string;
+  entry: number;
+  stopLoss: number;
+  equity: number;
+  freeMargin: number;
+  accountLeverage: number;
+  minLot?: number;
+}): { ok: boolean; estMinMargin: number; estMinRisk: number; reason?: string } {
+  const sym = input.symbol.toUpperCase();
+  const minLot = input.minLot ?? 0.01;
+  const lev = Math.max(1, input.accountLeverage || 100);
+  const equity = Math.max(1, input.equity);
+  const freeMargin = Math.max(0, input.freeMargin);
+
+  let contractSize = 1;
+  let notionalOneLot = input.entry;
+  if (/^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(sym)) {
+    contractSize = 100_000;
+    notionalOneLot = sym.startsWith("USD") ? 100_000 : sym.endsWith("USD") ? 100_000 * input.entry : 100_000;
+  } else if (/^(XAU|GOLD)/.test(sym)) {
+    contractSize = 100;
+    notionalOneLot = 100 * input.entry;
+  } else if (/^(XAG|SILVER)/.test(sym)) {
+    contractSize = 5_000;
+    notionalOneLot = 5_000 * input.entry;
+  } else if (/(USOIL|WTI|UKOIL|XTI|XBR)/.test(sym)) {
+    contractSize = 100;
+    notionalOneLot = 100 * input.entry;
+  } else if (/(NGAS|XNG|NATGAS)/.test(sym)) {
+    contractSize = 10_000;
+    notionalOneLot = 10_000 * input.entry;
+  }
+
+  const minNotional = notionalOneLot * minLot;
+  const estMinMargin = Number((minNotional / lev).toFixed(2));
+  const slDist = Math.abs(input.entry - input.stopLoss);
+  const usdPerUnitPerLot = /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/.test(sym) && sym.startsWith("USD")
+    ? contractSize / Math.max(input.entry, 1e-9)
+    : contractSize;
+  const estMinRisk = Number((slDist * usdPerUnitPerLot * minLot).toFixed(2));
+
+  if (freeMargin > 0 && estMinMargin > freeMargin * 0.45) {
+    return {
+      ok: false,
+      estMinMargin,
+      estMinRisk,
+      reason: `MICRO-COMPTE MARGE (${sym}) : 0.01 lot exige ~${estMinMargin.toFixed(2)} de marge (> 45% de la marge libre ${freeMargin.toFixed(2)}). Actif ignoré pour protéger le compte.`,
+    };
+  }
+  if (equity < 500 && estMinRisk > equity * 0.08) {
+    return {
+      ok: false,
+      estMinMargin,
+      estMinRisk,
+      reason: `MICRO-COMPTE RISQUE (${sym}) : le SL au lot minimum 0.01 risque ~${estMinRisk.toFixed(2)} (> 8% du capital ${equity.toFixed(2)}). Actif ignoré.`,
+    };
+  }
+  return { ok: true, estMinMargin, estMinRisk };
+}

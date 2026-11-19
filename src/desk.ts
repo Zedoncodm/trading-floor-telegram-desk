@@ -16,6 +16,7 @@ import { SmcEngine } from "./agents/smcEngine.ts";
 import { TraderSkillsEngine } from "./agents/traderSkills.ts";
 import {
   evaluateMarketSession,
+  evaluateMicroAccountMarginGuard,
   evaluateSpreadGuard,
   isPreRolloverScalpExitWindow,
   StaleQuoteTracker,
@@ -1116,6 +1117,17 @@ export class TradingFloorDesk {
       let telemetryChange = false;
 
       const prevMt5 = this.state.mt5Live;
+      const prevLogin = prevMt5?.login ? String(prevMt5.login) : (this.state.settings.mt5Login || "");
+      const nextLogin = mt5State.login ? String(mt5State.login) : "";
+      const accountSwitched = Boolean(prevLogin && nextLogin && prevLogin !== nextLogin);
+      const validMt5Metrics = mt5State.equity > 0 && mt5State.balance > 0;
+      // Auto-guérison si un changement de compte vient juste d'avoir lieu (ex: 92k€ -> 39.88€)
+      // en laissant un startEquity / realizedPnl fantôme d'un autre ordre de grandeur (> 3x le solde réel)
+      const staleBaselineFromOldAccount =
+        validMt5Metrics &&
+        Math.abs(this.state.startEquity - mt5State.balance) / Math.max(mt5State.balance, 1) > 3.0 &&
+        Math.abs(this.state.realizedPnl) > mt5State.balance * 3.0;
+
       const serverKey = `${mt5State.login}@${mt5State.server}`;
       if (this.lastMt5ServerKey && this.lastMt5ServerKey !== serverKey) {
         this.mt5UnsupportedSymbols.clear();
@@ -1125,6 +1137,8 @@ export class TradingFloorDesk {
       if (
         !prevMt5 ||
         !prevMt5.connected ||
+        accountSwitched ||
+        staleBaselineFromOldAccount ||
         prevMt5.equity !== mt5State.equity ||
         prevMt5.balance !== mt5State.balance ||
         prevMt5.positionsCount !== mt5State.positions.length ||
@@ -1134,8 +1148,7 @@ export class TradingFloorDesk {
         telemetryChange = true;
       }
 
-      const validMt5Metrics = mt5State.equity > 0 && mt5State.balance > 0;
-      const keepPrevMetrics = !validMt5Metrics && prevMt5 && prevMt5.equity > 0;
+      const keepPrevMetrics = !validMt5Metrics && prevMt5 && prevMt5.equity > 0 && !accountSwitched;
       this.state.mt5Live = {
         connected: Boolean(mt5State.connected),
         updatedAt: now,
@@ -1157,6 +1170,52 @@ export class TradingFloorDesk {
       this.state.settings.mt5Login = String(mt5State.login);
       this.state.settings.mt5Server = mt5State.server;
       this.state.settings.mt5LastStatus = `SYNCHRONISÉ MT5 DIRECT (#${mt5State.login} · Capital ${this.state.mt5Live.equity.toFixed(2)} ${mt5State.currency || "EUR"} · ${mt5State.positions.length} trade(s) · Forex/Métaux/Indices)`;
+
+      // 0. Réinitialisation propre sur changement de compte MT5 (évite une fausse perte journalière de -99%)
+      if ((accountSwitched || staleBaselineFromOldAccount) && validMt5Metrics) {
+        // Détacher sans injecter de fausse perte les anciens tickets ouverts/en attente du compte précédent
+        for (const oldT of this.state.tickets) {
+          if (oldT.status === "open" || oldT.status === "pending") {
+            oldT.status = "closed";
+            oldT.closedAt = now;
+            oldT.closeReason = "flatten";
+            oldT.pnl = 0;
+            oldT.rMultiple = 0;
+          }
+        }
+        this.state.startEquity = mt5State.balance;
+        this.state.dayStartEquity = mt5State.balance;
+        this.state.realizedPnl = 0;
+        this.state.halted = false;
+        this.state.haltKind = null;
+        this.state.directionalCooldowns = {};
+        this.state.cooldowns = {};
+        this.state.curve = [
+          { t: now - 60_000, eq: mt5State.balance, realized: 0, unrealized: 0, drawdownPct: 0 },
+          { t: now, eq: mt5State.equity, realized: 0, unrealized: mt5State.profit, drawdownPct: 0 },
+        ];
+        this.lastKnownEquity = mt5State.equity;
+        if ((this.state.settings.maxRiskPct ?? 0) < 0.01) {
+          this.state.settings.maxRiskPct = 0.015;
+          this.state.settings.riskPerTradePct = 0.015;
+        }
+        if (mt5State.balance < 500 && /^(XAU|XAG)/i.test(this.state.settings.focusSymbol ?? "")) {
+          this.state.settings.focusSymbol = "";
+          this.state.settings.strictQuotaMode = false;
+        }
+        this.state.dailyEvolutionState = TraderSkillsEngine.buildModule4DailyEvolutionState(this.state, now);
+        setAgentActivity(this.state, "risk", "idle", `Nouveau compte #${mt5State.login} prêt`, now);
+        structuralChange = true;
+        await this.say(
+          "lead",
+          `🔄 [CHANGEMENT DE COMPTE MT5 DÉTECTÉ] Nouveau compte #${mt5State.login} (${mt5State.balance.toFixed(2)} ${mt5State.currency || "EUR"} · levier courtier 1:${mt5State.leverage || 100}). Référence capital, courbe d'equity, coupe-circuit journalier et cooldowns réinitialisés à neuf — le desk est débloqué et prêt !${
+            mt5State.balance < 500
+              ? " Mode Micro-Compte actif : filtrage automatique des paires exigeant > 45% de marge libre (ex: XAUUSD) pour trader proprement en 0.01 lot Forex."
+              : ""
+          }`,
+          "wake",
+        );
+      }
 
       const nonCryptoSyms = (this.state.settings.symbols ?? []).filter((s) => !s.toUpperCase().endsWith("USDT"));
       if (nonCryptoSyms.length !== (this.state.settings.symbols ?? []).length) {
@@ -3763,6 +3822,29 @@ export class TradingFloorDesk {
             }
             continue;
           }
+          // Garde-fou Marge & Micro-Compte (ex: compte 40€ -> ignore XAUUSD/XAGUSD qui mangent >45% de marge libre)
+          if (this.state.mt5Live?.connected && this.state.mt5Live.equity > 0) {
+            const microGuard = evaluateMicroAccountMarginGuard({
+              symbol: candidate.symbol,
+              entry: idea.customEntry ?? candidate.primary.price,
+              stopLoss:
+                idea.customStop ??
+                (idea.dir === "long"
+                  ? candidate.primary.price - estSlDist
+                  : candidate.primary.price + estSlDist),
+              equity: this.state.mt5Live.equity,
+              freeMargin: this.state.mt5Live.freeMargin,
+              accountLeverage: this.state.mt5Live.leverage || 100,
+            });
+            if (!microGuard.ok) {
+              const mKey = `micro:${candidate.symbol}`;
+              if (now - (this.marketGuardLogAt.get(mKey) ?? 0) > 5 * 60_000) {
+                this.marketGuardLogAt.set(mKey, now);
+                await this.say("risk", `[${microGuard.reason}]`, "veto");
+              }
+              continue;
+            }
+          }
         }
 
         const dirKey = `${candidate.symbol}:${idea.dir}`;
@@ -5286,6 +5368,24 @@ export class TradingFloorDesk {
               if (now - (this.marketGuardLogAt.get(spKey) ?? 0) > 2 * 60_000) {
                 this.marketGuardLogAt.set(spKey, now);
                 await this.say("risk", `[${spCheck.reason}] Tir HFT bloqué.`, "veto");
+              }
+              break;
+            }
+          }
+          if (this.state.mt5Live?.connected && this.state.mt5Live.equity > 0) {
+            const microHft = evaluateMicroAccountMarginGuard({
+              symbol: focusSym,
+              entry: livePx,
+              stopLoss: stopPrice,
+              equity: this.state.mt5Live.equity,
+              freeMargin: this.state.mt5Live.freeMargin,
+              accountLeverage: this.state.mt5Live.leverage || 100,
+            });
+            if (!microHft.ok) {
+              const mKey = `hft-micro:${focusSym}`;
+              if (now - (this.marketGuardLogAt.get(mKey) ?? 0) > 5 * 60_000) {
+                this.marketGuardLogAt.set(mKey, now);
+                await this.say("risk", `[${microHft.reason}]`, "veto");
               }
               break;
             }

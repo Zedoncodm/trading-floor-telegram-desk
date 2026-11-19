@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   evaluateMarketSession,
+  evaluateMicroAccountMarginGuard,
   evaluateSpreadGuard,
   isPreRolloverScalpExitWindow,
   StaleQuoteTracker,
@@ -195,4 +196,26 @@ test("Focus HFT Mono-Paire respecte strictement maxConcurrentPositions (jamais 1
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("MicroAccountMarginGuard (39.88€, 1:100) autorise EURUSD 0.01 lot mais bloque XAUUSD", () => {
+  const fx = evaluateMicroAccountMarginGuard({
+    symbol: "EURUSD",
+    entry: 1.097,
+    stopLoss: 1.0955, // 15 pips
+    equity: 39.88,
+    freeMargin: 39.88,
+    accountLeverage: 100,
+  });
+  assert.equal(fx.ok, true);
+
+  const gold = evaluateMicroAccountMarginGuard({
+    symbol: "XAUUSD",
+    entry: 3710,
+    stopLoss: 3705.5,
+    equity: 39.88,
+    freeMargin: 39.88,
+    accountLeverage: 100,
+  });
+  assert.equal(gold.ok, false);
 });
