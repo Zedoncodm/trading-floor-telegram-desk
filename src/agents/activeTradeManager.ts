@@ -86,7 +86,7 @@ export class ActiveTradeManager {
     }
 
     const defaultAssetFee =
-      /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){6}$/i.test(ticket.asset)
+      /^(EUR|GBP|USD|AUD|NZD|CAD|CHF|JPY){2}$/i.test(ticket.asset)
         ? 0.00012
         : /^(XAU|XAG|NQ1!|ES1!|YM1!|FDAX1!)/i.test(ticket.asset)
           ? 0.00018
@@ -388,7 +388,8 @@ export class ActiveTradeManager {
     const totalTpDist = isLong ? ticket.target - entry : entry - ticket.target;
     const coveredDist = isLong ? currentPrice - entry : entry - currentPrice;
     const tpProgress = totalTpDist > 0 ? coveredDist / totalTpDist : 0;
-    const minGreenUsd = Math.max(2.0, fees * 2.5);
+    // Seuil de profit adaptatif au risque du trade (permet aux micro-comptes 0.01 lot de récolter leurs gains dès +0.25€..+0.50€ au lieu d'attendre +2€)
+    const minGreenUsd = Math.max(0.25, Math.min(2.0, (ticket.riskUsd || 2) * 0.35), fees * 2.0);
 
     const smc = ctx?.smcContext;
     const oppositeChoch = Boolean(
@@ -415,12 +416,16 @@ export class ActiveTradeManager {
       };
     }
 
-    if (oppositeChoch && smc?.validSignal && netPnlUsd < 0) {
+    // Ne JAMAIS couper prématurément une position en légère perte sur du bruit 5m après 90s :
+    // laisser le Hard Stop Loss travailler tant que la perte reste < 75% du risque et < 10 min (25 min en daytrade).
+    const minLossCutHoldMs = ctx?.tradingStyle === "scalping" ? 10 * 60_000 : 25 * 60_000;
+    const deepAdverseLoss = netPnlUsd <= -Math.max(0.5, (ticket.riskUsd || 1) * 0.75);
+    if (oppositeChoch && smc?.validSignal && ageMs >= minLossCutHoldMs && deepAdverseLoss) {
       return {
         action: "CLOSE_STOP",
         closeReason: "invalidation",
         peakProfitUsd,
-        reason: `[AGENTS EXIT · INVALIDATION STRUCTURELLE] CHoCH inverse confirmé contre ${ticket.asset} ${ticket.direction.toUpperCase()} (${smc.structureEvent} ${smc.structureDirection}) -> sortie préventive à ${netPnlUsd.toFixed(2)}€ avant SL complet.`,
+        reason: `[AGENTS EXIT · INVALIDATION STRUCTURELLE] CHoCH inverse confirmé en perte profonde (>75% SL) contre ${ticket.asset} ${ticket.direction.toUpperCase()} -> sortie préventive à ${netPnlUsd.toFixed(2)}€ avant SL complet.`,
       };
     }
 

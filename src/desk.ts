@@ -623,13 +623,14 @@ export function computeLeveragedSizing(
   }
   const liqPrice = computeLiqPrice(effectiveLev);
 
+  const autoStopDaily = state.settings?.autoStopOnMaxLoss !== false;
   const dayMode = state.settings?.maxDayLossMode ?? "pct";
   const dayLimitUsd =
     dayMode === "amount" && (state.settings?.maxDayLossVal ?? 0) > 0
       ? Number(state.settings!.maxDayLossVal)
       : state.dayStartEquity * maxDayLoss;
   const remainingDayBudget = dayLimitUsd + currentDayPnl(state);
-  if (remainingDayBudget <= 0) {
+  if (autoStopDaily && remainingDayBudget <= 0) {
     return {
       ok: false,
       reason: `Veto : budget de perte journalière (${fmtPct(maxDayLoss, 1)}) épuisé.`,
@@ -661,8 +662,11 @@ export function computeLeveragedSizing(
     targetRiskUsd = Math.min(targetRiskUsd, eq * (Number(state.settings!.maxLossPerTradeVal) / 100));
   }
 
-  // En mode Montant (€ / $), le risque par trade est directement débloqué selon la demande de l'utilisateur
-  const riskCapital = rMode === "amount" ? targetRiskUsd : Math.min(targetRiskUsd, remainingDayBudget);
+  // En mode Montant (€ / $) ou si le coupe-circuit journalier est désactivé, le risque par trade suit directement la consigne utilisateur
+  const riskCapital =
+    rMode === "amount" || !autoStopDaily
+      ? targetRiskUsd
+      : Math.min(targetRiskUsd, remainingDayBudget);
   const takerFee = options.takerFee ?? (effectiveLev > 1 ? 0.0004 : 0);
   const expectedSlippage = options.expectedSlippage ?? (effectiveLev > 1 ? 0.0002 : 0);
   const denom = Math.max(1e-6, priceStopDistance + takerFee * 2 + expectedSlippage);
@@ -1234,6 +1238,8 @@ export class TradingFloorDesk {
           ...r,
           accountLogin: acctKeyNow,
         }));
+        // Réinitialiser tcaHistory pour éviter que le Half-Kelly du nouveau compte ne soit pollué par l'ancien compte
+        this.state.tcaHistory = [];
         if (this.state.selfReflectionHistory.length === 0) {
           this.state.current_market_regime_directive = undefined;
           this.state.lastSelfReflectionAt = undefined;
@@ -1566,12 +1572,27 @@ export class TradingFloorDesk {
           } else if (
             existing.status === "closed" &&
             existing.pnl !== undefined &&
-            Math.abs(existing.pnl - deal.profit) > 0.5 &&
-            existing.mt5PositionId === posIdStr
+            Math.abs(existing.pnl - deal.profit) > 0.01 &&
+            (existing.mt5PositionId === posIdStr || (dealComment && existing.id === dealComment))
           ) {
-            existing.pnl = Number(deal.profit.toFixed(2));
-            existing.mt5Profit = Number(deal.profit.toFixed(2));
+            const prevPnl = Number(existing.pnl ?? 0);
+            const realPnl = Number(deal.profit.toFixed(2));
+            this.state.realizedPnl = Number((this.state.realizedPnl + (realPnl - prevPnl)).toFixed(2));
+            existing.pnl = realPnl;
+            existing.mt5Profit = realPnl;
+            existing.mt5PositionId = posIdStr;
             existing.exitPrice = deal.exit || existing.exitPrice;
+            if (realPnl >= 0 && prevPnl < 0) {
+              existing.closeReason = "target";
+              // Lever un éventuel cooldown Anti-Death-Loop déclenché par erreur avant la réconciliation MT5
+              const dk = `${existing.asset}:${existing.direction}`;
+              if (this.state.directionalCooldowns?.[dk]?.bannedDir === existing.direction) {
+                delete this.state.directionalCooldowns[dk];
+              }
+              if (this.state.directionalCooldowns?.[existing.asset]?.bannedDir === existing.direction) {
+                delete this.state.directionalCooldowns[existing.asset];
+              }
+            }
             structuralChange = true;
           }
           continue;
@@ -4013,11 +4034,15 @@ export class TradingFloorDesk {
         const dirCool = this.state.directionalCooldowns?.[dirKey] ?? this.state.directionalCooldowns?.[candidate.symbol];
         if (dirCool && dirCool.until > now && dirCool.bannedDir === idea.dir) {
           const remMin = Math.ceil((dirCool.until - now) / 60_000);
-          await this.say(
-            "risk",
-            `[VETO ANTI-DEATH-LOOP] ${candidate.symbol} ${idea.dir.toUpperCase()} interdit (Stop Loss récent). Cooldown actif encore ${remMin} min. Modèle en quarantaine directionnelle.`,
-            "veto",
-          );
+          const dlLogKey = `adl:${dirKey}`;
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(dlLogKey) ?? 0) >= 3 * 60_000) {
+            this.marketGuardLogAt.set(dlLogKey, now);
+            await this.say(
+              "risk",
+              `[VETO ANTI-DEATH-LOOP] ${candidate.symbol} ${idea.dir.toUpperCase()} en pause (${remMin} min restantes après SL récent). Les autres paires et le sens opposé restent actifs.`,
+              "veto",
+            );
+          }
           continue;
         }
 
@@ -4350,11 +4375,16 @@ export class TradingFloorDesk {
       if (!sized.ok || !sized.notional || !sized.qty || !sized.riskUsd || sized.riskPct === undefined || sized.exposurePct === undefined || !sized.binding) {
         setAgentActivity(this.state, "risk", "veto", `Veto sur ${chosen.symbol}`, now, { asset: chosen.symbol });
         emitPulse(this.state, "risk", "lead", "veto", `VETO ${chosen.symbol}`, chosen.symbol, now);
-        await this.say("risk", sized.reason ?? "Veto Liquidation Guard.", "veto");
-        await this.say(
-          "lead",
-          "Le veto du Directeur des Risques est souverain. Aucun ticket n'est émis, et je ne vous réveille pas pour un plafond de risque.",
-        );
+        const vetoReason = sized.reason ?? "Veto Liquidation Guard.";
+        const vetoKey = `sizing-veto:${vetoReason.slice(0, 60)}`;
+        if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(vetoKey) ?? 0) >= 3 * 60_000) {
+          this.marketGuardLogAt.set(vetoKey, now);
+          await this.say("risk", vetoReason, "veto");
+          await this.say(
+            "lead",
+            "Le veto du Directeur des Risques est souverain. Aucun ticket n'est émis, et je ne vous réveille pas pour un plafond de risque.",
+          );
+        }
         return;
       }
 
@@ -4385,6 +4415,41 @@ export class TradingFloorDesk {
         sized.notional,
       );
       const { finalTarget, finalStop } = finalLevels;
+
+      // Double vérification Micro-Compte sur le SL FINAL (empêche XAUUSD/XAGUSD avec SL $12+ de passer sur un compte 35€)
+      const finalAcctEq = this.accountEquity();
+      if (finalAcctEq > 0 && finalAcctEq < 500) {
+        const finalMicroCheck = evaluateMicroAccountMarginGuard({
+          symbol: chosen.symbol,
+          entry,
+          stopLoss: finalStop,
+          equity: finalAcctEq,
+          freeMargin: this.state.mt5Live?.freeMargin || finalAcctEq,
+          accountLeverage: this.state.mt5Live?.leverage || this.state.settings.defaultLeverage || 500,
+        });
+        if (!finalMicroCheck.ok) {
+          const fmKey = `micro-final:${chosen.symbol}`;
+          if (trigger !== "scheduled" || now - (this.marketGuardLogAt.get(fmKey) ?? 0) >= 5 * 60_000) {
+            this.marketGuardLogAt.set(fmKey, now);
+            await this.say("risk", `[${finalMicroCheck.reason}]`, "veto");
+          }
+          return;
+        }
+      }
+
+      // Ne pas émettre d'ordres fantômes sur un scan automatique si le pont MT5 configuré est déconnecté
+      if (trigger === "scheduled" && this.state.mt5Live?.login && !this.state.mt5Live.connected) {
+        const discKey = `mt5-disc:${this.state.mt5Live.login}`;
+        if (now - (this.marketGuardLogAt.get(discKey) ?? 0) >= 3 * 60_000) {
+          this.marketGuardLogAt.set(discKey, now);
+          await this.say(
+            "execution",
+            `[MT5 DÉCONNECTÉ] L'EA TradingFloorBridge ne répond plus sur le compte #${this.state.mt5Live.login} — aucun ticket fantôme émis tant que le pont MT5 n'est pas reconnecté.`,
+            "veto",
+          );
+        }
+        return;
+      }
 
       // Validation TimeMachine, Risk 7-Points & Auto-Critique Finale AVANT toute annonce "Setup validé" du Stratège
       const tmSim = TraderSkillsEngine.runTimeMachineSimulation(selectedBars, activeDir, entry, finalStop, finalTarget, 2500);
@@ -4868,13 +4933,20 @@ export class TradingFloorDesk {
       : (isFastScalp ? 15_000 : 5 * 60_000);
     this.state.cooldowns[ticket.asset] = now + cooldownMs;
 
-    // FIX DU DEATH LOOP : Dès qu'un trade touche un Stop Loss OU clôture en perte (< 0, même flatten/manuel),
-    // interdiction stricte de reprendre dans la MÊME DIRECTION (45 min en DayTrade/Swing, 20 min en Scalping)
+    // FIX DU DEATH LOOP INTELLIGENT :
+    // Verrouille la même direction uniquement sur une VRAIE perte / SL (jamais sur un HALT système ni un micro-scratch <= 0.15€ / < 15% R)
     if (!this.state.directionalCooldowns) {
       this.state.directionalCooldowns = {};
     }
-    if (isStopOrLoss || netPnl < -0.005) {
-      const dirCooldownMin = this.state.settings?.tradingStyle === "scalping" ? 20 : 45;
+    const minRealLossForDeathLoop = Math.max(0.15, Math.min(2.0, (ticket.riskUsd || 1) * 0.15));
+    const isMaterialTradingLoss =
+      reason !== "halt" &&
+      (reason === "invalidation" ||
+        reason === "adverse_selection" ||
+        reason === "drill" ||
+        netPnl <= -minRealLossForDeathLoop);
+    if (isMaterialTradingLoss) {
+      const dirCooldownMin = this.state.settings?.tradingStyle === "scalping" ? 15 : 30;
       const dirCooldownMs = dirCooldownMin * 60_000;
       const tDir = ticket.direction;
       const oppDir: Direction = tDir === "long" ? "short" : "long";
@@ -4887,9 +4959,14 @@ export class TradingFloorDesk {
       // Compatibilité avec l'ancienne clé directe
       this.state.directionalCooldowns[ticket.asset] = this.state.directionalCooldowns[dirKey];
 
-      // Si >= 2 pertes sur le même actif dans les 60 dernières minutes, verrouiller les deux directions
+      // Si >= 2 pertes matérielles sur le même actif dans les 60 dernières minutes, verrouiller les deux directions
       const recentAssetLosses = this.state.tickets.filter(
-        (t) => t.asset === ticket.asset && t.status === "closed" && (t.pnl ?? 0) < 0 && (t.closedAt ?? 0) >= now - 60 * 60_000,
+        (t) =>
+          t.asset === ticket.asset &&
+          t.status === "closed" &&
+          t.closeReason !== "halt" &&
+          (t.pnl ?? 0) <= -0.15 &&
+          (t.closedAt ?? 0) >= now - 60 * 60_000,
       ).length;
       if (recentAssetLosses >= 2) {
         this.state.directionalCooldowns[`${ticket.asset}:${oppDir}`] = {
@@ -4902,7 +4979,7 @@ export class TradingFloorDesk {
 
       this.say(
         "risk",
-        `[ANTI-DEATH-LOOP] Perte/SL sur ${ticket.asset} (${tDir.toUpperCase()} ${fmtSignedUsd(netPnl, 2)}). Biais ${tDir.toUpperCase()} verrouillé ${dirCooldownMin} min${recentAssetLosses >= 2 ? " (+ quarantaine totale de l'actif)" : ""}.`,
+        `[ANTI-DEATH-LOOP] Perte/SL sur ${ticket.asset} (${tDir.toUpperCase()} ${fmtSignedUsd(netPnl, 2)}). Biais ${tDir.toUpperCase()} en pause ${dirCooldownMin} min${recentAssetLosses >= 2 ? " (+ quarantaine totale de l'actif)" : ""} — les autres paires continuent normalement.`,
         "veto",
       ).catch(() => {});
     }
@@ -6045,7 +6122,10 @@ export class TradingFloorDesk {
           ticket.peakProfitUsd = Number(effectiveUnrealized.toFixed(2));
         }
         const activePeak = ticket.peakProfitUsd ?? 0;
-        const minActivatePeakUsd = Math.max(15, ticket.riskUsd * 0.25, rtFees * 1.25);
+        // Sur micro-compte (<500€), activer le verrouillage dès +0.35€ / 30% R au lieu d'attendre +15€ (inatteignable à 0.01 lot)
+        const acctEqForBe = this.accountEquity();
+        const absPeakFloor = acctEqForBe < 500 ? Math.max(0.35, acctEqForBe * 0.01) : 15;
+        const minActivatePeakUsd = Math.max(absPeakFloor, ticket.riskUsd * 0.30, rtFees * 1.5);
         if (activePeak >= minActivatePeakUsd) {
           const tapeRowBe = this.state.tape.find((r) => r.symbol === ticket.asset);
           const tickDeltaPct = tapeRowBe && tapeRowBe.prev > 0 ? ((mark - tapeRowBe.prev) / tapeRowBe.prev) * 100 : 0;

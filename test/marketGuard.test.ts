@@ -12,7 +12,7 @@ import { ReviewerAgent } from "../src/agents/reviewer.ts";
 import { TraderSkillsEngine } from "../src/agents/traderSkills.ts";
 import { computeRiskBasedLots } from "../src/lotSizing.ts";
 import { loadConfig } from "../src/config.ts";
-import { TradingFloorDesk } from "../src/desk.ts";
+import { computeLeveragedSizing, TradingFloorDesk } from "../src/desk.ts";
 import { DeskStore } from "../src/store.ts";
 import { TelegramFloorRoom } from "../src/telegram.ts";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -378,6 +378,89 @@ test("Anti-Spike-Chasing (Q4) bloque l'achat d'un sommet étiré (cas USDJPY) et
       now,
     });
     assert.equal(resExpired.pass, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Audit performance micro-compte : pas de coupure prématurée en petite perte, BE Forex 1.2 pip, pas d'Anti-Death-Loop sur halt/scratch, respect autoStopOnMaxLoss=false", async () => {
+  const now = Date.now();
+  const microTicket = {
+    id: "TF-MICRO-1",
+    asset: "GBPUSD",
+    direction: "short",
+    playbook: "breakout",
+    engine: "breakout",
+    thesis: "Scalp short",
+    entry: 1.3125,
+    fillPrice: 1.3125,
+    invalidation: 1.3150,
+    target: 1.3085,
+    timeStopHours: 1,
+    notional: 1312.5,
+    qty: 1000,
+    riskUsd: 2.2,
+    riskPct: 0.06,
+    exposurePct: 37,
+    binding: "risk",
+    producedBy: ["strategist"],
+    status: "open",
+    createdAt: now - 180_000, // 3 min
+    filledAt: now - 180_000,
+    expiresAt: now + 3_600_000,
+    fees: 0.05,
+    funding: 0,
+  } as unknown as Ticket;
+
+  const oppChochSmc = {
+    structureEvent: "CHoCH",
+    structureDirection: "LONG",
+    validSignal: true,
+    summary: "CHoCH LONG",
+    updatedAt: now,
+  } as unknown as NonNullable<Parameters<typeof ActiveTradeManager.evaluateAgentStructuralExit>[3]>["smcContext"];
+
+  // 1) Petite perte (-0.30€ = 14% du SL) après 3 min -> HOLD (ne coupe PAS prématurément sur bruit 5m!)
+  const earlyNoise = ActiveTradeManager.evaluateAgentStructuralExit(microTicket, 1.3128, -0.30, {
+    smcContext: oppChochSmc,
+    tradingStyle: "scalping",
+    now,
+  });
+  assert.equal(earlyNoise.action, "HOLD");
+
+  // 2) Gain micro-compte (+0.85€ à 50% TP) + CHoCH inverse -> CLOSE_PROFIT (récolte même sous 2€!)
+  const microProfit = ActiveTradeManager.evaluateAgentStructuralExit(microTicket, 1.3105, 0.85, {
+    smcContext: oppChochSmc,
+    tradingStyle: "scalping",
+    now,
+  });
+  assert.equal(microProfit.action, "CLOSE_PROFIT");
+
+  // 3) Break-Even Forex utilise 1.2 pip (0.00012), pas 8 pips (0.0008)
+  const beRes = ActiveTradeManager.evaluateBreakEvenOrderModify(microTicket, 1.3104);
+  assert.equal(beRes.shouldModify, true);
+  assert.ok(beRes.newStopLoss > 1.3118 && beRes.newStopLoss < 1.3125, `BE SL Forex attendu ~1.3122, reçu ${beRes.newStopLoss}`);
+
+  // 4) Pas d'Anti-Death-Loop sur "halt" ni sur micro-scratch (-0.01€), et computeLeveragedSizing respecte autoStopOnMaxLoss=false
+  const dir = mkdtempSync(join(tmpdir(), "tf-micro-perf-"));
+  try {
+    const cfg = loadConfig(["--console"]);
+    cfg.dataDir = dir;
+    const desk = new TradingFloorDesk(cfg, new DeskStore(dir), new TelegramFloorRoom(cfg));
+    desk.state.startEquity = 40;
+    desk.state.dayStartEquity = 40;
+    desk.state.realizedPnl = -5;
+    desk.state.settings.maxDayLossPct = 0.04;
+    desk.state.settings.autoStopOnMaxLoss = false;
+
+    const sizedOpen = computeLeveragedSizing(desk.state, 1.096, 1.098, undefined, { side: "short", leverageFactor: 500 });
+    assert.equal(sizedOpen.ok, true, "autoStopOnMaxLoss=false ne doit plus être bloqué par budget journalier épuisé");
+
+    desk.state.tickets.push({ ...microTicket, id: "TF-HALT-1", asset: "NZDUSD" });
+    await (desk as unknown as {
+      closeOpenTicket: (t: unknown, exitPx: number, reason: string, ts: number, ov?: number) => Promise<void>;
+    }).closeOpenTicket(desk.state.tickets[0], 1.3125, "halt", now, -0.01);
+    assert.equal(desk.state.directionalCooldowns?.["NZDUSD:short"], undefined, "Halt / -0.01€ ne doit pas poser d'Anti-Death-Loop");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
