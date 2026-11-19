@@ -1582,7 +1582,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="scalping">Scalping 5m</option>
         <option value="longtrade">Swing Macro</option>
       </select>
-      <button type="button" class="pill-btn mono" id="navCadenceBadge" onclick="switchTab('strategy');setTimeout(function(){var el=document.getElementById('cfgTradesPerMin');if(el)el.focus();},120);" title="Cadence actuelle de scan/trading (cliquer pour accélérer)">4/min</button>
+      <button type="button" class="pill-btn mono" id="navCadenceBadge" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Statut de connectivité MT5 & Bouclier Horaires" style="border-color:rgba(16,185,129,0.4);color:#6ee7b7">MT5 LIVE</button>
 
       <div style="position:relative;display:inline-block">
         <button class="pill-btn mono" id="navLevBadge" onclick="toggleNavLevDropdown(event)" title="Levier actif (cliquer pour modifier en 1 clic)">x5</button>
@@ -1629,11 +1629,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </button>
       <button class="btn-emergency-act btn-emergency-mt5" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Accès Mobile QR Code, Profil MT5 & Config Telegram" style="background:rgba(56,189,248,0.14);border-color:rgba(56,189,248,0.35);color:#7dd3fc">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM17 17h4v4h-4zM14 20h1"/></svg>
-        <span>QR MOBILE</span>
-      </button>
-      <button class="btn-emergency-act btn-emergency-mt5" onclick="openDrawer(&quot;mobileDrawer&quot;)" title="Nouveau profil MT5 / Config Telegram">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
-        <span>NEW MT5 PROFILE</span>
+        <span>MOBILE / MT5</span>
       </button>
     </div>
   </header>
@@ -1641,10 +1637,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div id="assetDropdownMenu">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--ring-1)">
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <strong style="font-size:12px;font-weight:800;letter-spacing:0.04em">Univers Multi-Marches</strong>
-        <button type="button" id="btnToggleAllAssets" class="pill-btn" style="padding:3px 9px;font-size:10.5px" onclick="toggleAllAssetsSelection()" title="Activer ou désactiver tous les actifs en un clic">Tout Activer / Désactiver</button>
+        <strong style="font-size:12px;font-weight:800;letter-spacing:0.04em">Univers Multi-Marchés</strong>
         <button type="button" class="asset-quick-btn" onclick="selectAllAssets()" title="Cocher tous les actifs">Tous</button>
-        <button type="button" class="asset-quick-btn" onclick="deselectAllAssets()" title="Tout decocher">Aucun</button>
+        <button type="button" class="asset-quick-btn" onclick="deselectAllAssets()" title="Tout décocher">Aucun</button>
       </div>
       <button class="pill-btn primary" onclick="applySelectedAssets()">Appliquer &amp; Scanner</button>
     </div>
@@ -4338,7 +4333,85 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var tickerFrame = new THREE.Mesh(new THREE.BoxGeometry(16.8, 4.4, 0.18), roomPanelMat);
       tickerFrame.position.set(0, 4.3, -10.72);
       scene3d.add(tickerFrame);
-      var tickerScreen = new THREE.Mesh(new THREE.BoxGeometry(16.0, 3.8, 0.08), new THREE.MeshBasicMaterial({ color: 0x091a30 }));
+      var wallCanvas3d = document.createElement('canvas');
+      wallCanvas3d.width = 1024;
+      wallCanvas3d.height = 256;
+      var wallTex3d = new THREE.CanvasTexture(wallCanvas3d);
+      wallTex3d.minFilter = THREE.LinearFilter;
+      window.refreshWallScreen3d = function () {
+        var ctx = wallCanvas3d.getContext('2d');
+        if (!ctx) return;
+        var st = deskState || {};
+        var eq = Number(st.mt5Equity || st.equity || 0);
+        var openCount = Array.isArray(st.tickets) ? st.tickets.filter(function (t) { return t.status === 'open'; }).length : 0;
+        var style = (st.settings && st.settings.tradingStyle) || 'daytrade';
+        var modeLbl = style === 'scalping' ? 'SCALPING 5M' : style === 'longtrade' ? 'SWING MACRO 4H' : 'DAY TRADING 1H';
+        var mt5Ok = Boolean(st.mt5Connected);
+        var grad = ctx.createLinearGradient(0, 0, 1024, 256);
+        grad.addColorStop(0, '#040b17');
+        grad.addColorStop(0.5, '#09182e');
+        grad.addColorStop(1, '#040b17');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 1024, 256);
+        ctx.strokeStyle = 'rgba(56,189,248,0.22)';
+        ctx.lineWidth = 1;
+        for (var gx = 0; gx < 1024; gx += 64) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, 256); ctx.stroke(); }
+        for (var gy = 0; gy < 256; gy += 64) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(1024, gy); ctx.stroke(); }
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 20px monospace';
+        ctx.fillText('TRADING FLOOR QUANT DESK  ·  ' + modeLbl, 28, 38);
+        ctx.fillStyle = mt5Ok ? '#10b981' : '#f59e0b';
+        ctx.beginPath(); ctx.arc(905, 31, 7, 0, Math.PI * 2); ctx.fill();
+        ctx.font = 'bold 17px monospace';
+        ctx.fillText(mt5Ok ? 'MT5 LIVE' : 'MT5 SYNC', 920, 37);
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 54px monospace';
+        ctx.fillText(eq > 0 ? ('$' + eq.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : 'SYNCING...', 28, 118);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 18px monospace';
+        ctx.fillText('POSITIONS OUVERTES : ' + openCount + '   ·   9 AGENTS ACTIFS   ·   MARKET GUARD ON', 28, 152);
+        var tape = Array.isArray(st.tape) ? st.tape.slice(0, 6) : [];
+        var tx = 28;
+        ctx.fillStyle = 'rgba(15,23,42,0.88)';
+        ctx.fillRect(0, 184, 1024, 72);
+        ctx.strokeStyle = 'rgba(56,189,248,0.35)';
+        ctx.beginPath(); ctx.moveTo(0, 184); ctx.lineTo(1024, 184); ctx.stroke();
+        tape.forEach(function (row) {
+          var chg = Number(row.changePct || 0);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.font = 'bold 16px monospace';
+          ctx.fillText(String(row.symbol || ''), tx, 212);
+          ctx.fillStyle = chg >= 0 ? '#34d399' : '#f87171';
+          ctx.font = 'bold 15px monospace';
+          var pxTxt = Number(row.price || 0) > 100 ? Number(row.price || 0).toFixed(2) : Number(row.price || 0).toFixed(4);
+          ctx.fillText(pxTxt + ' (' + (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%)', tx, 236);
+          tx += 166;
+        });
+        var eqHist = Array.isArray(st.equityHistory) ? st.equityHistory.slice(-40) : [];
+        if (eqHist.length >= 2) {
+          var vals = eqHist.map(function (p) { return Number(p.equity || p.v || 0); }).filter(function (v) { return v > 0; });
+          if (vals.length >= 2) {
+            var minV = Math.min.apply(null, vals);
+            var maxV = Math.max.apply(null, vals);
+            var span = Math.max(1e-6, maxV - minV);
+            ctx.strokeStyle = vals[vals.length - 1] >= vals[0] ? '#10b981' : '#f87171';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            vals.forEach(function (v, idx) {
+              var px = 640 + (idx / (vals.length - 1)) * 355;
+              var py = 160 - ((v - minV) / span) * 95;
+              if (idx === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            });
+            ctx.stroke();
+          }
+        }
+        wallTex3d.needsUpdate = true;
+      };
+      window.refreshWallScreen3d();
+      var tickerScreen = new THREE.Mesh(
+        new THREE.BoxGeometry(16.0, 3.8, 0.08),
+        new THREE.MeshBasicMaterial({ map: wallTex3d })
+      );
       tickerScreen.position.set(0, 4.3, -10.60);
       scene3d.add(tickerScreen);
       var tickerTopLed = new THREE.Mesh(new THREE.BoxGeometry(16.2, 0.08, 0.08), ledBarMat);
@@ -4385,9 +4458,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         scene3d.add(beamLed);
       });
 
-      // Table centrale de briefing Quant au centre de la pièce
+      // Table centrale de briefing Quant au centre de la pièce + Noyau Holographique
       var centerTable = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.14, 2.2), roomPanelMat);
       centerTable.position.set(0, -0.58, 0.2);
+      coreMesh3d = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.46, 0),
+        new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 0.75, wireframe: true })
+      );
+      coreMesh3d.position.set(0, 0.55, 0.2);
+      scene3d.add(coreMesh3d);
+      ring1_3d = new THREE.Mesh(
+        new THREE.TorusGeometry(0.86, 0.025, 12, 64),
+        new THREE.MeshBasicMaterial({ color: 0x10b981, transparent: true, opacity: 0.72 })
+      );
+      ring1_3d.rotation.x = Math.PI / 2;
+      ring1_3d.position.set(0, 0.55, 0.2);
+      scene3d.add(ring1_3d);
       scene3d.add(centerTable);
       var tableBase = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.9, 1.2), roomWallMat);
       tableBase.position.set(0, -1.08, 0.2);
@@ -8405,6 +8491,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       var regSel = document.getElementById('topActiveRegimeSelect');
       if (regSel && regSel.value !== activeStyle) {
         regSel.value = activeStyle;
+      }
+      var connPill = document.getElementById('navCadenceBadge');
+      if (connPill) {
+        var mt5Live = Boolean(deskState.mt5Connected);
+        connPill.textContent = mt5Live ? 'MT5 LIVE' : 'MT5 SYNC';
+        connPill.style.borderColor = mt5Live ? 'rgba(16,185,129,0.45)' : 'rgba(245,158,11,0.45)';
+        connPill.style.color = mt5Live ? '#6ee7b7' : '#fcd34d';
+      }
+      if (typeof window.refreshWallScreen3d === 'function') {
+        window.refreshWallScreen3d();
       }
       var rChip = document.getElementById('deskRegimeChip');
       if (rChip) {
