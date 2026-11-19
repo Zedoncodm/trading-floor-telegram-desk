@@ -990,3 +990,28 @@ test("Rollover Forex 21:40-23:00 UTC bloque nouvelles entrées et PRE-ROLLOVER G
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("3D Studio upgrade: zone patrol & anti-overlap for Nova/Sora/Leo, sculpted black cat, dynamic lighting, fluid core glow & futuristic furniture", () => {
+  for (const needle of [
+    "AGENT_PATROL_ZONES",
+    "pickZoneAwareWaypoint",
+    "applyAgentSeparationAndBounds",
+    "buildFuturisticDeskUnit",
+    "makeRadialGlowTexture",
+    "coreInner3d",
+    "coreGlowSprite3d",
+    "dirLight3d",
+    "agentLight",
+    "buildBlackCatMesh",
+    "buildDistinctAgentAvatar",
+    "curvedWallGeo",
+    "ceilingHaloOuter",
+    "holoBeam",
+  ]) {
+    assert.ok(DASHBOARD_HTML.includes(needle), `Missing 3D identifier: ${needle}`);
+  }
+  assert.ok(!DASHBOARD_HTML.includes("CapsuleGeometry"));
+  const m = DASHBOARD_HTML.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  assert.ok(m && m[1]);
+  assert.doesNotThrow(() => new Function(m[1]));
+});
